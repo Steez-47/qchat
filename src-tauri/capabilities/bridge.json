@@ -1,0 +1,1 @@
+{"identifier":"bridge","windows":["chatgpt"],"remote":{"urls":["https://chatgpt.com/*"]},"local":false,"permissions":["allow-bridge-event"]}

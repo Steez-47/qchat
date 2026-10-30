@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QChat</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="app-shell" id="app-shell">
+    <!-- Top Instrument Header (38px, Tauri drag region) -->
+    <header class="topbar" data-tauri-drag-region>
+      <div class="topbar-left" data-tauri-drag-region>
+        <span class="q-mark" aria-hidden="true" data-tauri-drag-region>Q</span>
+        <span class="app-title" data-tauri-drag-region>QCHAT</span>
+        <span class="topbar-sep" aria-hidden="true" data-tauri-drag-region></span>
+        <div class="status-pill" id="status-pill" data-state="connecting" data-tauri-drag-region>
+          <span class="status-dot" id="status-dot" data-tauri-drag-region></span>
+          <span class="status-label" id="status-label" data-tauri-drag-region>Connecting…</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button type="button" class="icon-btn" id="btn-new-chat" title="New chat (Ctrl+N)" aria-label="New chat">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+        </button>
+        <button type="button" class="icon-btn" id="btn-settings" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="settings-sheet">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
+            <line x1="4" y1="6" x2="20" y2="6"/>
+            <line x1="4" y1="12" x2="20" y2="12"/>
+            <line x1="4" y1="18" x2="20" y2="18"/>
+            <circle cx="9" cy="6" r="2" fill="var(--bg-surface)"/>
+            <circle cx="15" cy="12" r="2" fill="var(--bg-surface)"/>
+            <circle cx="10" cy="18" r="2" fill="var(--bg-surface)"/>
+          </svg>
+        </button>
+        <button type="button" class="icon-btn icon-btn-close" id="btn-hide" title="Hide (Esc)" aria-label="Hide window">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Guest mode slim notice -->
+    <div class="notice-bar notice-guest" id="guest-notice" hidden>
+      <span class="notice-text">Using ChatGPT as a guest. Sign in for your models &amp; history.</span>
+      <button type="button" class="notice-link" id="btn-guest-signin">Sign in</button>
+    </div>
+
+    <!-- Global (non-turn) error notice -->
+    <div class="notice-bar notice-error" id="global-error" role="alert" hidden>
+      <span class="notice-text" id="global-error-text"></span>
+      <div class="notice-actions">
+        <button type="button" class="notice-link" id="btn-error-signin" hidden>Sign in</button>
+        <button type="button" class="notice-dismiss" id="btn-error-dismiss" title="Dismiss" aria-label="Dismiss notice">×</button>
+      </div>
+    </div>
+
+    <!-- Main workspace -->
+    <main class="workspace" id="workspace">
+      <!-- Empty state -->
+      <div class="empty-state" id="empty-state">
+        <div class="empty-panel">
+          <div class="empty-mark" aria-hidden="true">Q</div>
+          <p class="empty-heading">Ask anything.</p>
+          <ul class="empty-hints" aria-label="Keyboard shortcuts">
+            <li><kbd>Alt+Q</kbd><span>toggle</span></li>
+            <li><kbd>Ctrl+N</kbd><span>new chat</span></li>
+            <li><kbd>Esc</kbd><span>hide</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Messages stream -->
+      <div class="turns-list" id="turns-list" role="log" aria-live="polite" aria-relevant="additions" hidden></div>
+
+      <!-- Scroll to latest floating pill -->
+      <button type="button" class="jump-latest" id="btn-jump-latest" hidden>↓ latest</button>
+
+      <!-- Settings Sheet (slides over conversation inside window) -->
+      <aside class="settings-sheet" id="settings-sheet" aria-label="Settings" aria-hidden="true" hidden>
+        <div class="sheet-header">
+          <span class="sheet-title">SETTINGS // CHATGPT ACCOUNT</span>
+          <button type="button" class="icon-btn" id="btn-close-settings" title="Close (Esc)" aria-label="Close settings">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="sheet-body">
+          <section class="sheet-section">
+            <h2 class="section-label">ChatGPT account</h2>
+            <p class="section-desc">Sign in through the embedded ChatGPT window to use your subscription models and conversation history.</p>
+            <button type="button" class="btn-primary" id="btn-sheet-signin">Sign in to ChatGPT</button>
+          </section>
+
+          <section class="sheet-section">
+            <h2 class="section-label">Import session cookie</h2>
+            <p class="section-desc">Paste the value of <code>__Secure-next-auth.session-token</code> from chatgpt.com, or a full Cookie header.</p>
+            <textarea
+              id="cookie-input"
+              class="cookie-textarea"
+              rows="3"
+              placeholder="__Secure-next-auth.session-token=…"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              aria-label="Session cookie value"
+            ></textarea>
+            <div class="cookie-row">
+              <button type="button" class="btn-secondary" id="btn-import-cookie">Import</button>
+              <span class="cookie-feedback" id="cookie-feedback" role="status" aria-live="polite"></span>
+            </div>
+          </section>
+
+          <section class="sheet-section">
+            <h2 class="section-label">Shortcuts</h2>
+            <dl class="shortcuts-grid">
+              <div><dt>Alt+Q</dt><dd>Summon / hide QChat</dd></div>
+              <div><dt>Enter</dt><dd>Send prompt</dd></div>
+              <div><dt>Shift+Enter</dt><dd>Insert newline</dd></div>
+              <div><dt>Ctrl+.</dt><dd>Stop streaming</dd></div>
+              <div><dt>Ctrl+N</dt><dd>Start new chat</dd></div>
+              <div><dt>Esc</dt><dd>Close sheet / hide window</dd></div>
+            </dl>
+          </section>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Flat Composer Slab -->
+    <footer class="composer" id="composer">
+      <div class="composer-focus-rule" aria-hidden="true"></div>
+      <div class="composer-row">
+        <textarea
+          id="prompt-input"
+          class="composer-input"
+          rows="1"
+          placeholder="Prompt…"
+          aria-label="Prompt"
+          spellcheck="true"
+        ></textarea>
+        <button type="button" class="send-btn" id="btn-send" title="Send (Enter)" aria-label="Send prompt">
+          <svg class="icon-send" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
+            <path d="M5 12h14M13 6l6 6-6 6"/>
+          </svg>
+          <svg class="icon-stop" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="composer-meta">
+        <span class="key-hints">↵ send &nbsp;⇧↵ newline &nbsp;esc hide</span>
+        <span class="stream-hint" id="stream-hint" hidden>ctrl+. stop</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="vendor/marked.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

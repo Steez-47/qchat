@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-bridge-event"
+description = "Enables the bridge_event command without any pre-configured scope."
+commands.allow = ["bridge_event"]
+
+[[permission]]
+identifier = "deny-bridge-event"
+description = "Denies the bridge_event command without any pre-configured scope."
+commands.deny = ["bridge_event"]
