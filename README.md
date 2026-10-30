@@ -5,6 +5,14 @@
 A tiny Windows popup for chatting with ChatGPT through your own chatgpt.com session.
 
 - **Alt+Q** toggles the popup. The tray icon has New chat, Sign in and Quit.
+- Click the orb or press **Ctrl+K** for the menu, or type `/` for commands.
+- **Ctrl+P** or `/chats` searches every saved chat. Up to 3 recent chats sit as tabs on the bar.
+- `/model` picks a ChatGPT model on a signed-in account. `/temp` starts a temporary chat that isn't saved.
+- Hover a reply to copy it, retry it or open it in ChatGPT. Up arrow recalls earlier prompts.
+- **Ctrl+Alt+Q** opens QChat with the text selected in the current app quoted in the box.
+- The desktop is really blurred behind the glass, and clicks pass through the empty space around it. Desktop blur can be turned off in Settings.
+- Code is highlighted and maths is rendered.
+- `/keys` lists the shortcuts. Settings has the global shortcut and Launch at login.
 - **Sign in:** Settings or the tray -> Sign in. Log in once in the window that opens, and you stay signed in.
 - Without signing in it chats as a ChatGPT guest.
 - Attach files with the paperclip, paste from the clipboard, or drop them onto the chat. Attachments can be sent with or without text.
@@ -26,6 +34,12 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `cargo test --manifest-path src-tauri/Cargo.toml`: sign-in logic, safe media sources, filenames and byte ranges.
 - `node tools/auth-bridge-test.mjs`: signed-in composer detection, session retries, and sending after conversation preparation.
 - `node tools/stream-media-test.mjs`: Unicode, interruption recovery, media discovery and attachment cancellation.
+- `node tools/ux-regress-test.mjs`: streaming, dismiss and stop, retries, per-chat drafts, history and storage limits.
+- `node tools/feature-ui-test.mjs`: menus, model picker, chat search, tabs, the shortcuts card and temporary chats.
+- `node tools/math-ui-test.mjs`: maths rendering in replies.
+- `node tools/highlight-test.mjs`: code highlighting round trip, token typing and speed. Plain Node, no browser.
+- `node tools/surfaces-native-test.mjs`: blur and click-through surfaces, shortcut validation and autostart. Requires a debug build.
+- `node tools/selection-native-test.mjs`: selection hotkey and clipboard preference. Requires a debug build.
 - `node tools/media-ui-test.mjs`: uploads, paste/drop, previews, safe rendering and draft retention.
 - `node tools/native-media-e2e.mjs`: real WebView2 attachment bytes, local media serving, downloads, audio and video. Requires a debug build; video checks use ffmpeg from PATH.
 - `node tools/app-e2e.mjs`: off-screen chat checks against ChatGPT as a guest.

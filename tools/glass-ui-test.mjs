@@ -498,7 +498,7 @@ try {
   // --- Settings -------------------------------------------------------------
   await open('/', { settings: '{definitely not json' });
   check('corrupt settings JSON falls back to defaults', await evalJS(`JSON.stringify(QSettings.settings)===JSON.stringify(QSettings.DEFAULTS)`));
-  await open('/', { settings: { v: 1, cornerWeight: 900, glassOpacity: -4, blur: 'nope', look: 'hotdog', density: 12, speed: 0, unknownKey: 'x', accentColor: 'red', showTabs: 'yes', barWidth: 345 } });
+  await open('/', { settings: { v: 2, cornerWeight: 900, glassOpacity: -4, blur: 'nope', look: 'hotdog', density: 12, speed: 0, unknownKey: 'x', accentColor: 'red', showTabs: 'yes', barWidth: 345 } });
   const clamped = await evalJS(`QSettings.settings`);
   check('settings are validated and clamped', clamped.cornerWeight === 100 && clamped.glassOpacity === 20 && clamped.blur === 18 && clamped.look === 'aurora' && clamped.density === 'cozy' && clamped.speed === 0.4 && clamped.accentColor === '#7C5CFF' && clamped.showTabs === true && clamped.barWidth === 350 && !('unknownKey' in clamped), JSON.stringify(clamped));
   check('saved settings apply before first paint', await evalJS(`document.documentElement.style.getPropertyValue('--r-bubble')==='32.0px'`));

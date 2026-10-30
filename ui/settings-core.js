@@ -6,7 +6,7 @@
   const STORAGE_KEY = "qchat.settings";
   const THEME_KEY = "qchat.theme";
   const LEGACY_LOOK_KEY = "qchat.look";
-  const VERSION = 1;
+  const VERSION = 2;
 
   // ---------------------------------------------------------------------------
   // Looks. Everything else (fills, text tiers, rims) is derived in apply().
@@ -80,7 +80,7 @@
     saturation: range(100, 0, 200, 5, "%"),
 
     cornerWeight: range(85, 0, 100, 1, "%"),
-    glassOpacity: range(72, 20, 100, 1, "%"),
+    glassOpacity: range(62, 20, 100, 1, "%"),
     nativeBlur: bool(true),
     blur: range(18, 0, 40, 1, "px"),
     rim: range(60, 0, 100, 1, "%"),
@@ -154,12 +154,20 @@
     } catch (_) { return {}; }
   }
 
+  // Settings from an older build lose these keys once, so upgraded users get the
+  // new glass defaults. Every other saved choice is kept.
+  const V2_RESET = ["glassOpacity", "blur", "rim", "sheen", "shadow", "border", "shimmer", "bubbleTint"];
+
   function load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw === null) return sanitize(legacyLook());
       const parsed = JSON.parse(raw);
-      return sanitize(parsed.v === undefined || parsed.v === VERSION ? parsed : {});
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return sanitize({});
+      const upgrading = parsed.v !== VERSION;
+      if (upgrading) for (const key of V2_RESET) delete parsed[key];
+      const loaded = sanitize(parsed);
+      return upgrading ? save(loaded) : loaded;
     } catch (_) {
       return sanitize({});
     }

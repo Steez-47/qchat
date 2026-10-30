@@ -6,12 +6,17 @@ Owner asleep, asked for a full refinement: "janky, doesn't look like the app I w
 |---|---|---|---|
 | N1 | Audits: app UX, settings, design critique | DeepSeek, GLM, Argon | done (.tmp/audit-*.md, critique-a.md) |
 | N2 | Native: click-through, blur companion, hotkey, autostart | Sol | done, blur unverified |
-| N3 | Blur stacking fix + surfaces_debug | Sol | running |
-| N4 | Visual rebuild per DESIGN.md + settings | Sol | running |
-| N5 | 20 UX bug fixes + tools/ux-regress-test.mjs (worktree) | DeepSeek max | running |
-| N6 | ui/highlight.js code highlighter | GLM | running |
-| N7 | Features: orb menu, /chats switcher, /model, /temp, reply actions, prompt recall, /help + first-run | next | todo |
-| N8 | Real-window visual check of blur/click-through; release; cross-family review; README | T0 | todo |
+| N3 | Blur: accent/region failed, real rounded blur via Windows.UI.Composition host backdrop | Sol | done, visually verified |
+| N4 | Visual rebuild per DESIGN.md + settings | Sol | done |
+| N5 | 20 UX bug fixes + tools/ux-regress-test.mjs | DeepSeek max | done |
+| N6 | ui/highlight.js code highlighter | GLM | done |
+| N7 | Orb menu, /chats, /model, /temp, reply tools, recall, /keys, first run, list polish, KaTeX, ask-about-selection | Sol, GLM, DeepSeek | done |
+| N8 | Cross-family review (15 findings, all fixed), real-window checks, signed-in checks, release | Antigravity Sonnet, Sol, T0 | done |
+
+Verified live (2026-10-31) on a disposable copy of the signed-in profile: model list, switch and restore (real switcher is `button[aria-label="Select ChatGPT model"]`, opens on keydown ArrowDown only, models are `menuitemradio`), temporary chat send/reply, normal send, reopen from tab + send, restart + send. Real window at 100% scale: blur inside objects, untouched gutter, click-through by WindowFromPoint, idle CPU 0.31% of a core.
+Not verified: dragging and drops with a real mouse, 150% display, real Ctrl+Alt+Q capture and SendInput, real hotkey press, Launch at login after a real reboot. Tests are headless or hidden; the release exe itself was only smoke-started.
+Left in the account: one test chat titled "QChat automated check, safe to delete".
+Known gotcha: the site's mobile layout appears below some window width; the hidden page is 1000x760, which gets desktop layout when signed in.
 
 ## Settings window fix (2026-10-31)
 

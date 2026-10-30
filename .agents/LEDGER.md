@@ -17,3 +17,9 @@
 - 2026-10-31 | Recent chat tab attachment/title | native worker Sol medium | done | ui/app.js + glass.css; parent single-row integration and glass runtime regressions ALL PASS; screenshot inspected; release compiled and dist/QChat.exe hash verified; active session preserved
 - 2026-10-31 | Signed-in streaming hang | native explorer Luna read-only + parent implementation | done | live DOM ownership diagnosis, one selector fix, nested-user regression; stream71/auth14/animation UI and actual signed-in streaming PASS; release rebuilt
 - 2026-10-31 | Single-pass response reveal | native worker Sol medium | done | UI visible corrections apply atomically; animation regression verifies final Markdown delta/DONE without replay, Unicode extensions and subsequent append pacing; parent full glass UI ALL PASS; release pending
+- 2026-10-31 | Overnight audits | DeepSeek high, GLM high, Argon medium | done | .tmp/audit-app.md, audit-settings.md, critique-a.md; Argon could not read PNGs in its environment and critiqued from source
+- 2026-10-31 | Native surfaces, stacking, composition blur, review fixes | codex/gpt-6.1-sol medium and high | done | 5 tasks; cargo 13/13 and native suites PASS; parent verified blur and click-through in the real window
+- 2026-10-31 | Visual rebuild, features, selection hotkey | codex/gpt-6.1-sol medium | done | parent reviewed screenshots and reran all suites
+- 2026-10-31 | UX bug fixes, KaTeX, model probe, migration + README | opencode/deepseek-v4.1-flash-free | done | 4 tasks; parent reran suites; migration conflict with one stale test seed fixed by parent
+- 2026-10-31 | Highlighter, list polish | opencode/glm-5.3-flash-free | done | 2 tasks + 1 audit; suites PASS
+- 2026-10-31 | Cross-family review | antigravity/claude-sonnet-5-5 medium | done | 15 real findings, all fixed
