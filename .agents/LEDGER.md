@@ -37,3 +37,4 @@ Edit these anytime. The orchestrator reads them at kickoff and before each miles
 - 2026-10-30 22:20 | G1 Fluent UI | antigravity/claude-opus-5-5/high | failed | usage limit (Antigravity Claude), no edits
 - 2026-10-30 22:21 | G1b Fluent UI (ui/ only) | claudeAgent/claude-opus-5-5/high | running | user asked for Claude-plan Opus
 - 2026-10-30 22:50 | G1b Fluent UI | claudeAgent/claude-opus-5-5/high | done | mock checks 16/16; real-app e2e pending G2
+- 2026-10-30 23:05 | G2 Mica/get_theme/tray | antigravity/gemini-4-argon/medium | done | e2e 7/7 re-verified by T0 with new UI; release 4.3MB
