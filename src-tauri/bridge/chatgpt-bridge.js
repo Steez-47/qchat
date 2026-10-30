@@ -2,14 +2,16 @@
 (() => {
   if (!/(^|\.)chatgpt\.com$/.test(location.hostname) || window.top !== window || window.__qchat) return;
   const selectors = {
-    composer: ['#prompt-textarea', '#mobile-composer-prompt', 'textarea[name="prompt-textarea"]', '[contenteditable="true"][id*="prompt"]'],
+    composer: ['#prompt-textarea', '#mobile-composer-prompt', 'textarea[name="prompt-textarea"]', '[contenteditable="true"][id*="prompt"]', 'form .ProseMirror[contenteditable="true"][role="textbox"]'],
     send: ['[data-testid="send-button"]', 'button[aria-label*="Send"]'],
     stop: ['[data-testid="stop-button"]', 'button[aria-label*="Stop"]'],
     assistant: ['[data-message-author-role="assistant"]', '[data-message-role="assistant"]:not([data-conversation-recovery])', '[data-turn="assistant"]'],
     body: ['[data-assistant-markdown-root]', '.markdown', '[data-message-content]'],
-    fresh: ['[data-testid="create-new-chat-button"]', 'a[href="/"]']
+    fresh: ['[data-testid="create-new-chat-button"]', 'button[aria-label="New chat"]', 'a[href="/"]']
   };
-  const find = key => selectors[key].map(s => document.querySelector(s)).find(Boolean);
+  const find = key => key === 'composer'
+    ? selectors.composer.flatMap(s => [...document.querySelectorAll(s)]).find(node => node.getClientRects().length && !node.closest('[hidden], [aria-hidden="true"]'))
+    : selectors[key].map(s => document.querySelector(s)).find(Boolean);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const queue = [];
   function flush() {
@@ -19,7 +21,7 @@
   function emit(event) { queue.push(event); flush(); }
   setInterval(flush, 100);
   const debug = (...args) => { if (window.__QCHAT_DEBUG__) console.debug('[qchat]', ...args); };
-  let active, loginCache, loginAt = 0;
+  let active, loginCache, loginAt = -Infinity, loginProbe, loginUnknown = true, loginStale = false;
   function error(id, code, message) { emit({ type: 'error', ...(id == null ? {} : { id }), code, message }); }
   function cancelTimers(job) { clearTimeout(job.watchdog); clearTimeout(job.startTimer); clearTimeout(job.deltaTimer); clearInterval(job.domTimer); job.observer?.disconnect(); }
   function fail(job, code, message) {
@@ -182,13 +184,14 @@
     try {
       const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url, location.href);
       const method = (init?.method || input?.method || 'GET').toUpperCase();
-      if (method === 'POST' && /\/(?:backend-(?:api|anon)|unauth-mweb)\/(?:f\/)?conversation(?:\/(?:prepare|updates))?\/?$/.test(url.pathname) && active) {
+      // Prepare can prefetch while typing, before React enables the real Send button.
+      if (method === 'POST' && /\/(?:backend-(?:api|anon)|unauth-mweb)\/(?:f\/)?conversation(?:\/updates)?\/?$/.test(url.pathname) && active) {
         const current = active;
         if (!current.started) {
           current.started = true; clearTimeout(current.startTimer); progress(current);
           emit({ type: 'start', id: current.id });
         }
-        if (!window.__QCHAT_DISABLE_NET__ && !/\/prepare\/?$/.test(url.pathname) && !current.stream) {
+        if (!window.__QCHAT_DISABLE_NET__ && !current.stream) {
           job = current; job.stream = true;
         }
       }
@@ -217,14 +220,42 @@
     }
   }
 
+  function loginInterval() {
+    if (loginUnknown || loginStale || !find('composer') || /^\/(?:auth|login|signin)(?:\/|$)/.test(location.pathname)) return 5000;
+    if (document.visibilityState === 'hidden' || !document.hasFocus()) return 60000;
+    return loginCache ? 60000 : 30000;
+  }
+  function loginDue() { return Date.now() - loginAt >= loginInterval(); }
   async function status() {
-    if (!loginCache || Date.now() - loginAt > 30000) {
-      loginAt = Date.now();
-      let next = false;
-      try { const session = await Promise.race([originalFetch('/api/auth/session').then(r => r.json()), sleep(2500).then(() => ({}))]); next = !!(session.user || session.accessToken); } catch (_) {}
-      loginCache = next;
+    if (!loginProbe && loginDue()) {
+      loginProbe = (async () => {
+        const controller = new AbortController();
+        const probeURL = location.href;
+        let timer;
+        try {
+          const session = await Promise.race([
+            originalFetch('/api/auth/session', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal }).then(response => {
+              if (!response.ok) throw new Error('Session unavailable');
+              return response.json();
+            }),
+            new Promise((_, reject) => {
+              timer = setTimeout(() => { controller.abort(); reject(new Error('Session timeout')); }, 8000);
+            })
+          ]);
+          if (!session || typeof session !== 'object' || Array.isArray(session)) throw new Error('Invalid session');
+          loginCache = !!(session.user || session.accessToken);
+          loginUnknown = false; loginStale = location.href !== probeURL;
+        } catch (_) {
+          // An unavailable session is unknown, not evidence that a known login ended.
+          loginUnknown = true;
+        } finally {
+          clearTimeout(timer); loginAt = Date.now();
+        }
+      })();
     }
-    emit({ type: 'status', ready: !!find('composer'), loggedIn: !!loginCache, url: location.href });
+    const probe = loginProbe;
+    if (probe) { await probe; if (loginProbe === probe) loginProbe = null; }
+    emit({ type: 'status', ready: !!find('composer'), loggedIn: !!loginCache, authPending: loginUnknown, url: location.href });
   }
   window.__qchat = {
     async send({ id, prompt }) {
@@ -277,7 +308,10 @@
   let lastURL = location.href, hadComposer = false, lastBlock = '';
   setInterval(() => {
     const ready = !!find('composer');
-    if ((!hadComposer && ready) || lastURL !== location.href) { hadComposer = ready; lastURL = location.href; status(); }
+    const changedURL = lastURL !== location.href;
+    if (changedURL) { loginStale = true; lastURL = location.href; }
+    if (hadComposer !== ready || changedURL || (!loginProbe && loginDue())) status();
+    hadComposer = ready;
     const block = blocking();
     if (block && block[1] !== lastBlock) { lastBlock = block[1]; error(active?.id, ...block); status(); }
     if (!block) lastBlock = '';

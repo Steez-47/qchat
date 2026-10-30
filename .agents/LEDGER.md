@@ -15,6 +15,10 @@ Edit these anytime. The orchestrator reads them at kickoff and before each miles
 
 ## Delegations
 
+- 2026-10-30 | J1 normal sign-in diagnosis | opencode/deepseek-v4.1-flash-free/high | done | read-only bridge/state analysis
+- 2026-10-30 | J2 auth and prepare lifecycle fix | native codex/gpt-6.1-sol/medium | done | synthetic failing-then-passing prepare regression; parent verified real signed-in reply
+- 2026-10-30 | J3 cross-family review | antigravity/gemini-4-argon/low | done | fixed loading polling, matching auth routes and loading UI; kept safe probe identity guard
+
 - 2026-10-30 | H1 consented browser helper + secure receiver | codex/gpt-6.1-sol/medium | done | parent verified 19 synthetic runtime checks and 4 Rust tests
 - 2026-10-30 | H2 consent and import UI | native codex/gpt-6-luna/medium | done | parent checked narrow UI, async cancellation, disconnect, and consent
 - 2026-10-30 | H3 auth review | antigravity/gemini-4-argon/low | done | Claude quota exhausted; fixed resume/off-host reload and initial socket timeout; no secret leakage findings

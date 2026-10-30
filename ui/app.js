@@ -569,13 +569,13 @@
     el.promptInput.focus();
   }
 
-  // #status-label must read "Ready" when signed in and "Guest" when logged out.
+  // Readiness and authentication are separate while the ChatGPT page loads.
   function updateStatusHeader({ ready, loggedIn, errorState, signedOut }) {
     let state;
     let label;
     if (signedOut) { state = "signed-out"; label = "Signed out"; }
     else if (errorState) { state = "error"; label = "Error"; }
-    else if (!ready) { state = "connecting"; label = "Connecting…"; }
+    else if (!ready) { state = "connecting"; label = loggedIn ? "Loading chat…" : "Connecting…"; }
     else if (loggedIn) { state = "ready"; label = "Ready"; }
     else { state = "guest"; label = "Guest"; }
 
@@ -606,13 +606,13 @@
   function updateAccountStatus() {
     let state;
     let text;
-    if (!bridge.ready) { state = "connecting"; text = "Connecting…"; }
+    if (!bridge.ready) { state = "connecting"; text = bridge.loggedIn ? "Signed in. Loading chat…" : "Connecting…"; }
     else if (bridge.loggedIn) { state = "signed-in"; text = "Signed in"; }
     else if (bridge.signedOut) { state = "signed-out"; text = "Signed out. Sign in again to continue."; }
     else { state = "guest"; text = "Using ChatGPT as a guest"; }
     el.accountStatus.dataset.state = state;
     el.accountStatus.textContent = text;
-    el.btnSheetSignin.textContent = bridge.ready && bridge.loggedIn ? "Manage account" : "Sign in";
+    el.btnSheetSignin.textContent = bridge.loggedIn ? "Manage account" : "Sign in";
   }
 
   function showGlobalError(code, message) {

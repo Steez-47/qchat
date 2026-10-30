@@ -19,6 +19,7 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 ## Test
 
 - `cargo test --manifest-path src-tauri/Cargo.toml`: sign-in window return logic.
+- `node tools/auth-bridge-test.mjs`: signed-in composer detection, session retries, and sending after conversation preparation.
 - `node tools/app-e2e.mjs`: off-screen chat checks against ChatGPT as a guest.
 - `node tools/persist-e2e.mjs`: checks that the app's profile survives Quit and a restart.
 

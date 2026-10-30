@@ -71,8 +71,20 @@ struct Activity {
     logged_in: bool,
     signin_was_logged_in: bool,
 }
-fn should_auto_return(foreground: bool, was_logged_in: bool, logged_in: bool) -> bool {
-    foreground && !was_logged_in && logged_in
+fn should_auto_return(
+    foreground: bool,
+    was_logged_in: bool,
+    logged_in: bool,
+    ready: bool,
+    chat_route: bool,
+) -> bool {
+    foreground && !was_logged_in && logged_in && ready && chat_route
+}
+fn is_chat_url(url: &tauri::Url) -> bool {
+    url.host_str() == Some("chatgpt.com")
+        && !["/auth", "/login", "/signin"]
+            .iter()
+            .any(|route| url.path() == *route || url.path().starts_with(&format!("{route}/")))
 }
 struct Host(Mutex<Activity>);
 fn resume(app: &tauri::AppHandle) {
@@ -101,7 +113,7 @@ fn chat_page(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
     let w = app
         .get_webview_window("chatgpt")
         .ok_or("ChatGPT window unavailable")?;
-    if w.url().map_err(|e| e.to_string())?.host_str() != Some("chatgpt.com") {
+    if !is_chat_url(&w.url().map_err(|e| e.to_string())?) {
         if !app.state::<Host>().0.lock().unwrap().background {
             return Err("not_ready: Finish signing in first".into());
         }
@@ -169,10 +181,7 @@ fn background(app: &tauri::AppHandle) {
     tool_window(&w, true);
     let _ = w.set_position(tauri::PhysicalPosition::new(-32000, -32000));
     let _ = w.show();
-    if w.url()
-        .map(|u| u.host_str() != Some("chatgpt.com"))
-        .unwrap_or(true)
-    {
+    if w.url().map(|u| !is_chat_url(&u)).unwrap_or(true) {
         if let Ok(url) = tauri::Url::parse("https://chatgpt.com/") {
             let _ = w.navigate(url);
         }
@@ -237,7 +246,18 @@ fn bridge_event(app: tauri::AppHandle, event: serde_json::Value) -> Result<(), S
         }
         if event["type"].as_str() == Some("status") {
             let logged_in = event["loggedIn"].as_bool() == Some(true);
-            let back = should_auto_return(!a.background, a.signin_was_logged_in, logged_in);
+            let ready = event["ready"].as_bool() == Some(true);
+            let chat_route = event["url"]
+                .as_str()
+                .and_then(|u| tauri::Url::parse(u).ok())
+                .is_some_and(|u| is_chat_url(&u));
+            let back = should_auto_return(
+                !a.background,
+                a.signin_was_logged_in,
+                logged_in,
+                ready,
+                chat_route,
+            );
             a.logged_in = logged_in;
             back
         } else {
@@ -412,12 +432,29 @@ fn main() {
 }
 #[cfg(test)]
 mod tests {
-    use super::should_auto_return;
+    use super::{is_chat_url, should_auto_return};
     #[test]
     fn auto_return_only_after_a_new_login_in_the_foreground() {
-        assert!(should_auto_return(true, false, true));
-        assert!(!should_auto_return(false, false, true));
-        assert!(!should_auto_return(true, true, true));
-        assert!(!should_auto_return(true, false, false));
+        assert!(should_auto_return(true, false, true, true, true));
+        assert!(!should_auto_return(false, false, true, true, true));
+        assert!(!should_auto_return(true, true, true, true, true));
+        assert!(!should_auto_return(true, false, false, true, true));
+        assert!(!should_auto_return(true, false, true, false, true));
+        assert!(!should_auto_return(true, false, true, true, false));
+    }
+    #[test]
+    fn auth_routes_are_not_chat_pages() {
+        for url in [
+            "https://chatgpt.com/auth",
+            "https://chatgpt.com/auth/login",
+            "https://chatgpt.com/login",
+            "https://chatgpt.com/signin/callback",
+            "https://auth.openai.com/",
+        ] {
+            assert!(!is_chat_url(&url.parse().unwrap()));
+        }
+        for url in ["https://chatgpt.com/", "https://chatgpt.com/c/synthetic"] {
+            assert!(is_chat_url(&url.parse().unwrap()));
+        }
     }
 }
