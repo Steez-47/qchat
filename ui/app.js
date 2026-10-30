@@ -793,6 +793,7 @@
       const recent = (Array.isArray(parsed.recent) ? parsed.recent : [])
         .map(cleanChat)
         .filter((chat) => chat && !seen.has(chat.key) && seen.add(chat.key))
+        .filter((chat, i, all) => !chat.conversationId || (chat.conversationId !== current.conversationId && all.findIndex((c) => c.conversationId === chat.conversationId) === i))
         .sort((a, b) => b.lastActive - a.lastActive)
         .slice(0, MAX_RECENT);
       return { current, recent };
@@ -843,7 +844,7 @@
 
   function pushRecent(chat) {
     if (!QSettings.settings.keepHistory || chat.temporary) return;
-    chats.recent = [chat, ...chats.recent.filter((c) => c.key !== chat.key)].slice(0, MAX_RECENT);
+    chats.recent = [chat, ...chats.recent.filter((c) => c.key !== chat.key && !(chat.conversationId && c.conversationId === chat.conversationId))].slice(0, MAX_RECENT);
   }
 
   function recordPartial(turn) {

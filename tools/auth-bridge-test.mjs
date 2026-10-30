@@ -239,6 +239,19 @@ test('model list and choice close the synthetic menu without sending', async () 
   pending = b.chooseModel('Synthetic model'); await b.tick(200); await pending;
   assert.equal(chosen, true); assert.equal(opened, false); assert.equal(b.sendClicks(), 0);
 });
+test('model switcher that only opens from the keyboard is read, and radio items win over other menu rows', async () => {
+  const b = browser(); let opened = false, escaped = false;
+  const switcher = { focus() {}, getAttribute: name => name === 'aria-controls' ? 'model-menu' : String(opened), dispatchEvent(e) { if(e.key==='ArrowDown') opened=true; if(e.key==='Escape') {opened=false;escaped=true;} } };
+  const radio = {textContent:'GPT-6 Fast',innerText:`GPT-6
+Fast`,getAttribute:()=> 'true',dispatchEvent(){}};
+  const row = {textContent:'Medium',getAttribute:()=> null,dispatchEvent(){}};
+  const menu = { querySelectorAll: selector => selector.includes('menuitemradio') ? [radio] : [row] };
+  b.document.querySelectorAll = selector => selector.includes('Select ChatGPT model') ? [switcher] : selector==='[role="menu"]' && opened ? [menu] : [];
+  b.document.getElementById = id => id==='model-menu' && opened ? menu : null;
+  const pending = b.listModels(); await b.tick(400); await pending;
+  assert.equal(escaped, true); assert.deepEqual(b.events.at(-1).models.map(m=>m.label), ['GPT-6']);
+});
+
 test('missing model switcher reports unavailable and sends nothing', async () => {
   const b = browser(); await b.listModels();
   assert.equal(b.events.at(-1).error, 'unavailable'); assert.equal(b.sendClicks(), 0);
