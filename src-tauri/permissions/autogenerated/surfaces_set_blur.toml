@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-surfaces-set-blur"
+description = "Enables the surfaces_set_blur command without any pre-configured scope."
+commands.allow = ["surfaces_set_blur"]
+
+[[permission]]
+identifier = "deny-surfaces-set-blur"
+description = "Denies the surfaces_set_blur command without any pre-configured scope."
+commands.deny = ["surfaces_set_blur"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-surfaces-set"
+description = "Enables the surfaces_set command without any pre-configured scope."
+commands.allow = ["surfaces_set"]
+
+[[permission]]
+identifier = "deny-surfaces-set"
+description = "Denies the surfaces_set command without any pre-configured scope."
+commands.deny = ["surfaces_set"]

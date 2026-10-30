@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod clipboard;
+mod surfaces;
 mod media;
 use media::{
     attachment_begin, attachment_chunk, attachment_finish, attachment_remove, media_load,
@@ -10,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::ShortcutState;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
@@ -526,7 +527,7 @@ fn main() {
         }
     }
     let builder = tauri::Builder::default()
-        .manage(media::MediaState::default())
+        .manage(media::MediaState::default()).manage(surfaces::State::default())
         .register_asynchronous_uri_scheme_protocol("qchat-media", |context, request, responder| {
             let app = context.app_handle().clone();
             let label = context.webview_label().to_owned();
@@ -541,7 +542,7 @@ fn main() {
  .manage(Host(Mutex::new(Activity{hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0,logged_in:false,signin_was_logged_in:false,anchor:None,remember_position:true,always_on_top:true,positioned:Instant::now(),save_due:None,save_generation:0})))
 
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,_,event|{if event.state()==ShortcutState::Pressed{toggle(app);}}).build())
- .invoke_handler(tauri::generate_handler![bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy])
+ .invoke_handler(tauri::generate_handler![surfaces::surfaces_set,surfaces::surfaces_set_blur,surfaces::get_hotkey,surfaces::set_hotkey,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy])
  .setup(|app|{
  if let Ok(dir)=app.path().app_data_dir() {
    if let Ok(data)=std::fs::read(dir.join("window-state.json")) { app.state::<Host>().0.lock().unwrap().anchor=serde_json::from_slice(&data).ok(); }
@@ -570,7 +571,7 @@ fn main() {
  .initialization_script(include_str!("../bridge/chatgpt-bridge.js"))
  .on_download(|webview,event|media::on_download(webview.app_handle(),event)).build()?;
  background(app.handle());
- if test_profile().is_none() { if let Err(e) = app.global_shortcut().register("Alt+Q") { eprintln!("Alt+Q unavailable: {e}"); } }
+ surfaces::start(app.handle());
  use tauri::{menu::{Menu,MenuItem},tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState}};
  let items=[MenuItem::with_id(app,"show","Show QChat",true,None::<&str>)?,MenuItem::with_id(app,"new","New chat",true,None::<&str>)?,MenuItem::with_id(app,"settings","Settingsâ€¦",true,None::<&str>)?,MenuItem::with_id(app,"signin","Sign in to ChatGPTÃ¢â‚¬Â¦",true,None::<&str>)?,MenuItem::with_id(app,"quit","Quit",true,None::<&str>)?];
  let menu=Menu::with_items(app,&items.iter().map(|x|x as &dyn tauri::menu::IsMenuItem<_>).collect::<Vec<_>>())?;
@@ -695,3 +696,4 @@ mod tests {
         }
     }
 }
+
