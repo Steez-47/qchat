@@ -5,20 +5,21 @@
   const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
   const listen = (event, cb) => window.__TAURI__.event.listen(event, cb);
   const GUTTER = 28;
-  const STREAM_HEADROOM = 72;
   const CHATS_KEY = "qchat.chats";
   const CHATS_VERSION = 1;
   const MAX_RECENT = 3;
-  const MAX_RESPONSE = 60 * 1024;
   const OPEN_TIMEOUT = 12000;
   const FRESH_TIMEOUT = 2500;
 
   // rAF stalls while the native window is hidden, so never let work depend on it alone.
   function nextFrame(fn) {
     let ran = false;
-    const run = () => { if (!ran) { ran = true; fn(); } };
-    requestAnimationFrame(run);
-    setTimeout(run, 120);
+    let frame, timer;
+    const cancel = () => { ran = true; cancelAnimationFrame(frame); clearTimeout(timer); };
+    const run = () => { if (!ran) { cancel(); fn(); } };
+    frame = requestAnimationFrame(run);
+    timer = setTimeout(run, 120);
+    return cancel;
   }
 
   // ---------------------------------------------------------------------------
@@ -71,7 +72,12 @@
     const renderer = new window.marked.Renderer();
 
     renderer.html = (token) => escapeHtml(typeof token === "string" ? token : (token?.text ?? ""));
-    renderer.image = (href, _title, text) => `<button type="button" class="hyperlink-btn" data-action="view-media">${escapeHtml(typeof text === "string" ? text : (href?.text || "Image"))}</button>`;
+    renderer.image = (href, _title, text) => {
+      const url = sanitizeHref(typeof href === "string" ? href : href?.href);
+      const label = escapeHtml(typeof text === "string" ? text : (href?.text || "Image"));
+      return url ? `<a href="${escapeHtml(url)}" rel="noopener noreferrer">${label || "Image source"}</a>`
+        : `<button type="button" class="hyperlink-btn" data-action="view-media">${label || "Image"}</button>`;
+    };
 
     renderer.link = (href, title, text) => {
       const rawHref = typeof href === "string" ? href : (href?.href ?? "");
@@ -101,10 +107,40 @@
     window.marked.setOptions({ gfm: true, breaks: true, renderer });
   }
 
-  function renderMarkdownSafe(markdownText) {
-    const src = String(markdownText ?? "");
+  function renderMarkdownSafe(markdownText, sources = []) {
+    const citation = refs => refs.split(/[,;\s]+/).map(ref => {
+      const source = sources.find(item => item.id === ref);
+      return source ? `[${sources.indexOf(source) + 1}](<${source.url}>)` : "";
+    }).filter(Boolean).join(" ");
+    const src = String(markdownText ?? "")
+      .replace(/<Cite\b[^>]*\bref=["']([^"']+)["'][^>]*\/?\s*>(?:<\/Cite>)?/gi, (_, refs) => citation(refs))
+      .replace(/\uE200cite\uE202([^\uE201]*)\uE201/g, (_, refs) => citation(refs.replace(/\uE202/g, " ")));
     if (!src) return "";
     return window.marked ? window.marked.parse(src) : `<p>${escapeHtml(src)}</p>`;
+  }
+
+  // Parse through the same safe renderer, but keep unchanged blocks and update
+  // text nodes in place. Streaming must not reset selection or code scrollbars.
+  function syncMarkdownNodes(parent, next) {
+    const children = Array.from(next.childNodes);
+    for (let i = 0; i < children.length; i++) {
+      const incoming = children[i];
+      const current = parent.childNodes[i];
+      if (!current) { parent.append(incoming); continue; }
+      if (current.isEqualNode(incoming)) continue;
+      if (current.nodeType !== incoming.nodeType || current.nodeName !== incoming.nodeName) {
+        current.replaceWith(incoming);
+      } else if (current.nodeType === Node.TEXT_NODE) {
+        current.nodeValue = incoming.nodeValue;
+      } else if (current.nodeType === Node.ELEMENT_NODE) {
+        for (const attr of Array.from(current.attributes)) if (!incoming.hasAttribute(attr.name)) current.removeAttribute(attr.name);
+        for (const attr of incoming.attributes) if (current.getAttribute(attr.name) !== attr.value) current.setAttribute(attr.name, attr.value);
+        syncMarkdownNodes(current, incoming);
+      } else {
+        current.replaceWith(incoming);
+      }
+    }
+    while (parent.childNodes.length > children.length) parent.lastChild.remove();
   }
 
   // ---------------------------------------------------------------------------
@@ -136,6 +172,11 @@
     stage: $("stage"),
     stack: $("stack"),
     zone: $("bubble-zone"),
+    historyControls: $("history-controls"),
+    historyButton: $("btn-history"),
+    historyLabel: $("history-label"),
+    historyStatus: $("history-status"),
+    historyPanel: $("history-panel"),
     bar: $("bar"),
     orb: $("orb"),
     statusDot: $("status-dot"),
@@ -174,6 +215,11 @@
   let guestDismissed = false;
   let sentThisSession = false;
   let autoDismissTimer = null;
+  let historyOpen = false;
+  let historyChatKey = null;
+  let historyHideTimer = null;
+  const backfilled = new WeakSet();
+  let backfillTimer = null;
   const bridge = { ready: false, loggedIn: false, signedOut: false };
 
   const isStreaming = () => turns.some((t) => t.status === "streaming");
@@ -217,22 +263,466 @@
     lastActive: Date.now(),
     lastPrompt: "",
     lastResponse: "",
+    lastHasMedia: false,
+    transcript: [],
     createdAt: Date.now()
   });
 
-  const hasContent = (chat) => Boolean(chat.lastPrompt || chat.lastResponse || chat.conversationId);
+  const hasContent = (chat) => Boolean(chat.transcript?.length || chat.lastPrompt || chat.lastResponse || chat.lastHasMedia || chat.conversationId);
+
+  // Media handles and signed image URLs belong to one bridge session. History
+  // keeps prose and a hint to view prior media in ChatGPT.
+  function completedSnapshot(value, hasMedia = false) {
+    let media = Boolean(hasMedia);
+    const ephemeral = /^(?:qchat-media:|sandbox:|attachment:|https?:\/\/qchat-media\.localhost(?:[/:]|$)|https?:\/\/[^/]*oaiusercontent\.com\/)/i;
+    let text = String(value || "");
+    text = text.replace(/(!?)\[([^\]\n]*)\]\(([^\n]*?)\)/g, (match, image, label, href) => {
+      if (!image && !ephemeral.test(href.trim().replace(/^</, ""))) return match;
+      media = true;
+      return "";
+    });
+    text = text.replace(/(?:qchat-media:|sandbox:|attachment:|https?:\/\/qchat-media\.localhost\/|https?:\/\/[^\s/]*oaiusercontent\.com\/)[^\s<>)]*/gi, () => {
+      media = true;
+      return "";
+    });
+    return { text: text.trim(), hasMedia: media };
+  }
+
+  function cleanTranscript(raw, lastSnapshot) {
+    if (Array.isArray(raw.transcript)) return raw.transcript.filter(item => item &&
+      typeof item.id === "string" && (item.role === "user" || item.role === "assistant") && typeof item.text === "string")
+      .map(item => {
+        const snapshot = item.role === "user" ? { text: item.text, hasMedia: Boolean(item.hasMedia) } : completedSnapshot(item.text, item.hasMedia);
+        return { id: item.id, role: item.role, text: snapshot.text, hasMedia: snapshot.hasMedia, sources: cleanSources(item.sources) };
+      });
+    // Older versions saved only the latest exchange; earlier turns are unavailable.
+    const transcript = [];
+    if (raw.lastPrompt) transcript.push({ id: crypto.randomUUID(), role: "user", text: String(raw.lastPrompt) });
+    if (lastSnapshot.text || lastSnapshot.hasMedia) transcript.push({ id: crypto.randomUUID(), role: "assistant", ...lastSnapshot, sources: cleanSources(raw.lastSources) });
+    return transcript;
+  }
+
+  function snapshotTurn(turn) {
+    const hasMedia = Boolean(turn.media?.length || turn.attachments?.length || turn.cachedMedia);
+    const snapshot = turn.role === "user" ? { text: String(turn.text || ""), hasMedia } : completedSnapshot(turn.text, hasMedia);
+    return { id: turn.id, role: turn.role, text: snapshot.text, hasMedia: snapshot.hasMedia, sources: cleanSources(turn.sources) };
+  }
+
+  function rememberTurn(turn) {
+    if (!turn || (turn.chatKey && turn.chatKey !== chats.current.key)) return;
+    const transcript = chats.current.transcript;
+    const item = snapshotTurn(turn);
+    const index = transcript.findIndex(existing => existing.id === item.id);
+    if (index < 0) transcript.push(item);
+    else transcript[index] = item;
+  }
+
+  function historyItems() {
+    const items = chats.current.transcript.slice();
+    for (const turn of turns) {
+      if (turn.chatKey && turn.chatKey !== chats.current.key) continue;
+      const item = snapshotTurn(turn);
+      const index = items.findIndex(existing => existing.id === item.id);
+      if (index < 0) items.push(item);
+      else items[index] = item;
+    }
+    return items.filter(item => item.text || item.hasMedia);
+  }
+
+  // The same bubble markup as the live view, without its per-reply viewport:
+  // the panel is the only scroller, so a message never gets its own cutoff.
+  function createHistoryRow(item) {
+    const row = make("article", "turn-row history-row");
+    row.dataset.id = item.id;
+    row.dataset.role = item.role;
+    row.setAttribute("aria-label", item.role === "user" ? "You said" : "ChatGPT replied");
+    const content = make("div", "turn-content");
+    const media = make("div", "turn-media");
+    if (item.role === "user") {
+      const bubble = make("div", "bubble bubble-user glass glass-tiny");
+      bubble.append(content, media);
+      row.append(bubble);
+    } else {
+      const bubble = make("div", "bubble bubble-response glass");
+      const inner = make("div", "bubble-inner turn-body");
+      inner.append(content, media);
+      bubble.append(inner);
+      const tools = make("div", "bubble-tools glass glass-tiny");
+      const copy = make("button", "tool-btn");
+      copy.type = "button";
+      copy.dataset.action = "history-copy";
+      copy.title = "Copy";
+      copy.setAttribute("aria-label", "Copy reply");
+      copy.append(makeIcon(GLYPH.copy));
+      tools.append(copy);
+      row.append(bubble, tools);
+    }
+    return row;
+  }
+
+  function renderHistory() {
+    const items = historyItems();
+    const shown = el.zone.querySelectorAll(".turn-row:not(.leaving):not([hidden])").length;
+    const moreOnPage = chats.current.conversationId && !backfilled.has(chats.current);
+    el.historyControls.hidden = !historyOpen && items.length <= shown && !moreOnPage;
+    if (!historyOpen) return;
+    const panel = el.historyPanel;
+    if (historyChatKey !== chats.current.key) {
+      panel.replaceChildren();
+      historyChatKey = chats.current.key;
+    }
+    // Hold the reader's place: follow the end only if they are already there, and
+    // keep the same message on screen when older ones arrive above it.
+    const fromBottom = panel.scrollHeight - panel.scrollTop;
+    const atEnd = fromBottom - panel.clientHeight <= 28;
+    const scrollTop = panel.scrollTop;
+    const prepended = panel.childElementCount > 0 && panel.firstElementChild.dataset.id !== items[0]?.id;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      let row = panel.children[i];
+      if (!row || row.dataset.id !== item.id) {
+        row = createHistoryRow(item);
+        panel.insertBefore(row, panel.children[i] || null);
+      }
+      // Completed messages are immutable during a stream; avoid reparsing them.
+      const fingerprint = JSON.stringify([item.text, item.hasMedia, item.sources]);
+      if (row._historyFingerprint === fingerprint) continue;
+      row._historyFingerprint = fingerprint;
+      row._copyText = item.text;
+      row.toggleAttribute("data-wide", /\n/.test(item.text));
+      const content = row.querySelector(".turn-content");
+      const template = document.createElement("template");
+      if (item.role === "user") template.content.append(document.createTextNode(item.text));
+      else template.innerHTML = renderMarkdownSafe(item.text, item.sources);
+      syncMarkdownNodes(content, template.content);
+      const media = row.querySelector(".turn-media");
+      if (item.hasMedia && !media.childElementCount) {
+        const view = make("button", "hyperlink-btn", "View attachments in ChatGPT");
+        view.type = "button";
+        view.dataset.action = "history-media";
+        media.append(view);
+      } else if (!item.hasMedia) media.replaceChildren();
+    }
+    while (panel.children.length > items.length) panel.lastElementChild.remove();
+    if (prepended) panel.scrollTop = panel.scrollHeight - fromBottom;
+    else panel.scrollTop = atEnd ? panel.scrollHeight : scrollTop;
+    motion.top = panel.scrollTop;
+    syncHistoryEdge();
+    wakeHistoryMotion();
+    queueSizes();
+  }
+
+  function syncHistoryEdge() {
+    const panel = el.historyPanel;
+    panel.toggleAttribute("data-below", panel.scrollHeight - panel.scrollTop - panel.clientHeight > 4);
+  }
+
+  // Only as tall as its messages, up to the same cap as a long reply.
+  function syncHistoryHeight() {
+    const panel = el.historyPanel;
+    const last = panel.lastElementChild;
+    const content = last ? last.offsetTop + last.offsetHeight + parseFloat(getComputedStyle(panel).paddingBottom) : 0;
+    panel.style.height = `${Math.min(content, bubbleMax)}px`;
+    // Without motion nothing ticks, so the reading position is held here instead.
+    if (motion.pin && !QSettings.motionOn) {
+      panel.scrollTop = motion.pin.row.offsetTop - panel.offsetHeight + motion.pin.fromBottom;
+      motion.top = panel.scrollTop;
+      motion.pin = null;
+    }
+  }
+
+  function hideHistoryPanel() {
+    clearTimeout(historyHideTimer);
+    historyHideTimer = null;
+    const panel = el.historyPanel;
+    panel.hidden = true;
+    panel.removeAttribute("data-leaving");
+    panel.style.removeProperty("--leave-bottom");
+    panel.style.height = "";
+    panel.replaceChildren();
+    historyChatKey = null;
+  }
+
+  function setHistoryOpen(open) {
+    if (open === historyOpen) return;
+    const panel = el.historyPanel;
+    el.historyButton.setAttribute("aria-expanded", String(open));
+    el.historyLabel.textContent = open ? "Latest" : "History";
+    if (open) {
+      hideHistoryPanel();
+      // Start from the space already on screen; older messages then roll in above.
+      const zoneHeight = el.zone.hidden ? 0 : el.zone.offsetHeight + 8;
+      const start = el.historyControls.offsetHeight + zoneHeight + 8;
+      // A long reply being read keeps its text exactly where it is on screen.
+      const live = responseEntry();
+      const reading = live?.row.hasAttribute("data-capped")
+        ? { id: live.row.dataset.id, fromBottom: live.bubble.offsetHeight + 8 + live.scroller.scrollTop } : null;
+      historyOpen = true;
+      el.stack.toggleAttribute("data-history", true);
+      panel.hidden = false;
+      panel.style.height = `${start}px`;
+      renderHistory();
+      panel.scrollTop = panel.scrollHeight;
+      startHistoryMotion(reading);
+      void panel.offsetHeight;
+      clearTimeout(autoDismissTimer);
+      panel.focus({ preventScroll: true });
+      syncHistoryButton();
+      backfillHistory(chats.current);
+    } else {
+      const bottom = el.stack.getBoundingClientRect().bottom - panel.getBoundingClientRect().bottom;
+      historyOpen = false;
+      el.stack.toggleAttribute("data-history", false);
+      stopHistoryMotion();
+      setHistoryStatus("");
+      if (QSettings.motionOn) {
+        // Fades out where it stands while the live bubble returns beneath it.
+        panel.style.setProperty("--leave-bottom", `${bottom}px`);
+        panel.setAttribute("data-leaving", "");
+        historyHideTimer = setTimeout(hideHistoryPanel, QSettings.timings.t2 + 30);
+      } else hideHistoryPanel();
+      el.promptInput.focus({ preventScroll: true });
+      const entry = responseEntry();
+      if (entry) {
+        updateBubbleMax();
+        syncBubbleSize(entry);
+        // History ended at the latest line, so the live reply picks up from there.
+        userScrolledUp = false;
+        entry.scroller.scrollTop = entry.scroller.scrollHeight;
+        entry.followTop = entry.scroller.scrollTop;
+      }
+      if (!isBusy() && entry) armAutoDismiss();
+      renderHistory();
+      syncHistoryButton();
+    }
+    queueSizes();
+  }
+
+  // Latest glides down through the conversation before handing back to the live bubble.
+  function returnToLatest() {
+    if (!historyOpen) return;
+    const panel = el.historyPanel;
+    const from = panel.scrollTop;
+    const distance = panel.scrollHeight - panel.clientHeight - from;
+    if (!QSettings.motionOn || distance < 2) { setHistoryOpen(false); return; }
+    motion.pin = null;
+    motion.glide = { from, start: performance.now(), duration: Math.min(620, 240 + distance / 6) };
+    wakeHistoryMotion();
+  }
+
+  // The bubbles behave like they are on springs. Each lags behind the scroll in
+  // proportion to its distance from the pointer, so gaps open and close (push and
+  // pull), and each pops in or out as it crosses the panel's edges.
+  const POP_FROM = 0.8;
+  const motion = { frame: null, time: 0, top: 0, pointer: null, pin: null, glide: null, opening: null, active: new Map() };
+
+  function wakeHistoryMotion() {
+    if (motion.frame || !historyOpen || !QSettings.motionOn) return;
+    motion.time = performance.now();
+    motion.frame = requestAnimationFrame(tickHistoryMotion);
+  }
+
+  function clearRowMotion(row) {
+    row.style.removeProperty("transform");
+    row.style.removeProperty("opacity");
+  }
+
+  function stopHistoryMotion() {
+    if (motion.frame) cancelAnimationFrame(motion.frame);
+    motion.frame = null;
+    motion.pin = motion.glide = motion.opening = null;
+    // The panel fades out as it stands; only half-popped bubbles settle first.
+    for (const row of motion.active.keys()) clearRowMotion(row);
+    motion.active.clear();
+  }
+
+  function startHistoryMotion(reading) {
+    const panel = el.historyPanel;
+    const liveRow = reading ? [...panel.children].find(row => row.dataset.id === reading.id) : panel.lastElementChild;
+    if (reading && liveRow) {
+      motion.pin = { row: liveRow, fromBottom: reading.fromBottom, until: performance.now() + QSettings.timings.t3 + 80 };
+      panel.scrollTop = liveRow.offsetTop - panel.offsetHeight + reading.fromBottom;
+    }
+    motion.top = panel.scrollTop;
+    if (!QSettings.motionOn) return;
+    motion.pointer = null;
+    motion.opening = { liveRow };
+    wakeHistoryMotion();
+  }
+
+  function tickHistoryMotion(now) {
+    motion.frame = null;
+    if (!historyOpen) return;
+    if (!QSettings.motionOn) { stopHistoryMotion(); return; }
+    const panel = el.historyPanel;
+    const dt = Math.min(0.032, Math.max(0.001, (now - motion.time) / 1000));
+    motion.time = now;
+    if (motion.pin) {
+      if (now > motion.pin.until) motion.pin = null;
+      else { panel.scrollTop = motion.pin.row.offsetTop - panel.offsetHeight + motion.pin.fromBottom; motion.top = panel.scrollTop; }
+    }
+    if (motion.glide) {
+      const { from, start, duration } = motion.glide;
+      const t = Math.min(1, (now - start) / duration);
+      const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      panel.scrollTop = from + (panel.scrollHeight - panel.clientHeight - from) * eased;
+      if (t === 1) { setHistoryOpen(false); return; }
+    }
+    const top = panel.scrollTop;
+    const height = panel.clientHeight;
+    const delta = top - motion.top;
+    motion.top = top;
+    const pointer = motion.pointer ?? height;
+
+    // Rows are in document order, so the on-screen ones are a contiguous run.
+    const rows = panel.children;
+    let low = 0, high = rows.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (rows[mid].offsetTop + rows[mid].offsetHeight > top - 120) high = mid; else low = mid + 1;
+    }
+    const seen = [];
+    for (let i = low; i < rows.length && rows[i].offsetTop - top < height + 120; i++) seen.push(rows[i]);
+
+    let moving = Boolean(motion.pin || motion.glide);
+    const opening = motion.opening;
+    seen.forEach((row, index) => {
+      const rowTop = row.offsetTop - top;
+      const rowHeight = row.offsetHeight;
+      let state = motion.active.get(row);
+      if (!state) {
+        const settled = opening && opening.liveRow === row;
+        state = { y: 0, vy: 0, scale: settled ? 1 : POP_FROM, vs: 0, alpha: settled ? 1 : 0, shown: settled, wait: opening ? (seen.length - 1 - index) * 0.05 : 0 };
+        motion.active.set(row, state);
+      }
+      const visible = Math.min(rowTop + rowHeight, height - 4) - Math.max(rowTop, 30);
+      const need = Math.min(rowHeight * 0.4, 30);
+      state.shown = visible >= (state.shown ? need * 0.4 : need);
+      if (delta) {
+        const centre = Math.max(rowTop, Math.min(pointer, rowTop + rowHeight));
+        const reach = Math.min(1, Math.abs(centre - pointer) / height);
+        state.y = Math.max(-30, Math.min(30, state.y + delta * reach * 0.24));
+      }
+      state.vy += (-240 * state.y - 24 * state.vy) * dt;
+      state.y += state.vy * dt;
+      if (state.wait > 0 && state.shown) state.wait -= dt;
+      const target = state.shown && state.wait <= 0 ? 1 : POP_FROM;
+      state.vs += (-320 * (state.scale - target) - 19 * state.vs) * dt;
+      state.scale += state.vs * dt;
+      const alphaTarget = target === 1 ? 1 : 0;
+      state.alpha += (alphaTarget - state.alpha) * Math.min(1, dt * (alphaTarget ? 17 : 24));
+      const resting = Math.abs(state.y) < 0.1 && Math.abs(state.vy) < 1 && Math.abs(state.scale - target) < 0.002 && Math.abs(state.vs) < 0.02 && Math.abs(state.alpha - alphaTarget) < 0.01;
+      if (resting && target === 1) { state.y = state.vy = state.vs = 0; state.scale = state.alpha = 1; clearRowMotion(row); return; }
+      if (!resting) moving = true;
+      // A tall bubble only needs a hint of the scale to read as the same pop.
+      const scale = 1 + (state.scale - 1) * Math.min(1, 220 / rowHeight);
+      row.style.transform = `translate3d(0, ${state.y.toFixed(2)}px, 0) scale(${scale.toFixed(4)})`;
+      row.style.opacity = state.alpha.toFixed(3);
+    });
+    const inView = new Set(seen);
+    for (const row of motion.active.keys()) if (!inView.has(row)) { clearRowMotion(row); motion.active.delete(row); }
+    motion.opening = null;
+    if (moving) wakeHistoryMotion();
+  }
+
+  // Overscrolling at either end stretches the column, then it springs back.
+  function pullHistory(event) {
+    const panel = el.historyPanel;
+    motion.pointer = event.clientY - panel.getBoundingClientRect().top;
+    motion.pin = motion.glide = null;
+    const atTop = panel.scrollTop <= 0 && event.deltaY < 0;
+    const atEnd = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 1 && event.deltaY > 0;
+    if (atTop || atEnd) {
+      for (const [row, state] of motion.active) {
+        const rowTop = row.offsetTop - panel.scrollTop;
+        const reach = 0.35 + 0.65 * Math.min(1, Math.abs(rowTop + row.offsetHeight / 2 - motion.pointer) / panel.clientHeight);
+        state.vy = Math.max(-340, Math.min(340, state.vy - event.deltaY * 1.5 * reach));
+      }
+    }
+    wakeHistoryMotion();
+  }
+
+  // For a long reply the control belongs to the top of the text: it steps aside
+  // while reading further down. Its space stays reserved so nothing shifts.
+  function syncHistoryButton() {
+    const entry = responseEntry();
+    const away = !historyOpen && Boolean(entry?.row.hasAttribute("data-capped")) && entry.scroller.scrollTop > 6;
+    el.historyControls.toggleAttribute("data-away", away);
+    el.historyButton.tabIndex = away ? -1 : 0;
+  }
+
+  let historyStatusTimer = null;
+  function setHistoryStatus(text, clearAfter = 0) {
+    clearTimeout(historyStatusTimer);
+    el.historyStatus.textContent = text;
+    el.historyStatus.hidden = !text || !historyOpen;
+    if (clearAfter) historyStatusTimer = setTimeout(() => setHistoryStatus(""), clearAfter);
+  }
+
+  function backfillFailed(chat) {
+    clearTimeout(backfillTimer);
+    backfillTimer = null;
+    backfilled.delete(chat);
+    if (chats.current === chat) setHistoryStatus("Couldn't load earlier messages", 4000);
+  }
+
+  // ChatGPT holds the messages from before this PC kept a transcript. Read them
+  // once per chat; any failure just leaves the local transcript as it is.
+  function backfillHistory(chat) {
+    if (!chat.conversationId || backfilled.has(chat) || isBusy()) return;
+    backfilled.add(chat);
+    setHistoryStatus("Loading earlier messages");
+    pageSync = pageSync.catch(() => {}).then(() => {
+      if (chats.current === chat && page.conv !== chat.conversationId) return openInPage(chat);
+    }).then(() => {
+      if (chats.current !== chat) return;
+      backfillTimer = setTimeout(() => backfillFailed(chat), 20000);
+      return invoke("chat_read_transcript", { conversationId: chat.conversationId });
+    }).catch(() => backfillFailed(chat));
+  }
+
+  const comparable = (text) => String(text || "").replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+
+  // Adds only what comes before the oldest local prompt; local turns keep their
+  // original markdown and sources. Repeat reads find nothing new to add.
+  function mergePageTranscript(chat, messages) {
+    if (!Array.isArray(messages)) { backfillFailed(chat); return; }
+    clearTimeout(backfillTimer);
+    backfillTimer = null;
+    setHistoryStatus("");
+    const older = cleanTranscript({ transcript: messages.map(item => ({ ...item, id: crypto.randomUUID() })) }).filter(item => item.text || item.hasMedia);
+    const local = chat.transcript.filter(item => item.text || item.hasMedia);
+    let end = older.length;
+    if (local.length) {
+      const anchor = local.find(item => item.role === "user" && comparable(item.text));
+      if (!anchor) return;
+      const key = comparable(anchor.text);
+      const isAnchor = item => item.role === "user" && comparable(item.text) === key;
+      // A repeated prompt: count back from the end, as the local copy is the tail.
+      const matches = older.flatMap((item, index) => isAnchor(item) ? [index] : []);
+      end = matches[matches.length - local.filter(isAnchor).length] ?? -1;
+    }
+    if (end <= 0) return;
+    chat.transcript = [...older.slice(0, end), ...chat.transcript];
+    saveChats();
+    renderHistory();
+  }
 
   function cleanChat(raw) {
     if (!raw || typeof raw !== "object" || typeof raw.key !== "string" || !raw.key) return null;
     const text = (value, max) => (typeof value === "string" ? value.slice(0, max) : "");
     const time = (value) => (Number.isFinite(value) && value > 0 ? value : Date.now());
+    const snapshot = completedSnapshot(text(raw.lastResponse, Infinity), raw.lastHasMedia === true);
     return {
       key: raw.key,
       conversationId: typeof raw.conversationId === "string" && raw.conversationId ? raw.conversationId : null,
       title: text(raw.title, 40),
       lastActive: time(raw.lastActive),
-      lastPrompt: text(raw.lastPrompt, 4000),
-      lastResponse: text(raw.lastResponse, MAX_RESPONSE),
+      lastPrompt: text(raw.lastPrompt, Infinity),
+      lastResponse: snapshot.text,
+      lastHasMedia: snapshot.hasMedia,
+      lastSources: cleanSources(raw.lastSources),
+      transcript: cleanTranscript(raw, snapshot),
       createdAt: time(raw.createdAt)
     };
   }
@@ -274,8 +764,12 @@
   }
 
   function recordPartial(turn) {
-    if (!turn || turn.role !== "assistant" || !turn.text || turn.chatKey !== chats.current.key) return;
-    chats.current.lastResponse = turn.text.slice(0, MAX_RESPONSE);
+    if (!turn || turn.role !== "assistant" || (!turn.text && !turn.media?.length) || turn.chatKey !== chats.current.key) return;
+    rememberTurn(turn);
+    const snapshot = completedSnapshot(turn.text, turn.media?.length || turn.cachedMedia);
+    chats.current.lastResponse = snapshot.text;
+    chats.current.lastHasMedia = snapshot.hasMedia;
+    chats.current.lastSources = cleanSources(turn.sources);
     chats.current.lastActive = Date.now();
     saveChats();
   }
@@ -499,6 +993,37 @@
       return false;
     } catch (_) { return false; }
   }
+  function cleanSources(items) {
+    const result = [], seen = new Set();
+    for (const item of Array.isArray(items) ? items.slice(0, 100) : []) {
+      const url = sanitizeHref(item?.url);
+      if (!url || !/^https?:/i.test(url) || seen.has(url)) continue;
+      seen.add(url);
+      result.push({ id: String(item.id || url).slice(0, 200), url, title: String(item.title || new URL(url).hostname).slice(0, 300) });
+    }
+    return result;
+  }
+  function renderSources(turn) {
+    const entry = turnNodes.get(turn.id);
+    if (!entry) return;
+    const items = cleanSources(turn.sources);
+    if (!items.length) { entry.sourcesEl?.remove(); entry.sourcesEl = null; return; }
+    if (!entry.sourcesEl) {
+      entry.sourcesEl = make("details", "turn-sources");
+      entry.sourcesEl.append(make("summary"), make("ol"));
+      entry.sourcesEl.addEventListener("toggle", () => queueSizes());
+      entry.mediaEl.before(entry.sourcesEl);
+    }
+    entry.sourcesEl.querySelector("summary").textContent = `Sources (${items.length})`;
+    const list = entry.sourcesEl.querySelector("ol");
+    list.replaceChildren(...items.map(item => {
+      const row = make("li"), link = make("a", "", item.title);
+      link.href = item.url;
+      link.rel = "noopener noreferrer";
+      row.append(link);
+      return row;
+    }));
+  }
   function appendMedia(turn, items) {
     const entry = turnNodes.get(turn.id);
     if (!entry) return;
@@ -581,6 +1106,7 @@
   let fitQueued = false;
   let shrinkTimer = null;
   let sizesQueued = false;
+  let promptTargetHeight = 0;
 
   const responseEntry = () => {
     for (const turn of turns) {
@@ -591,23 +1117,25 @@
   };
 
   function updateBubbleMax() {
-    const chrome = el.stack.offsetHeight - (el.zone.hidden ? 0 : el.zone.offsetHeight);
+    const chrome = el.stack.offsetHeight - (historyOpen ? el.historyPanel.offsetHeight : (el.zone.hidden ? 0 : el.zone.offsetHeight));
     const pct = QSettings.settings.maxHeightPct / 100;
-    bubbleMax = Math.max(120, Math.round(pct * window.screen.availHeight) - chrome);
+    bubbleMax = Math.max(120, Math.round(pct * window.screen.availHeight) - chrome - 2 * GUTTER);
   }
 
   // Layout reads only; the bubble's width and height ease towards what the text needs.
   function syncBubbleSize(entry) {
-    if (!entry?.bubble || entry.row.hidden) return;
+    if (!entry?.bubble || entry.row.hidden || historyOpen) return;
     const capped = entry.inner.offsetHeight > bubbleMax;
     if (capped !== entry.row.hasAttribute("data-capped")) entry.row.toggleAttribute("data-capped", capped);
     const barWidth = el.stack.offsetWidth;
-    const width = capped ? barWidth : Math.min(entry.inner.offsetWidth, barWidth);
+    const width = capped || entry.row.dataset.status === "streaming" || entry.row.hasAttribute("data-wide")
+      ? barWidth : Math.min(entry.inner.offsetWidth, barWidth);
     const target = Math.min(entry.inner.offsetHeight, bubbleMax);
     entry.targetHeight = target;
     entry.bubble.style.width = `${width}px`;
     entry.bubble.style.height = `${target}px`;
     followStream(entry);
+    syncHistoryButton();
   }
 
   function followStream(entry) {
@@ -615,7 +1143,10 @@
       if (entry.jump) entry.jump.hidden = true;
       return;
     }
-    if (!userScrolledUp) entry.scroller.scrollTop = entry.scroller.scrollHeight;
+    if (!userScrolledUp) {
+      entry.scroller.scrollTop = entry.scroller.scrollHeight;
+      entry.followTop = entry.scroller.scrollTop;
+    }
   }
 
   const scrollToBottom = () => { const entry = responseEntry(); if (entry) followStream(entry); };
@@ -626,16 +1157,27 @@
     nextFrame(() => {
       sizesQueued = false;
       updateBubbleMax();
+      if (historyOpen) syncHistoryHeight();
       const entry = responseEntry();
-      if (entry) syncBubbleSize(entry);
+      if (entry && !historyOpen) syncBubbleSize(entry);
       queueFit();
     });
   }
 
   function wantedSize() {
     let height = el.stack.offsetHeight;
+    // Reserve the destination before the textarea eases into it. This keeps
+    // native window growth out of the per-frame CSS animation.
+    height += Math.max(0, promptTargetHeight - el.promptInput.offsetHeight);
     const entry = responseEntry();
-    if (entry && entry.targetHeight > entry.bubble.offsetHeight) height += entry.targetHeight - entry.bubble.offsetHeight;
+    if (entry && !historyOpen) {
+      // Reserve the complete streaming viewport once. Native bottom anchoring must
+      // not move the whole conversation each time another line is revealed.
+      const target = entry.row.dataset.status === "streaming" ? bubbleMax : entry.targetHeight;
+      height += Math.max(0, target - entry.bubble.offsetHeight);
+    }
+    // Same for the history viewport: the window grows first, then the panel eases into it.
+    if (historyOpen) height += Math.max(0, parseFloat(el.historyPanel.style.height || 0) - el.historyPanel.offsetHeight);
     return { width: el.stack.offsetWidth + 2 * GUTTER, height: height + 2 * GUTTER };
   }
 
@@ -648,20 +1190,19 @@
   function fitNow() {
     const want = wantedSize();
     const entry = responseEntry();
-    const growing = isStreaming() && entry && !entry.row.hasAttribute("data-capped");
+    const growing = !historyOpen && isStreaming() && entry && !entry.row.hasAttribute("data-capped");
     if (want.height > lastFit.height || want.width !== lastFit.width) {
       clearTimeout(shrinkTimer);
       shrinkTimer = null;
-      // While text streams, ask for spare room so each new line doesn't resize the OS window.
-      const spare = growing ? STREAM_HEADROOM : 0;
-      const height = want.height > lastFit.height ? want.height + spare : lastFit.height;
+      // wantedSize already reserves the streaming viewport.
+      const height = want.height > lastFit.height ? want.height : lastFit.height;
       sendFit(want.width, height);
     } else if (want.height < lastFit.height) {
       if (growing || shrinkTimer) return;
       // Shrink only after the exit animation, so nothing leaving gets clipped.
       shrinkTimer = setTimeout(() => {
         shrinkTimer = null;
-        if (isStreaming() && responseEntry()) return;
+        if (!historyOpen && isStreaming() && responseEntry()) return;
         const now = wantedSize();
         sendFit(now.width, now.height);
       }, QSettings.timings.t3 + 60);
@@ -685,6 +1226,7 @@
   // ---------------------------------------------------------------------------
   function syncZone() {
     el.zone.hidden = el.zone.childElementCount === 0;
+    renderHistory();
     updateIdleChips();
     queueSizes();
   }
@@ -730,12 +1272,17 @@
     const inner = make("div", "bubble-inner turn-body");
     const contentEl = make("div", "turn-content");
     const mediaEl = make("div", "turn-media");
+    const activity = make("div", "tool-activity");
+    activity.hidden = true;
+    activity.setAttribute("role", "status");
+    activity.setAttribute("aria-live", "polite");
+    activity.append(makeProgressRing(), make("span", "tool-activity-label"), make("span", "tool-activity-track"));
     const generation = make("div", "image-generation");
     generation.hidden = true; generation.setAttribute("role", "status"); generation.setAttribute("aria-live", "polite");
     generation.append(makeProgressRing(), make("span", "image-generation-label", "Creating image…"), make("span", "image-generation-value"));
     const errorWrap = make("div", "turn-error");
     errorWrap.hidden = true;
-    inner.append(contentEl, mediaEl, generation, errorWrap);
+    inner.append(activity, contentEl, mediaEl, generation, errorWrap);
     scroller.append(inner);
     bubble.append(scroller, make("div", "stream-sheen"));
 
@@ -764,16 +1311,21 @@
       userScrolledUp = false;
       jump.hidden = true;
       scroller.scrollTop = scroller.scrollHeight;
+      const entry = turnNodes.get(turn.id);
+      if (entry) entry.followTop = scroller.scrollTop;
     });
 
     scroller.addEventListener("scroll", () => {
+      syncHistoryButton();
       const nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 28;
+      const entry = turnNodes.get(turn.id);
+      if (!nearBottom && !userScrolledUp && scroller.scrollTop === entry?.followTop) return;
       userScrolledUp = !nearBottom;
       jump.hidden = nearBottom || !row.hasAttribute("data-capped");
     });
 
     row.append(bubble, tools, jump);
-    const entry = { row, bubble, scroller, inner, contentEl, errorWrap, mediaEl, generation, jump, mediaItems: new Map(), targetHeight: 0 };
+    const entry = { row, bubble, scroller, inner, contentEl, errorWrap, mediaEl, generation, activity, jump, mediaItems: new Map(), targetHeight: 0 };
     turnNodes.set(turn.id, entry);
     sizeObserver.observe(inner);
     return row;
@@ -811,9 +1363,8 @@
     const sched = renderSchedule.get(turnId);
     if (sched) {
       sched.queued = false;
-      if (sched.timerId) clearTimeout(sched.timerId);
-      sched.timerId = null;
-      sched.lastRenderTs = performance.now();
+      sched.cancelFrame?.();
+      sched.cancelFrame = null;
     }
 
     const turn = turns.find((t) => t.id === turnId);
@@ -821,6 +1372,10 @@
     if (!turn || !entry || turn.role !== "assistant") return;
 
     entry.row.dataset.status = turn.status;
+    const activity = entry.activity;
+    activity.hidden = turn.status !== "streaming" || turn.backendDone || turn.activity?.state !== "running";
+    activity.dataset.kind = turn.activity?.kind || "tool";
+    activity.querySelector(".tool-activity-label").textContent = turn.activity?.label || "Using a tool…";
     const generation = entry.generation;
     generation.hidden = turn.status !== "streaming" || turn.imageProgress?.state !== "generating";
     const percentage = turn.imageProgress?.percentage;
@@ -830,7 +1385,13 @@
     generation.querySelector(".image-generation-value").textContent = known ? `${percentage}%` : "";
     generation.querySelector(".image-generation-label").textContent = turn.imageProgress?.phase === "preparing" ? "Preparing image…" : "Creating image…";
 
-    entry.contentEl.innerHTML = renderMarkdownSafe(turn.text);
+    const visibleText = entry.reveal ? entry.reveal.visible : turn.text;
+    if (entry.renderedText !== visibleText) {
+      const template = document.createElement("template");
+      template.innerHTML = renderMarkdownSafe(visibleText, turn.sources);
+      syncMarkdownNodes(entry.contentEl, template.content);
+      entry.renderedText = visibleText;
+    }
     if (turn.status === "error") {
       entry.errorWrap.replaceChildren(buildTurnError(turn));
       entry.errorWrap.hidden = false;
@@ -838,9 +1399,102 @@
       entry.errorWrap.hidden = true;
       entry.errorWrap.replaceChildren();
     }
-    entry.row.toggleAttribute("data-empty", !turn.text && !entry.mediaEl.childElementCount);
+    entry.row.toggleAttribute("data-empty", !turn.text && !entry.mediaEl.childElementCount && activity.hidden);
     followStream(entry);
+    renderHistory();
     queueSizes();
+  }
+
+  // Keep transport snapshots separate from their paced presentation. The full
+  // text remains on the turn for history/copy even while the visible tail drains.
+  const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+  function cancelReveal(entry) {
+    entry?.reveal?.cancel?.();
+    if (entry?.reveal) entry.reveal.cancel = null;
+  }
+
+  function finishReveal(turn, entry) {
+    if (!turn.backendDone || turn.status !== "streaming") return;
+    turn.status = "done";
+    // Multiline answers keep their wrapping width when the streaming class ends.
+    entry.row.toggleAttribute("data-wide", /\n/.test(turn.text) || entry.inner.offsetHeight > 72);
+    renderTurnNow(turn.id);
+    updateComposerMode();
+    armAutoDismiss();
+    queueSizes();
+  }
+
+  function flushReveal(turn) {
+    const entry = turnNodes.get(turn.id);
+    cancelReveal(entry);
+    if (entry?.reveal) entry.reveal.visible = turn.text;
+    if (entry) finishReveal(turn, entry);
+  }
+
+  function paceTurn(turn) {
+    const entry = turnNodes.get(turn.id);
+    if (!entry || turn.status !== "streaming") return;
+    let state = entry.reveal;
+    if (!state) state = entry.reveal = { visible: "", target: "", ends: [], index: 0, last: Date.now(), credit: 0, cancel: null };
+    if (state.target !== turn.text) {
+      const parts = Array.from(graphemes.segment(turn.text));
+      // Only unseen tails are paced. A correction to visible text (including
+      // an extended final grapheme) replaces the snapshot once, without replay.
+      const shown = Array.from(graphemes.segment(state.visible));
+      let common = 0;
+      while (common < shown.length && common < parts.length && shown[common].segment === parts[common].segment) common++;
+      state.ends = parts.map(part => part.index + part.segment.length);
+      state.target = turn.text;
+      if (common < shown.length) {
+        cancelReveal(entry);
+        state.index = state.ends.length;
+        state.visible = turn.text;
+        state.credit = 0;
+        state.last = Date.now();
+        if (turn.text) revealResponse(turn);
+        renderTurnNow(turn.id);
+        finishReveal(turn, entry);
+        return;
+      }
+      state.index = common;
+      state.visible = turn.text.slice(0, state.ends[common - 1] || 0);
+    }
+    if (!QSettings.motionOn) {
+      flushReveal(turn);
+      if (turn.text) revealResponse(turn);
+      renderTurnNow(turn.id);
+      return;
+    }
+    if (state.cancel) return;
+    if (state.index === state.ends.length) {
+      renderTurnNow(turn.id);
+      finishReveal(turn, entry);
+      return;
+    }
+    const tick = () => {
+      state.cancel = null;
+      if (turnNodes.get(turn.id) !== entry || turn.status !== "streaming") return;
+      if (!QSettings.motionOn) { flushReveal(turn); renderTurnNow(turn.id); return; }
+      const now = Date.now();
+      const remaining = state.ends.length - state.index;
+      const seconds = turn.backendDone ? Math.max(0.04, (state.deadline - now) / 1000) : 1.5;
+      const rate = Math.max(65, remaining / seconds);
+      state.credit += Math.min(64, Math.max(0, now - state.last)) * rate / 1000;
+      state.last = now;
+      const count = Math.min(remaining, Math.floor(state.credit));
+      if (count) {
+        state.credit -= count;
+        state.index += count;
+        state.visible = state.target.slice(0, state.ends[state.index - 1] || 0);
+        revealResponse(turn);
+        renderTurnNow(turn.id);
+      }
+      if (state.index < state.ends.length) state.cancel = nextFrame(tick);
+      else finishReveal(turn, entry);
+    };
+    state.last = Date.now();
+    state.cancel = nextFrame(tick);
   }
 
   function scheduleTurnRender(turnId, immediate = false) {
@@ -850,16 +1504,14 @@
     }
     let sched = renderSchedule.get(turnId);
     if (!sched) {
-      sched = { queued: false, timerId: null, lastRenderTs: 0 };
+      sched = { queued: false, cancelFrame: null };
       renderSchedule.set(turnId, sched);
     }
     if (sched.queued) return;
     sched.queued = true;
-    const waitMs = Math.max(0, 50 - (performance.now() - sched.lastRenderTs));
-    sched.timerId = setTimeout(() => {
-      sched.timerId = null;
-      nextFrame(() => { if (sched.queued) renderTurnNow(turnId); });
-    }, waitMs);
+    sched.cancelFrame = nextFrame(() => {
+      if (sched.queued && renderSchedule.get(turnId) === sched) renderTurnNow(turnId);
+    });
   }
 
   // First real output: the prompt bows out and the response takes its place.
@@ -882,12 +1534,14 @@
   }
 
   function retireTurn(turn, immediate = false) {
+    rememberTurn(turn);
     const index = turns.indexOf(turn);
     if (index >= 0) turns.splice(index, 1);
     for (const file of turn.attachments || []) releasePreview(file.previewURL);
     const entry = turnNodes.get(turn.id);
+    cancelReveal(entry);
     const sched = renderSchedule.get(turn.id);
-    if (sched?.timerId) clearTimeout(sched.timerId);
+    sched?.cancelFrame?.();
     if (sched) sched.queued = false;
     renderSchedule.delete(turn.id);
     turnNodes.delete(turn.id);
@@ -924,19 +1578,36 @@
     const check = () => {
       const entry = responseEntry();
       if (!entry || isBusy()) return;
-      if (entry.row.matches(":hover, :focus-within")) { autoDismissTimer = setTimeout(check, 1500); return; }
+      if (historyOpen || entry.row.matches(":hover, :focus-within")) { autoDismissTimer = setTimeout(check, 1500); return; }
       dismissExchange();
     };
     autoDismissTimer = setTimeout(check, seconds * 1000);
   }
 
   function showCachedResponse(chat) {
-    if (!chat.lastResponse) return;
-    const turn = { id: crypto.randomUUID(), role: "assistant", text: chat.lastResponse, status: "done", chatKey: chat.key, prompt: chat.lastPrompt };
+    renderHistory();
+    const cachedTurn = chat.transcript.findLast(item => item.role === "assistant");
+    const snapshot = completedSnapshot(cachedTurn ? cachedTurn.text : chat.lastResponse, cachedTurn ? cachedTurn.hasMedia : chat.lastHasMedia);
+    const fallback = snapshot.hasMedia || (!snapshot.text && chat.conversationId && chat.lastPrompt);
+    if (!snapshot.text && !fallback) return;
+    const turn = { id: cachedTurn?.id || crypto.randomUUID(), role: "assistant", text: snapshot.text, sources: cleanSources(cachedTurn ? cachedTurn.sources : chat.lastSources), status: "done", cachedMedia: Boolean(fallback), chatKey: chat.key, prompt: chat.lastPrompt };
     turns.push(turn);
     el.zone.append(createResponseRow(turn));
+    const entry = turnNodes.get(turn.id);
+    renderSources(turn);
+    if (fallback) {
+      const view = make("button", "hyperlink-btn", "View in ChatGPT");
+      view.type = "button";
+      view.dataset.action = "view-media";
+      entry.mediaEl.append(view);
+    }
+    // Restored context is already complete: no entrance or letter replay.
+    renderTurnNow(turn.id);
+    entry.row.hidden = false;
+    entry.row.toggleAttribute("data-wide", /\n/.test(turn.text) || entry.inner.offsetHeight > 72);
     el.zone.hidden = false;
-    revealResponse(turn);
+    syncBubbleSize(entry);
+    queueSizes();
   }
 
   // ---------------------------------------------------------------------------
@@ -954,15 +1625,27 @@
     syncTabsDisabled();
   }
 
+  let promptMeasure;
   function autoResizePrompt() {
     const input = el.promptInput;
-    input.style.height = "auto";
-    const full = input.scrollHeight;
+    if (!promptMeasure) {
+      promptMeasure = document.createElement("textarea");
+      promptMeasure.className = "bar-input prompt-measure";
+      promptMeasure.tabIndex = -1;
+      promptMeasure.setAttribute("aria-hidden", "true");
+      promptMeasure.rows = 1;
+      input.parentElement.append(promptMeasure);
+    }
+    promptMeasure.style.width = `${input.getBoundingClientRect().width}px`;
+    promptMeasure.value = input.value;
+    const full = promptMeasure.scrollHeight;
     const style = getComputedStyle(input);
     const max = parseFloat(style.lineHeight) * 6 + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-    input.style.height = `${Math.min(full, max)}px`;
+    promptTargetHeight = Math.min(full, max);
+    input.style.height = `${promptTargetHeight}px`;
     input.style.overflowY = full > max + 1 ? "auto" : "hidden";
     updateComposerMode();
+    queueSizes();
   }
 
   const IMAGE_PROMPT = /^(?:please\s+)?(?:generate|create|draw|paint|render|make|design)\b[\s\S]{0,100}\b(?:image|picture|photo|illustration|artwork|portrait)\b/i;
@@ -982,10 +1665,11 @@
     hideGlobalError();
     closeSlashMenu();
     hideClearConfirm();
+    setHistoryOpen(false);
     dismissExchange();
     sentThisSession = true;
 
-    const userTurn = { id: crypto.randomUUID(), role: "user", text: prompt, status: "done", attachments: files.map((f) => ({ name: f.file.name, size: f.file.size, previewURL: imagePreview(f.file) })) };
+    const userTurn = { id: crypto.randomUUID(), role: "user", text: prompt, status: "done", chatKey: chat.key, attachments: files.map((f) => ({ name: f.file.name, size: f.file.size, previewURL: imagePreview(f.file) })) };
     const assistantTurn = { id: crypto.randomUUID(), role: "assistant", text: "", status: "streaming", prompt, hadAttachments: files.length > 0, chatKey: chat.key };
     if (IMAGE_PROMPT.test(prompt)) assistantTurn.imageProgress = { state: "generating", phase: "preparing" };
 
@@ -1003,7 +1687,9 @@
 
     const label = prompt || files[0]?.file.name || "Attachment";
     chat.title = chat.title || label.slice(0, 40);
-    chat.lastPrompt = label.slice(0, 4000);
+    chat.lastPrompt = label;
+    rememberTurn(userTurn);
+    rememberTurn(assistantTurn);
     chat.lastActive = Date.now();
     saveChats();
 
@@ -1035,6 +1721,7 @@
       }
       if (assistantTurn.status !== "streaming") return;
       const code = errorCode(err);
+      flushReveal(assistantTurn);
       assistantTurn.status = "error";
       assistantTurn.code = code;
       assistantTurn.error = formatErrorCopy(code);
@@ -1049,9 +1736,10 @@
 
   async function stopStreaming() {
     if (!isStreaming()) return;
-    try { await invoke("chat_stop"); } catch (_) {}
-    for (const t of turns.slice()) {
+    const stopping = turns.filter((t) => t.status === "streaming");
+    for (const t of stopping) {
       if (t.status === "streaming") {
+        flushReveal(t);
         t.status = "done";
         recordPartial(t);
         const entry = turnNodes.get(t.id);
@@ -1059,6 +1747,9 @@
         else if (entry && !entry.row.hidden) scheduleTurnRender(t.id, true);
       }
     }
+    updateComposerMode();
+    queueSizes();
+    try { await invoke("chat_stop"); } catch (_) {}
     if (!sending && !turns.some((t) => t.role === "assistant" && (t.text || t.media?.length))) dismissExchange();
     updateComposerMode();
     queueSizes();
@@ -1083,6 +1774,8 @@
 
     if (hasContent(chats.current)) { chats.current.lastActive = Date.now(); pushRecent(chats.current); }
     chats.current = freshChat();
+    setHistoryOpen(false);
+    renderHistory();
     saveChats();
     renderTabs();
     updateIdleChips();
@@ -1132,13 +1825,16 @@
         tab.type = "button";
         tab.dataset.key = chat.key;
         tab.style.setProperty("--i", String(fresh++));
-        tab.append(makeIcon(GLYPH.clock), make("span", "tab-label"));
+        tab.append(makeIcon(GLYPH.clock), make("span", "tab-title"), make("span", "tab-label"));
         tab.addEventListener("animationend", () => tab.classList.remove("pop"), { once: true });
         tab.addEventListener("click", () => switchToChat(tab.dataset.key));
       }
       const label = elapsedLabel(chat.lastActive);
       tab.querySelector(".tab-label").textContent = label;
       const title = chat.title || "Untitled chat";
+      const characters = Array.from(title);
+      tab.querySelector(".tab-title").textContent = characters.length > 24
+        ? `${characters.slice(0, 23).join("")}…` : title;
       const when = label === "now" ? "just now" : `${label} ago`;
       tab.title = `${title}\nLast active ${when}`;
       tab.setAttribute("aria-label", `Switch to chat: ${title}, last active ${when}`);
@@ -1168,6 +1864,7 @@
     chats.recent = chats.recent.slice(0, MAX_RECENT);
     target.lastActive = now;
     chats.current = target;
+    setHistoryOpen(false);
     saveChats();
     renderTabs();
     updateIdleChips();
@@ -1187,7 +1884,7 @@
   // 11. Slash commands
   // ---------------------------------------------------------------------------
   const COMMANDS = [
-    { name: "settings", icon: GLYPH.settings, desc: () => "Open settings", run: () => invoke("open_settings").catch(() => {}) },
+    { name: "settings", icon: GLYPH.settings, desc: () => "Open settings", run: () => invoke("open_settings").catch(() => showGlobalError(null, "Couldn't open settings. Try again.")) },
     { name: "new", icon: GLYPH.newChat, desc: () => "Start a new chat", run: () => startNewChat(true) },
     { name: "signin", icon: GLYPH.account, desc: () => (bridge.loggedIn ? "Manage account" : "Sign in to ChatGPT"), run: () => openSignin() },
     { name: "clear", icon: GLYPH.trash, desc: () => "Clear recent chats", run: () => showClearConfirm() },
@@ -1387,6 +2084,7 @@
       chats.recent = [];
       saveChats();
     }
+    if (!QSettings.motionOn) for (const turn of turns) { flushReveal(turn); scheduleTurnRender(turn.id, true); }
     sendWindowPrefs();
     renderTabs();
     updateIdleChips();
@@ -1403,6 +2101,34 @@
   // ---------------------------------------------------------------------------
   // 15. Event Wiring & Bridge Listener
   // ---------------------------------------------------------------------------
+  el.historyButton.addEventListener("click", () => { if (historyOpen) returnToLatest(); else setHistoryOpen(true); });
+  el.historyPanel.addEventListener("scroll", () => { syncHistoryEdge(); wakeHistoryMotion(); }, { passive: true });
+  el.historyPanel.addEventListener("wheel", pullHistory, { passive: true });
+  el.historyPanel.addEventListener("pointerdown", () => { motion.pin = motion.glide = null; });
+  el.historyPanel.addEventListener("click", (e) => {
+    const anchor = e.target.closest("a");
+    if (anchor) {
+      e.preventDefault();
+      const url = sanitizeHref(anchor.getAttribute("href") || "");
+      if (url) invoke("open_external", { url }).catch(() => {});
+    }
+    const button = e.target.closest("[data-action]");
+    if (button?.dataset.action === "copy-code") {
+      const code = button.closest(".code-block")?.querySelector("pre code");
+      if (code) copyWithFeedback(code.textContent, button);
+    } else if (button?.dataset.action === "history-copy") {
+      copyWithFeedback(button.closest(".history-row")?._copyText || "", button);
+    } else if (button?.dataset.action === "history-media") {
+      const chat = chats.current;
+      button.disabled = true;
+      pageSync = pageSync.catch(() => {}).then(() => {
+        if (chats.current === chat && chat.conversationId && page.conv !== chat.conversationId) return openInPage(chat);
+      });
+      void pageSync.then(() => { if (chats.current === chat) openSignin(); })
+        .catch(err => showGlobalError(errorCode(err))).finally(() => { button.disabled = false; });
+    }
+  });
+
   el.zone.addEventListener("click", (e) => {
     const anchor = e.target.closest("a");
     if (anchor) {
@@ -1428,6 +2154,18 @@
       if (turn && typeof turn.prompt === "string" && !isStreaming()) sendPrompt(turn.prompt);
     } else if (action === "view-media") {
       const row = actionBtn.closest(".turn-row");
+      const turn = turns.find((t) => t.id === row?.dataset.id);
+      if (turn?.cachedMedia) {
+        const chat = chats.current;
+        actionBtn.disabled = true;
+        pageSync = pageSync.catch(() => {}).then(() => {
+          if (chats.current === chat && chat.conversationId && page.conv !== chat.conversationId) return openInPage(chat);
+        });
+        void pageSync.then(() => {
+          if (chats.current === chat) openSignin();
+        }).catch((err) => showGlobalError(errorCode(err))).finally(() => { actionBtn.disabled = false; });
+        return;
+      }
       const media = row?.querySelector(".turn-media .media-card");
       if (media) media.scrollIntoView({ block: "nearest" });
       else openSignin();
@@ -1521,6 +2259,7 @@
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
+      if (historyOpen) { returnToLatest(); return; }
       if (slashOpen()) { closeSlashMenu(); return; }
       if (!el.clearConfirm.hidden) { hideClearConfirm(); el.promptInput.focus(); return; }
       if (!isBusy() && (turns.length || !el.globalError.hidden)) {
@@ -1566,6 +2305,9 @@
         updateStatusHeader({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
         settleReadyWaiters(evt);
         break;
+      case "transcript":
+        if (evt.conversationId && evt.conversationId === chats.current.conversationId) mergePageTranscript(chats.current, evt.messages);
+        break;
       case "start": {
         // A late "start" must not reopen a turn that already finished or was stopped.
         const turn = turns.find((t) => t.id === evt.id);
@@ -1577,11 +2319,22 @@
       }
       case "delta": {
         const turn = turns.find((t) => t.id === evt.id);
-        if (turn) {
-          turn.status = "streaming";
+        if (turn?.status === "streaming" && !turn.backendDone) {
           turn.text = String(evt.text ?? "");
-          if (turn.text) revealResponse(turn);
-          scheduleTurnRender(turn.id, false);
+          paceTurn(turn);
+        }
+        break;
+      }
+      case "sources": {
+        const turn = turns.find(t => t.id === evt.id && t.role === "assistant");
+        if (turn) {
+          turn.sources = cleanSources(evt.items);
+          renderSources(turn);
+          const entry = turnNodes.get(turn.id);
+          if (entry) entry.renderedText = null;
+          scheduleTurnRender(turn.id, true);
+          if (turn.backendDone) recordPartial(turn);
+          queueSizes();
         }
         break;
       }
@@ -1590,8 +2343,21 @@
         if (turn) {
           turn.media = evt.items;
           appendMedia(turn, evt.items);
+          if (turn.backendDone) recordPartial(turn);
           revealResponse(turn);
           turnNodes.get(turn.id)?.row.toggleAttribute("data-empty", false);
+          queueSizes();
+        }
+        break;
+      }
+      case "activity": {
+        const turn = turns.find(t => t.id === evt.id && t.role === "assistant");
+        if (turn?.status === "streaming" && !turn.backendDone) {
+          const labels = { search: "Searching the web…", browse: "Reading sources…", code: "Running code…", tool: "Using a tool…" };
+          const kind = Object.hasOwn(labels, evt.kind) ? evt.kind : "tool";
+          turn.activity = { kind, state: evt.state === "running" ? "running" : "complete", label: labels[kind] };
+          if (turn.activity.state === "running") revealResponse(turn);
+          scheduleTurnRender(turn.id, true);
           queueSizes();
         }
         break;
@@ -1607,30 +2373,38 @@
       }
       case "done": {
         const turn = turns.find((t) => t.id === evt.id);
-        if (turn) {
+        if (turn?.status === "streaming" && !turn.backendDone) {
           if (typeof evt.text === "string") turn.text = evt.text;
-          turn.status = "done";
+          turn.backendDone = true;
+          turn.activity = null;
+          if (turnNodes.get(turn.id)?.activity) turnNodes.get(turn.id).activity.hidden = true;
           if (turn.chatKey === chats.current.key) {
             const chat = chats.current;
             if (typeof evt.conversationId === "string" && evt.conversationId) {
               chat.conversationId = evt.conversationId;
               page = { key: chat.key, conv: evt.conversationId, pristine: false };
             }
-            chat.lastResponse = turn.text.slice(0, MAX_RESPONSE);
+            rememberTurn(turn);
+            const snapshot = completedSnapshot(turn.text, turn.media?.length);
+            chat.lastResponse = snapshot.text;
+            chat.lastHasMedia = snapshot.hasMedia;
+            chat.lastSources = cleanSources(turn.sources);
             chat.lastActive = Date.now();
             saveChats();
           }
-          if (turn.text || turn.media?.length) revealResponse(turn);
-          scheduleTurnRender(turn.id, true);
+          paceTurn(turn);
+          const state = turnNodes.get(turn.id)?.reveal;
+          if (state) state.deadline = Date.now() + 1200;
+          if (turn.media?.length) revealResponse(turn);
           updateComposerMode();
-          armAutoDismiss();
           queueSizes();
         }
         break;
       }
       case "error": {
         const turn = evt.id ? turns.find((t) => t.id === evt.id) : null;
-        if (turn) {
+        if (turn?.status === "streaming" && !turn.backendDone) {
+          flushReveal(turn);
           turn.status = "error";
           turn.code = evt.code;
           turn.error = formatErrorCopy(evt.code, evt.message);
@@ -1639,7 +2413,7 @@
           scheduleTurnRender(turn.id, true);
           updateComposerMode();
           if (evt.code === "auth") updateStatusHeader({ ready: true, loggedIn: false, signedOut: true });
-        } else {
+        } else if (!turn) {
           showGlobalError(evt.code, evt.message);
           updateComposerMode();
         }
@@ -1672,6 +2446,8 @@
 
   sendWindowPrefs();
   renderTabs();
+  if (hasContent(chats.current)) saveChats();
+  showCachedResponse(chats.current);
   updateIdleChips();
   autoResizePrompt();
   updateBubbleMax();

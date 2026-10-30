@@ -169,8 +169,10 @@ fn fit_geometry(a: Anchor, r: Rect, width: f64, height: f64, scale: f64) -> (Anc
     let min = (120.0*scale).round() as i32;
     let gap = (12.0*scale).round() as i32;
     let w = ((width*scale).round() as i32).max(min).min((r.w-gap).max(1));
-    let bottom = a.bottom.clamp(r.y+min.min(r.h), r.y+r.h);
-    let h = ((height*scale).round() as i32).max(min).min((r.h-gap).max(1)).min(bottom-r.y);
+    let h = ((height*scale).round() as i32).max(min).min((r.h-gap).max(1));
+    // Keep the requested content height when there is too little room above the
+    // bar. Move it down into the work area instead of cropping the command menu.
+    let bottom = a.bottom.clamp(r.y+h, r.y+r.h);
     let cx = a.cx.clamp(r.x+w/2, r.x+r.w-(w-w/2));
     (Anchor { cx, bottom }, w, h)
 }
@@ -229,16 +231,30 @@ fn reset_position(app: tauri::AppHandle) {
     if let Some(w)=app.get_webview_window("main") { place_main(&app,&w); }
 }
 #[tauri::command]
-fn open_settings(app: tauri::AppHandle) -> Result<(),String> {
-    if test_profile().is_some() { return Ok(()) }
+async fn open_settings(app: tauri::AppHandle) -> Result<(),String> {
+    // WebView2 creation must not block a synchronous command or tray event handler.
+    tauri::async_runtime::spawn_blocking(move || open_settings_window(app))
+        .await.map_err(|e|e.to_string())?
+}
+fn open_settings_window(app: tauri::AppHandle) -> Result<(),String> {
+    static SETTINGS: Mutex<()> = Mutex::new(());
+    let _guard=SETTINGS.lock().map_err(|e|e.to_string())?;
+    let profile=test_profile();
+    let offscreen=profile.is_some() && std::env::var("QCHAT_TEST_SHOW_SETTINGS").as_deref()!=Ok("1");
     let w=if let Some(w)=app.get_webview_window("settings") { w } else {
-        WebviewWindowBuilder::new(&app,"settings",WebviewUrl::App("settings.html".into())).title("QChat settings").inner_size(620.,720.).decorations(false).transparent(true).shadow(false).resizable(false).always_on_top(true).skip_taskbar(true).visible(false).build().map_err(|e|e.to_string())?
+        let b=WebviewWindowBuilder::new(&app,"settings",WebviewUrl::App("settings.html".into()));
+        let b=if let Some(p)=profile.as_ref(){b.data_directory(p.clone())}else{b};
+        b.title("QChat settings").inner_size(620.,720.).decorations(false).transparent(true).shadow(false).resizable(false).always_on_top(true).skip_taskbar(true).visible(false).build().map_err(|e|e.to_string())?
     };
-    if let Some(main)=app.get_webview_window("main") {
+    if offscreen {
+        w.set_position(tauri::PhysicalPosition::new(-32000,-32000)).map_err(|e|e.to_string())?;
+    } else if let Some(main)=app.get_webview_window("main") {
         let m=if main.is_visible().unwrap_or(false) { main.current_monitor().ok().flatten() } else { cursor_monitor(&main) };
         if let (Some(m),Ok(s))=(m,w.outer_size()) { let r=rect(&m); let _=w.set_position(tauri::PhysicalPosition::new(r.x+(r.w-s.width as i32)/2,r.y+(r.h-s.height as i32)/2)); }
     }
-    w.show().map_err(|e|e.to_string())?; w.set_focus().map_err(|e|e.to_string())
+    w.show().map_err(|e|e.to_string())?;
+    if offscreen { return Ok(()) }
+    w.set_focus().map_err(|e|e.to_string())
 }
 #[tauri::command]
 fn close_settings(window: tauri::WebviewWindow) -> Result<(),String> {
@@ -338,7 +354,7 @@ fn bridge_event(app: tauri::AppHandle, event: serde_json::Value) -> Result<(), S
             .is_some_and(|id| a.flight_id.as_deref() == Some(id))
         {
             match event["type"].as_str() {
-                Some("start" | "delta" | "media" | "progress" | "image_progress") => {
+                Some("start" | "delta" | "media" | "progress" | "image_progress" | "activity") => {
                     a.last_progress = Instant::now()
                 }
                 Some("done" | "error") => a.flight_id = None,
@@ -455,6 +471,11 @@ fn chat_open(app: tauri::AppHandle, conversation_id: String, preserve_uploads: O
     eval(&app,&format!("window.__qchat && window.__qchat.openConversation({})",serde_json::to_string(&conversation_id).map_err(|e|e.to_string())?))
 }
 #[tauri::command]
+fn chat_read_transcript(app: tauri::AppHandle, conversation_id: String) -> Result<(), String> {
+    if !(8..=80).contains(&conversation_id.len()) || !conversation_id.bytes().all(|c| c.is_ascii_alphanumeric() || c==b'_' || c==b'-') { return Err("invalid_id".into()) }
+    eval(&app,&format!("window.__qchat && window.__qchat.readConversation({})",serde_json::to_string(&conversation_id).map_err(|e|e.to_string())?))
+}
+#[tauri::command]
 fn chat_status(app: tauri::AppHandle) -> Result<(), String> {
     eval(&app, "window.__qchat && window.__qchat.status()")
 }
@@ -520,7 +541,7 @@ fn main() {
  .manage(Host(Mutex::new(Activity{hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0,logged_in:false,signin_was_logged_in:false,anchor:None,remember_position:true,always_on_top:true,positioned:Instant::now(),save_due:None,save_generation:0})))
 
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,_,event|{if event.state()==ShortcutState::Pressed{toggle(app);}}).build())
- .invoke_handler(tauri::generate_handler![bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy])
+ .invoke_handler(tauri::generate_handler![bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy])
  .setup(|app|{
  if let Ok(dir)=app.path().app_data_dir() {
    if let Ok(data)=std::fs::read(dir.join("window-state.json")) { app.state::<Host>().0.lock().unwrap().anchor=serde_json::from_slice(&data).ok(); }
@@ -553,7 +574,7 @@ fn main() {
  use tauri::{menu::{Menu,MenuItem},tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState}};
  let items=[MenuItem::with_id(app,"show","Show QChat",true,None::<&str>)?,MenuItem::with_id(app,"new","New chat",true,None::<&str>)?,MenuItem::with_id(app,"settings","Settingsâ€¦",true,None::<&str>)?,MenuItem::with_id(app,"signin","Sign in to ChatGPTÃ¢â‚¬Â¦",true,None::<&str>)?,MenuItem::with_id(app,"quit","Quit",true,None::<&str>)?];
  let menu=Menu::with_items(app,&items.iter().map(|x|x as &dyn tauri::menu::IsMenuItem<_>).collect::<Vec<_>>())?;
- TrayIconBuilder::new().icon(app.default_window_icon().ok_or("Window icon unavailable")?.clone()).tooltip("QChat").menu(&menu).show_menu_on_left_click(false).on_tray_icon_event(|tray,e|{if matches!(e,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){toggle(tray.app_handle());}}).on_menu_event(|app,e|match e.id().as_ref(){"show"=>show(app),"new"=>{let _=app.emit_to("main","qchat://new-chat",());show(app)},"settings"=>{let _=open_settings(app.clone());},"signin"=>show_signin(app.clone()),"quit"=>quit_app(app.clone()),_=>()}).build(app)?;
+ TrayIconBuilder::new().icon(app.default_window_icon().ok_or("Window icon unavailable")?.clone()).tooltip("QChat").menu(&menu).show_menu_on_left_click(false).on_tray_icon_event(|tray,e|{if matches!(e,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){toggle(tray.app_handle());}}).on_menu_event(|app,e|match e.id().as_ref(){"show"=>show(app),"new"=>{let _=app.emit_to("main","qchat://new-chat",());show(app)},"settings"=>{let app=app.clone();tauri::async_runtime::spawn(async move {if let Err(e)=open_settings(app).await {eprintln!("Open settings: {e}");}});},"signin"=>show_signin(app.clone()),"quit"=>quit_app(app.clone()),_=>()}).build(app)?;
  let handle=app.handle().clone();std::thread::spawn(move||loop{
  std::thread::sleep(Duration::from_secs(10));
  let hidden=handle.get_webview_window("main").and_then(|w| w.is_visible().ok()).map(|v| !v).unwrap_or(false);
@@ -632,11 +653,22 @@ mod tests {
         let (a,w,h)=fit_geometry(Anchor{cx:600,bottom:750},r,480.,200.,1.);
         assert_eq!((a,w,h),(Anchor{cx:600,bottom:750},480,200));
         let (a,w,h)=fit_geometry(Anchor{cx:1050,bottom:400},r,2000.,2000.,1.);
-        assert_eq!(w,988); assert_eq!(h,350);
+        assert_eq!(w,988); assert_eq!(h,788);
         assert!(a.cx-w/2>=r.x && a.cx+(w-w/2)<=r.x+r.w);
         assert_eq!(a.bottom-h,r.y);
         let (_,w,h)=fit_geometry(Anchor{cx:600,bottom:800},r,1.,1.,2.);
         assert_eq!((w,h),(240,240));
+    }
+    #[test]
+    fn fit_moves_bar_down_to_keep_command_menu_above_it_visible() {
+        for scale in [1.0_f64, 1.5, 2.] {
+            let r=Rect{x:-1920,y:0,w:1920,h:1080};
+            let requested=(310.0*scale).round() as i32;
+            let (a,w,h)=fit_geometry(Anchor{cx:-960,bottom:200},r,536.,310.,scale);
+            assert_eq!(h,requested);
+            assert_eq!(a.bottom-h,r.y);
+            assert!(a.bottom<=r.y+r.h && a.cx-w/2>=r.x);
+        }
     }
     #[test]
     fn auto_return_only_after_a_new_login_in_the_foreground() {

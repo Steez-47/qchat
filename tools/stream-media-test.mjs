@@ -1,6 +1,6 @@
 // Synthetic browser/stream fixtures only. No profile, network, native picker or window.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import vm from 'node:vm';
 
@@ -24,9 +24,10 @@ function semantic(tag, children = [], attrs = {}) {
   node.querySelector = selector => nodes.find(child => child.tagName?.toLowerCase() === selector) || nodes.map(child => child.querySelector?.(selector)).find(Boolean) || null;
   return node;
 }
-function browser({ data = '', chunks, readError, cloneError, cancelReject = false, hold = false, type = 'text/event-stream', networkError, httpError, emitHook, chunkDelays = [], responseOverride } = {}) {
+function browser({ data = '', chunks, readError, cloneError, cancelReject = false, hold = false, type = 'text/event-stream', networkError, httpError, emitHook, chunkDelays = [], responseOverride, netDisabled = false, requestIdentity = true } = {}) {
   let now = 0, serial = 0, reads = 0, cancels = 0, clicks = 0, stop = false, pending = false, pickerClicks = 0;
-  let assistants = [], inputs = [], attachmentButton, heldRead, originalPart = 0, removeButtons = [], newChats = 0, previewButtons = [];
+  let assistants = [], users = [], composerText = '', submitted = false, inputs = [], attachmentButton, heldRead, originalPart = 0, removeButtons = [], newChats = 0, previewButtons = [];
+  const ordered = (node, order) => { node.order = order; node.compareDocumentPosition = other => node.order < other.order ? 4 : 2; return node; };
   const timers = new Map(), events = [], requests = [];
   chunks ||= [encoder.encode(data)];
   const body = element('div');
@@ -54,12 +55,16 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
   const stream = responseOverride || { ...cloned, body: { getReader: () => primaryReader },
     clone() { if (cloneError) throw new Error('cannot clone'); return cloned; } };
   const sendButton = element('button');
-  sendButton.click = () => { clicks++; window.fetch('/backend-api/f/conversation', { method: 'POST' }); };
+  sendButton.click = () => {
+    clicks++; submitted = true;
+    users.push(ordered(element('div', { 'data-message-author-role': 'user', 'data-message-id': 'current-user' }, composerText), 100));
+    window.fetch('/backend-api/f/conversation', { method: 'POST', ...(requestIdentity ? { body: JSON.stringify({ messages: [{ id: 'historical-user', author: { role: 'user' } }, { id: 'current-user', author: { role: 'user' } }] }) } : {}) });
+  };
   const stopButton = element('button'); stopButton.click = () => { stop = false; };
   const freshButton = element('button'); freshButton.click = () => { newChats++; assistants = []; inputs = []; removeButtons = []; pending = false; stop = false; };
   const document = {
     title: 'ChatGPT', body, visibilityState: 'visible', hasFocus: () => true,
-    execCommand: () => true,
+    execCommand: (command, _, text) => { if (command === 'insertText') composerText = text; return true; },
     querySelector(selector) {
       if (selector === '#prompt-textarea') return composer;
       if (selector === '[data-testid="send-button"]') return sendButton;
@@ -70,6 +75,7 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
     querySelectorAll(selector) {
       if (selector === '#prompt-textarea') return [composer];
       if (selector === 'input[type="file"]') return inputs;
+      if (selector.startsWith('[data-message-author-role="user"]')) return users;
       if (selector === 'button[aria-label="Download file"]') return previewButtons.filter(node => node.getAttribute('aria-label') === 'Download file');
       if (selector.startsWith('[data-message-author-role="assistant"]')) return assistants.filter(node => (!node.dilOnly || selector.includes('[data-dil-source-message-id][data-markdown-copy]')) && (!node.searchOnly || selector.includes('[data-chatgpt-search-message-ids]')));
       return [];
@@ -77,6 +83,7 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
   };
   const schedule = (fn, delay, interval = 0) => { const id = ++serial; timers.set(id, { fn, at: now + delay, interval }); return id; };
   const window = {
+    __QCHAT_DISABLE_NET__: netDisabled,
     innerWidth: 1280, innerHeight: 720,
     __QCHAT_EMIT__: event => { events.push(event); return emitHook?.(event); },
     fetch(url, options) {
@@ -115,7 +122,7 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
       previewButtons.push(button); return button;
     },
     dom(text = '', nodes = []) {
-      const node = element('div', {}, text); node.querySelectorAll = () => nodes;
+      const node = ordered(element('div', {}, text), submitted ? 200 : 0); node.querySelectorAll = () => nodes;
       assistants = [node]; return node;
     },
     gallery(text = '', nodes = []) {
@@ -125,8 +132,10 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
       const body = element('div', { 'data-dil-message-id': 'dil-reply' }, text); body.querySelectorAll = () => nodes;
       const turn = element('div', { 'data-dil-source-message-id': 'source-reply', 'data-markdown-copy': '' }, text);
       turn.dilOnly = true; turn.querySelector = selector => selector === '[data-dil-message-id]' ? body : null;
-      turn.querySelectorAll = () => nodes; assistants = [turn]; return turn;
+      turn.querySelectorAll = () => nodes; ordered(turn, submitted ? 200 : 0); assistants = [turn]; return turn;
     },
+    history(...nodes) { assistants = nodes; },
+    user(text, id, order = 100) { const node = ordered(element('div', { 'data-message-id': id }, text), order); users = [node]; return node; },
     resume() { heldRead?.({ done: true }); },
     async consumeOriginal() {
       const original = stream.body.getReader();
@@ -229,6 +238,123 @@ test('terminal observer packet does not finish while the site still shows Stop',
   b.dom('complete from site 😀'); await b.tick(300); b.stop(false); await b.tick(1500);
   assert.equal(done(b)?.text, 'complete from site 😀'); assert.equal(terminal(b).length, 1);
 });
+
+test('restored legacy and DIL history cannot restream text, images or progress during the new turn', async () => {
+  for (const dil of [false, true]) {
+    const b = browser({ cloneError: true });
+    const prior = dil ? b.dil('Old reply') : b.dom('Old reply');
+    prior.setAttribute(dil ? 'data-dil-source-message-id' : 'data-message-id', 'old-reply');
+    if (dil) prior.querySelector('[data-dil-message-id]').setAttribute('data-dil-message-id', 'old-dil');
+    await b.send(); b.stop(true);
+    const oldImage = element('img', { alt: 'Old car' }); oldImage.src = 'blob:https://chatgpt.com/old-car'; oldImage.naturalWidth = 1024;
+    const restored = dil ? b.dil('Creating image 37%', [oldImage]) : b.dom('Creating image 37%', [oldImage]);
+    restored.order = 20;
+    restored.setAttribute(dil ? 'data-dil-source-message-id' : 'data-message-id', 'old-reply');
+    const late = dil ? b.dil('Old reply hydrated late') : b.dom('Old reply hydrated late');
+    late.order = 30;
+    late.setAttribute(dil ? 'data-dil-source-message-id' : 'data-message-id', 'late-history');
+    b.history(restored, late); await b.tick(300);
+    assert.equal(b.events.filter(event => ['delta', 'media', 'image_progress'].includes(event.type)).length, 0);
+    const freshImage = element('img', { alt: 'New scene' }); freshImage.src = 'blob:https://chatgpt.com/new-scene';
+    const fresh = dil ? b.dil('New story 😀', [freshImage]) : b.dom('New story 😀', [freshImage]);
+    fresh.setAttribute(dil ? 'data-dil-source-message-id' : 'data-message-id', 'new-reply');
+    b.history(restored, late, fresh); await b.tick(300);
+    // React can replace a historical message while the current reply streams.
+    const replacement = dil ? b.dil('Creating image 73%', [oldImage]) : b.dom('Creating image 73%', [oldImage]);
+    replacement.order = 20; replacement.setAttribute(dil ? 'data-dil-source-message-id' : 'data-message-id', 'old-reply');
+    b.history(replacement, late, fresh); await b.tick(300); b.stop(false); await b.tick(1500);
+    assert.equal(done(b)?.text, 'New story 😀');
+    assert.equal(terminal(b).length, 1);
+    assert.ok(!b.events.some(event => event.type === 'image_progress'));
+    assert.ok(b.events.filter(event => event.type === 'delta').every(event => event.text === 'New story 😀'));
+    const items = b.events.filter(event => event.type === 'media').at(-1).items;
+    assert.equal(items.length, 1); assert.equal(items[0].name, 'New scene');
+    assert.equal((await b.api.resolveMedia(items[0].id)).url, freshImage.src);
+  }
+});
+
+test('request user identity rejects restored same-prompt history until the real user turn mounts', async () => {
+  const b = browser({ cloneError: true }); await b.send(); b.stop(true);
+  b.user('hello', 'historical-user', 10);
+  const old = b.dom('Creating image 50%'); old.order = 20;
+  await b.tick(300);
+  assert.ok(!b.events.some(event => ['delta', 'media', 'image_progress'].includes(event.type)));
+  b.user('hello', 'current-user', 100);
+  b.dom('Fresh reply'); await b.tick(200); b.stop(false); await b.tick(1500);
+  assert.equal(done(b)?.text, 'Fresh reply');
+});
+
+test('response message identity permits DOM recovery before the user boundary hydrates', async () => {
+  const b = browser({ data: sse(message(['prefix'])), readError: true }); await b.send(); b.stop(true);
+  b.user('older question', 'historical-user', 10);
+  const old = b.dom('Old historical text'); old.setAttribute('data-message-id', 'old-reply');
+  await b.tick(300);
+  assert.ok(b.events.filter(event => event.type === 'delta').every(event => event.text === 'prefix'));
+  const fresh = b.dom('prefix complete 😀'); fresh.setAttribute('data-message-id', 'reply');
+  b.history(old, fresh); await b.tick(300); b.stop(false); await b.tick(1500);
+  assert.equal(done(b)?.text, 'prefix complete 😀');
+});
+
+test('nested current user bubbles inherit identity from their search unit before streaming DOM replies', async () => {
+  const b = browser({ cloneError: true }); await b.send(); b.stop(true);
+  const parent = element('div', { 'data-chatgpt-search-message-ids': 'current-user' });
+  const bubble = b.user('hello', undefined);
+  bubble.closest = selector => selector.includes('[data-chatgpt-search-message-ids]') ? parent : null;
+  const old = b.dom('Old historical response'); old.order = 20;
+  const fresh = b.dil('First streamed words');
+  b.history(old, fresh);
+  await b.tick(300);
+  assert.ok(b.events.some(event => event.type === 'delta' && event.text === 'First streamed words'));
+  assert.ok(!b.events.some(event => event.text?.includes('Old historical')));
+  const complete = b.dil('First streamed words followed by the completed answer');
+  b.history(old, complete);
+  await b.tick(300); b.stop(false); await b.tick(1500);
+  assert.equal(done(b)?.text, 'First streamed words followed by the completed answer');
+  assert.equal(terminal(b).length, 1);
+});
+
+test('DOM-only fallback uses the submitted prompt boundary without network identity', async () => {
+  const b = browser({ netDisabled: true, requestIdentity: false });
+  b.user('earlier question', 'historical-user', 10);
+  await b.send(); b.stop(true);
+  const old = b.dom('Creating image 20%'); old.order = 20;
+  await b.tick(300);
+  assert.ok(!b.events.some(event => ['delta', 'media', 'image_progress'].includes(event.type)));
+  const fresh = b.dom('New DOM-only reply 👩🏽‍🚀'); b.history(old, fresh);
+  await b.tick(300); b.stop(false); await b.tick(1500);
+  assert.equal(done(b)?.text, 'New DOM-only reply 👩🏽‍🚀');
+  assert.ok(!b.events.some(event => event.type === 'image_progress'));
+});
+
+test('known historical message snapshots in SSE and NDJSON cannot register text or media', async () => {
+  for (const ndjson of [false, true]) {
+    const old = message(['Old story', { type: 'image', url: 'https://chatgpt.com/old-car.png' }], { id: 'historical-reply' });
+    const packets = ndjson ? [
+      { type: 'content', messageId: 'historical-reply', revision: 1, markdown: 'Old story', parts: old.message.content.parts },
+      { type: 'content', messageId: 'new-reply', revision: 1, markdown: 'Fresh story 😀' }, { type: 'done' }
+    ] : [old, message(['Fresh story 😀'], { id: 'new-reply' }), '[DONE]'];
+    const b = browser({ type: ndjson ? 'application/x-ndjson' : 'text/event-stream', data: ndjson ? packets.map(packet => JSON.stringify(packet)).join('\n') : sse(...packets) });
+    b.dom('Old story').setAttribute('data-message-id', 'historical-reply');
+    await b.send(); await b.tick(1000);
+    assert.equal(done(b)?.text, 'Fresh story 😀');
+    assert.ok(!b.events.some(event => event.type === 'media'));
+    assert.ok(b.events.filter(event => event.type === 'delta').every(event => !event.text.includes('Old')));
+  }
+});
+
+test('a positively scoped DOM download remains usable after a later user turn', async () => {
+  const b = browser({ cloneError: true }); await b.send(); b.stop(true);
+  let clicks = 0;
+  const link = element('a', {}, 'report.csv'); link.href = 'sandbox:/mnt/data/report.csv'; link.click = () => { clicks++; };
+  const reply = b.dil('Download report.csv', [link]);
+  await b.tick(300); b.stop(false); await b.tick(1500);
+  assert.ok(done(b));
+  const id = b.events.find(event => event.type === 'media').items[0].id;
+  b.user('a later question', 'later-user', 300);
+  const remounted = b.dil('Download report.csv', [link]); remounted.order = 200;
+  assert.notEqual(remounted, reply);
+  await b.api.activateMedia(id); assert.equal(clicks, 1);
+});
 test('completed signed-in DIL DOM replaces a stale parsed prefix and scopes media lookup', async () => {
   const full = Array.from({ length: 12 }, (_, i) => `${i + 1}. 😊 👨‍👩‍👧‍👦 👍🏽 🇳🇿`).join('\n') + '\nQCHAT_UNICODE_DONE';
   const b = browser({ chunks: [sse(message([full.slice(0, 57), { type: 'file', name: 'report.csv', url: 'sandbox:/mnt/data/report.csv' }])), sse('[DONE]')].map(text => encoder.encode(text)), chunkDelays: [0, 200] });
@@ -303,6 +429,61 @@ test('NDJSON final packet without trailing newline and revision snapshots', asyn
     { type: 'done' }
   ].map(JSON.stringify).join('\n') });
   await b.send(); await b.tick(200); assert.equal(done(b)?.text, 'Hello 😀');
+});
+test('DIL fallback snapshots replace layout deltas and corrected prose without duplication', async () => {
+  const heading = '## GTA VI: Interpreting the Edge Magazine exclusive';
+  const first = heading + '\n\nI have gone through the original article. And how his';
+  const final = heading + '\n\nI have gone through the original article. And honestly, there is more to unpack.\n\n[Read the full feature](https://example.com/edge)';
+  const packets = [
+    { type: 'content', messageId: 'a', revision: 1, markdown: '<row align="center" gap={3}><AsyncImage query="Edge"/><text weight="medium">Edge #430</text></row>', dil: { fallbackMarkdown: first } },
+    { type: 'content', messageId: 'a', revision: 2, baseRevision: 1, mode: 'append', markdown: '<box flex="1">stale layout</box>', dil: { fallbackMarkdown: final } },
+    { type: 'content', messageId: 'a', revision: 3, baseRevision: 2, mode: 'append', markdown: '<text size="xs">still layout</text>' },
+    { type: 'done' }
+  ];
+  const b = browser({ type: 'application/x-ndjson', chunks: packets.map(packet => encoder.encode(JSON.stringify(packet) + '\n')), chunkDelays: [0, 120, 120, 120] });
+  await b.send(); await b.tick(1000);
+  assert.equal(done(b)?.text, final);
+  const replies = b.events.filter(event => ['delta', 'done'].includes(event.type));
+  for (const event of replies) {
+    assert.doesNotMatch(event.text, /<row|<box|<text|AsyncImage|stale layout/);
+    assert.equal((event.text.match(/Interpreting the Edge/g) || []).length, 1);
+  }
+  if (process.env.QCHAT_RICH_REPLAY) writeFileSync(process.env.QCHAT_RICH_REPLAY, JSON.stringify(replies));
+});
+test('raw rich layout uses the scoped rendered reply even when the corrected reply is shorter', async () => {
+  const raw = '## GTA VI\n\n<row align="center" gap={3}><AsyncImage query="secret image query"/><text weight="medium">Edge #430</text></row>\n' + 'stale draft '.repeat(100);
+  const b = browser({ data: sse(message([raw])), hold: true });
+  b.stop(true); await b.send(); await b.tick(150);
+  const turn = b.dil('GTA VI\nEdge #430\nCorrected paragraph.\nRead the feature');
+  const link = semantic('a', ['Read the feature'], { href: 'https://example.com/edge' }); link.href = 'https://example.com/edge';
+  turn.querySelector('[data-dil-message-id]').childNodes = [semantic('h2', ['GTA VI']), semantic('p', ['Edge #430']), semantic('p', ['Corrected paragraph.']), link];
+  await b.tick(300);
+  const delta = b.events.filter(event => event.type === 'delta').at(-1);
+  assert.match(delta?.text, /## GTA VI/); assert.match(delta?.text, /\[Read the feature\]\(https:\/\/example.com\/edge\)/);
+  b.stop(false); b.resume(); await b.tick(2000);
+  assert.match(done(b)?.text, /Corrected paragraph/);
+  assert.doesNotMatch(JSON.stringify(b.events), /<row|<text|AsyncImage|secret image query|stale draft/);
+});
+test('empty DIL snapshot clears earlier prose and literal layout code examples stay intact', async () => {
+  const b = browser({ type: 'application/x-ndjson', data: [
+    { type: 'content', messageId: 'a', revision: 1, markdown: 'old', dil: { fallbackMarkdown: 'old' } },
+    { type: 'content', messageId: 'a', revision: 2, markdown: 'stale raw', dil: { fallbackMarkdown: '' } }, { type: 'done' }
+  ].map(JSON.stringify).join('\n') });
+  await b.send(); await b.tick(1000); assert.equal(done(b)?.text, '');
+  const code = 'Example:\n```jsx\n<row align="center" gap={3}>hello</row>\n```\nUse ` <AsyncImage query="test"/> ` in code.';
+  const c = browser({ data: sse(message([code]), '[DONE]') });
+  await c.send(); await c.tick(200); assert.equal(done(c)?.text, code);
+});
+test('shorter canonical DIL correction wins over a longer stale rendered draft at completion', async () => {
+  const packets = [
+    { type: 'content', messageId: 'a', revision: 1, markdown: '<row>layout</row>', dil: { fallbackMarkdown: 'A stale draft paragraph that is much too long.' } },
+    { type: 'content', messageId: 'a', revision: 2, markdown: '<row>layout</row>', dil: { fallbackMarkdown: 'Corrected.' } }, { type: 'done' }
+  ];
+  const b = browser({ type: 'application/x-ndjson', chunks: packets.map(packet => encoder.encode(JSON.stringify(packet) + '\n')), chunkDelays: [0, 200, 200] });
+  b.stop(true); await b.send(); await b.tick(100);
+  b.dil('A stale draft paragraph that is much too long.');
+  await b.tick(600); b.stop(false); await b.tick(2000);
+  assert.equal(done(b)?.text, 'Corrected.');
 });
 test('clone cancellation cannot hang or reject a completed stream', async () => {
   for (const cancelReject of [false, true]) {
@@ -387,6 +568,64 @@ test('internal thoughts and non-media metadata never produce placeholder attachm
   assert.equal(b.events.filter(event => event.type === 'media').length, 0);
   assert.doesNotMatch(JSON.stringify(b.events), /SECRET|secret\.txt|internal\.png|Attachment/);
 });
+test('web sources resolve citations without turning search thumbnails into generated media', async () => {
+  const text = 'See <Cite ref="turn0search0"/> and \uE200cite\uE202turn0search1\uE201. ![Thumbnail](https://example.com/photo.jpg) [Image](https://example.com/image.png)';
+  const b = browser({ data: sse(message([text,
+    { type: 'image_search', images: [{ type: 'image', url: 'https://example.com/search.jpg' }] },
+    { type: 'webpage', url: 'https://example.com/page', images: [{ type: 'image', url: 'https://example.com/thumb.jpg' }] },
+    { title: 'Search thumbnail', url: 'https://example.com/other.jpg' }
+  ], { metadata: { content_references: [
+    { ref_id: 'turn0search0', webpage: { url: 'https://example.com/article', title: 'First article' } },
+    { items: [{ ref_id: 'turn0search1', type: 'webpage', url: 'https://example.org/story', title: 'Second article' }] }
+  ] } }), '[DONE]') });
+  await b.send(); await b.tick(200);
+  const sources = b.events.find(event => event.type === 'sources');
+  assert.equal(sources.id, 'job');
+  assert.deepEqual(Array.from(sources.items, item => ({ ...item })), [
+    { id: 'turn0search0', url: 'https://example.com/article', title: 'First article' },
+    { id: 'turn0search1', url: 'https://example.org/story', title: 'Second article' }
+  ]);
+  assert.match(done(b)?.text, /See \[First article\]\(https:\/\/example.com\/article\) and \[Second article\]\(https:\/\/example.org\/story\)/);
+  assert.doesNotMatch(JSON.stringify(b.events.filter(event => ['done', 'delta'].includes(event.type))), /<Cite|turn0search|[\uE200-\uE202]/);
+  assert.equal(b.events.filter(event => ['media', 'image_progress'].includes(event.type)).length, 0);
+});
+
+test('structured web reference indices and nested webpage items resolve ordinary citation links', async () => {
+  const b = browser({ data: sse(message(['News <Cite ref="turn761040news16"/>.'], {
+    metadata: { content_references: [{ items: [
+      { refs: [{ turn_index: 761040, ref_type: 'news', ref_index: 16 }], webpage: { url: 'https://example.com/news', title: 'News article' } },
+      { webpage: { url: 'https://example.com/other', title: 'Other source' } },
+      { ref_id: 'unsafe', webpage: { url: 'javascript:alert(1)', title: 'Unsafe' } }
+    ] }] }
+  }), '[DONE]') });
+  await b.send(); await b.tick(200);
+  const sources = b.events.find(event => event.type === 'sources');
+  assert.equal(sources.items.length, 2);
+  assert.equal(sources.items[0].id, 'turn761040news16');
+  assert.equal(done(b)?.text, 'News [News article](https://example.com/news).');
+  assert.equal(b.events.filter(event => event.type === 'media').length, 0);
+});
+
+test('late citation metadata refreshes text and unresolved or partial tokens stay hidden', async () => {
+  const b = browser({ data: sse(message(['Read <Cite ref="turn1search0"/> \uE200cite\uE202missing\uE201 <Cite ref="partial']),
+    { op: 'add', path: '/message/metadata', value: { content_references: [{ ref_id: 'turn1search0', url: 'https://example.com/source', title: 'Source' }] } }, '[DONE]') });
+  await b.send(); await b.tick(200);
+  assert.match(done(b)?.text, /\[Source\]\(https:\/\/example.com\/source\)/);
+  assert.doesNotMatch(JSON.stringify(b.events.filter(event => ['done', 'delta'].includes(event.type))), /<Cite|turn1search|missing|partial|[\uE200-\uE202]/);
+});
+
+test('linked web thumbnails and image anchors in DOM do not create media or generation progress', async () => {
+  const b = browser({ cloneError: true }); b.stop(true); await b.send(); await b.tick(100);
+  const thumbnail = element('img', { alt: 'Search result' }); thumbnail.src = 'https://example.com/thumb.jpg';
+  thumbnail.closest = selector => selector === 'a[href]' ? {} : null;
+  const hostedThumbnail = element('img', { alt: 'Linked preview' }); hostedThumbnail.src = 'https://files.oaiusercontent.com/thumb.png';
+  hostedThumbnail.closest = thumbnail.closest;
+  const anchor = element('a'); anchor.href = 'https://example.com/photo.jpg';
+  b.dom('Search results', [thumbnail, hostedThumbnail, anchor]); await b.tick(200); b.stop(false); await b.tick(1500);
+  assert.ok(done(b));
+  assert.equal(b.events.filter(event => ['media', 'image_progress'].includes(event.type)).length, 0);
+});
+
 test('markdown downloads are registered, deduplicated and do not leak URLs', async () => {
   const text = 'Look 😀 ![cat](https://files.oaiusercontent.com/cat.png?secret=token) [report.pdf](sandbox:/mnt/data/report.pdf)';
   const b = browser({ data: sse(message([text]), message([text]), '[DONE]') });
@@ -659,6 +898,71 @@ test('unavailable attachment input rejects in a bounded wait and pending uploads
   const b = browser(); const selection = assert.rejects(b.api.attachmentInput(), /unavailable/); await b.tick(3200); await selection;
   b.pending(true); const sent = b.send({ attachmentCount: 1 }); await b.tick(121000); await sent;
   assert.equal(b.clicks, 0); assert.equal(terminal(b)[0]?.code, 'attachment_failed');
+});
+
+const activities = b => b.events.filter(event => event.type === 'activity');
+test('SSE actual tool calls deduplicate, survive hidden reasoning, and complete on tool output', async () => {
+  const call = message(['SECRET QUERY'], { id: 'search-call', channel: 'analysis', recipient: 'web.run' });
+  const b = browser({ chunks: [encoder.encode(sse(call, call, message(['SECRET REASONING'], { channel: 'analysis' }))),
+    encoder.encode(sse(message(['SECRET RESULTS'], { id: 'tool-result', author: { role: 'tool', name: 'web' } }), call, message(['Answer']), '[DONE]'))], chunkDelays: [0, 500] });
+  await b.send(); await b.tick(200);
+  assert.deepEqual(activities(b).map(event => ({ ...event })), [{ type: 'activity', id: 'job', kind: 'search', state: 'running', label: 'Searching the web' }]);
+  await b.tick(600);
+  assert.deepEqual(activities(b).map(event => event.state), ['running', 'complete']);
+  assert.equal(done(b)?.text, 'Answer'); assert.doesNotMatch(JSON.stringify(b.events), /SECRET/);
+});
+test('final assistant output and terminal packets clear code activity without exposing arguments', async () => {
+  for (const final of [message(['Answer']), '[DONE]']) {
+    const b = browser({ data: sse(message(['SECRET CODE'], { channel: 'analysis', recipient: 'python', id: 'code-call' }), final, '[DONE]') });
+    await b.send(); await b.tick(1000);
+    assert.deepEqual(activities(b).map(event => [event.kind, event.state, event.label]), [['code', 'running', 'Running code'], ['code', 'complete', 'Running code']]);
+    assert.doesNotMatch(JSON.stringify(b.events), /SECRET/);
+    assert.ok(done(b));
+  }
+});
+test('NDJSON supported message envelopes carry tool lifecycle and ordinary content clears activity', async () => {
+  const packets = [message(['SECRET'], { id: 'browse-call', channel: 'analysis', recipient: 'web.open' }),
+    message(['HIDDEN'], { id: 'reason', channel: 'analysis' }), { type: 'content', messageId: 'answer', revision: 1, markdown: 'Answer' }, { type: 'done' }];
+  const b = browser({ type: 'application/x-ndjson', data: packets.map(packet => JSON.stringify(packet)).join('\n') });
+  await b.send(); await b.tick(1000);
+  assert.deepEqual(activities(b).map(event => [event.kind, event.state]), [['browse', 'running'], ['browse', 'complete']]);
+  assert.equal(done(b)?.text, 'Answer'); assert.doesNotMatch(JSON.stringify(b.events), /SECRET|HIDDEN/);
+});
+test('ordinary analysis and final prose or source references never fabricate tool activity', async () => {
+  const b = browser({ data: sse(message(['SECRET'], { channel: 'analysis' }), message(['Searching the web. Reading sources. Running code.'], { metadata: { content_references: [{ type: 'webpage', url: 'https://example.com', title: 'Source' }] } }), '[DONE]') });
+  await b.send(); await b.tick(1000); assert.deepEqual(activities(b), []);
+});
+test('DOM fallback accepts exact visible current-turn statuses and ignores historical or prose nodes', async () => {
+  const b = browser({ cloneError: true });
+  const oldStatus = element('span', { role: 'status' }, 'Searching the web');
+  const old = b.dom('', [oldStatus]); await b.send(); b.stop(true);
+  await b.tick(200); assert.deepEqual(activities(b), []);
+  const status = element('span', { role: 'status' }, 'Searching the web');
+  b.dom('', [status]); await b.tick(300); await b.tick(200);
+  assert.deepEqual(activities(b).map(event => event.state), ['running']);
+  status.innerText = 'Reading sources'; await b.tick(200);
+  assert.deepEqual(activities(b).map(event => [event.kind, event.state]), [['search', 'running'], ['search', 'complete'], ['browse', 'running']]);
+  b.history(old); await b.tick(200);
+  assert.equal(activities(b).at(-1).state, 'complete');
+  b.dom('Searching the web', [element('span', {}, 'Searching the web')]); await b.tick(200);
+  assert.equal(activities(b).length, 4);
+  b.dom('Answer'); b.stop(false); await b.tick(1500); assert.equal(done(b)?.text, 'Answer');
+});
+test('known historical tool snapshots cannot start activity', async () => {
+  const b = browser({ data: sse(message(['SECRET'], { id: 'old', channel: 'analysis', recipient: 'web.run' }), message(['Answer']), '[DONE]') });
+  const old = b.dom('Earlier'); old.setAttribute('data-message-id', 'old');
+  await b.send(); await b.tick(1000); assert.deepEqual(activities(b), []); assert.equal(done(b)?.text, 'Answer');
+});
+test('Stop and errors complete activity and delayed reads cannot restart it', async () => {
+  for (const failure of [false, true]) {
+    const b = browser({ chunks: [encoder.encode(sse(message(['SECRET'], { id: 'call', channel: 'analysis', recipient: 'web.run' }))),
+      encoder.encode(sse(failure ? { error: true } : message(['LATE SECRET'], { id: 'late', channel: 'analysis', recipient: 'python' })))], chunkDelays: [0, 500], hold: true });
+    await b.send(); b.stop(true); await b.tick(200);
+    if (!failure) b.api.stop();
+    await b.tick(1000);
+    assert.deepEqual(activities(b).map(event => event.state), ['running', 'complete']);
+    assert.equal(terminal(b).length, 1); assert.doesNotMatch(JSON.stringify(b.events), /SECRET/);
+  }
 });
 
 let failed = 0;

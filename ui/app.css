@@ -119,7 +119,7 @@
 }
 html[data-motion="off"] .thinking span { animation: none; opacity: 0.75; }
 
-/* Response bubble: height and width are measured by app.js and eased here */
+/* Text wraps in a stable column; only the outer viewport changes size. */
 .bubble-response {
   min-width: 72px;
   transition:
@@ -127,6 +127,7 @@ html[data-motion="off"] .thinking span { animation: none; opacity: 0.75; }
     height var(--t3) var(--ease-out);
   contain: layout paint style;
 }
+.turn-row[data-status="streaming"] .bubble-response { transition: height 140ms linear; }
 .turn-row.no-size-ease .bubble-response { transition: none; }
 
 .bubble-scroll { width: 100%; height: 100%; overflow: hidden; }
@@ -139,8 +140,11 @@ html[data-motion="off"] .thinking span { animation: none; opacity: 0.75; }
   user-select: text;
   cursor: auto;
 }
+/* Leave scrollbar room from the outset so reaching the cap never rewraps text. */
+.turn-row[data-status="streaming"] .bubble-inner,
+.turn-row[data-wide] .bubble-inner { width: calc(var(--bar-w) - 8px); max-width: calc(var(--bar-w) - 8px); padding-right: 11px; }
 .turn-row[data-capped] .bubble-inner { width: calc(var(--bar-w) - 8px); max-width: calc(var(--bar-w) - 8px); padding-right: 11px; }
-.turn-row:has(.code-block, table) .bubble-inner { width: var(--bar-w); }
+.turn-row:has(.code-block, table) .bubble-inner { width: calc(var(--bar-w) - 8px); }
 .turn-row[data-capped]:has(.code-block, table) .bubble-inner { width: calc(var(--bar-w) - 8px); }
 
 /* Soft light passing over the glass while text streams */
@@ -413,42 +417,54 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
    Response content
    --------------------------------------------------------------------------- */
 .turn-content { overflow-wrap: anywhere; }
+.bubble-response .turn-content { font-size: calc(var(--text-size) + 1px); line-height: max(var(--line-h), 1.65); }
 html[data-justify="true"] .bubble-response .turn-content p { text-align: justify; }
 .turn-content > :first-child { margin-top: 0; }
 .turn-content > :last-child { margin-bottom: 0; }
 .turn-content p, .turn-content ul, .turn-content ol,
-.turn-content blockquote, .turn-content .code-block, .turn-content table { margin: 0 0 0.7em; }
-.turn-content ul, .turn-content ol { padding-left: 1.5em; }
-.turn-content li { margin: 0.2em 0; }
-.turn-content li > p { margin: 0; }
-.turn-content li::marker { color: var(--text-3); }
+.turn-content blockquote, .turn-content .code-block, .turn-content table { margin: 0 0 1em; }
+.turn-content ul, .turn-content ol { padding-left: 1.7em; }
+.turn-content li { margin: 0.45em 0; padding-left: 0.15em; }
+.turn-content li > p { margin: 0.4em 0; }
+.turn-content li > :first-child { margin-top: 0; }
+.turn-content li > :last-child { margin-bottom: 0; }
+.turn-content li > ul, .turn-content li > ol { margin: 0.4em 0; }
+.turn-content li::marker { color: var(--accent-text); font-weight: 650; }
 .turn-content h1, .turn-content h2, .turn-content h3,
 .turn-content h4, .turn-content h5, .turn-content h6 {
-  margin: 1em 0 0.35em;
+  margin: 1.5em 0 0.6em;
   font-family: var(--font-display);
-  font-weight: 600;
-  line-height: 1.3;
+  font-weight: 750;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  text-wrap: pretty;
 }
-.turn-content h1 { font-size: 1.4em; }
-.turn-content h2 { font-size: 1.22em; }
-.turn-content h3 { font-size: 1.08em; }
-.turn-content h4, .turn-content h5, .turn-content h6 { font-size: 1em; }
-.turn-content strong { font-weight: 600; }
+.turn-content h1 { font-size: 1.8em; }
+.turn-content h2 { font-size: 1.5em; padding-bottom: 0.35em; border-bottom: 1px solid var(--stroke-2); }
+.turn-content h3 { font-size: 1.25em; color: var(--accent-text); }
+.turn-content h4 { font-size: 1.1em; }
+.turn-content h5, .turn-content h6 { font-size: 1em; color: var(--text-2); }
+.turn-content strong { font-weight: 750; }
 .turn-content a {
   color: var(--accent-text);
   text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--accent-text) 45%, transparent);
-  text-underline-offset: 2px;
+  font-weight: 550;
+  text-decoration-color: currentColor;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
   cursor: pointer;
 }
-.turn-content a:hover { text-decoration-color: currentColor; }
-.turn-content blockquote { padding: 2px 0 2px 12px; box-shadow: inset 2px 0 0 rgb(var(--accent-rgb) / 0.7); color: var(--text-2); }
-.turn-content hr { border: 0; border-top: 1px solid var(--stroke-1); margin: 0.9em 0; }
+.turn-content a:hover { text-decoration-thickness: 2px; }
+.turn-content blockquote { padding: 10px 14px; border-left: 3px solid var(--accent-text); border-radius: 0 8px 8px 0; background: var(--fill-1); color: var(--text-2); }
+.turn-content blockquote > :last-child { margin-bottom: 0; }
+.turn-content hr { border: 0; border-top: 1px solid var(--stroke-2); margin: 1.5em 0; }
 .turn-content :not(pre) > code {
-  padding: 1px 5px;
+  padding: 2px 5px;
   border-radius: 5px;
   background: var(--code-fill);
-  font: 0.9em/1 var(--font-code);
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px var(--stroke-1);
+  font: 500 0.9em/1.45 var(--font-code);
 }
 .code-block {
   max-width: 100%;
@@ -483,9 +499,9 @@ html[data-justify="true"] .bubble-response .turn-content p { text-align: justify
 .code-copy-btn:hover { background: var(--fill-2); color: var(--text-1); }
 .code-block pre {
   margin: 0;
-  padding: 9px 12px 10px;
+  padding: 12px 14px;
   overflow-x: auto;
-  font: 0.9em/1.5 var(--font-code);
+  font: 0.9em/1.65 var(--font-code);
   tab-size: 2;
 }
 .turn-content table {
@@ -500,8 +516,9 @@ html[data-justify="true"] .bubble-response .turn-content p { text-align: justify
   box-shadow: inset 0 0 0 1px var(--stroke-1);
   font-variant-numeric: tabular-nums;
 }
-.turn-content th, .turn-content td { padding: 5px 12px; text-align: left; vertical-align: top; box-shadow: inset 0 -1px 0 var(--stroke-1); }
-.turn-content th { font-weight: 600; }
+.turn-content th, .turn-content td { padding: 9px 12px; text-align: left; vertical-align: top; box-shadow: inset 0 -1px 0 var(--stroke-1); }
+.turn-content th { font-weight: 700; background: rgb(var(--accent-rgb) / 0.13); }
+.turn-content tbody tr:nth-child(even) { background: var(--fill-1); }
 .turn-content tr:last-child td { box-shadow: none; }
 
 /* Media */
@@ -551,6 +568,23 @@ html[data-justify="true"] .bubble-response .turn-content p { text-align: justify
 html[data-motion="off"] .progress-ring { animation-duration: 4s; }
 @keyframes ring-rotate { to { transform: rotate(360deg); } }
 
+.turn-sources { margin-top: 10px; font-size: .9em; }
+.turn-sources summary { cursor: pointer; opacity: .75; width: fit-content; }
+.turn-sources summary:hover { opacity: 1; }
+.turn-sources ol { margin: 8px 0 0; padding-left: 22px; }
+.turn-sources li { margin: 5px 0; overflow-wrap: anywhere; }
+.turn-sources a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+
+.tool-activity { display: flex; align-items: center; gap: 9px; min-width: 220px; max-width: 100%; padding: 4px 0 8px; color: var(--text-2); font-size: 12px; }
+.tool-activity .progress-ring { width: 16px; height: 16px; }
+.tool-activity-label { white-space: nowrap; }
+.tool-activity-track { position: relative; overflow: hidden; width: 64px; height: 2px; margin-left: auto; border-radius: 2px; background: var(--fill-2); }
+.tool-activity-track::after { content: ""; position: absolute; width: 40%; height: 100%; background: var(--accent-text); border-radius: inherit; animation: tool-scan calc(1200ms / var(--speed)) ease-in-out infinite alternate; }
+@keyframes tool-scan { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+html[data-motion="off"] .tool-activity .progress-ring,
+html[data-motion="off"] .tool-activity-track::after { animation: none; }
+html[data-motion="off"] .tool-activity-track::after { left: 30%; }
+
 /* Motion off: no entrances, no stagger, no easing of size */
 html[data-motion="off"] .turn-row,
 html[data-motion="off"] .notice,
@@ -559,3 +593,74 @@ html[data-motion="off"] .slash-menu,
 html[data-motion="off"] .attachment-chip,
 html[data-motion="off"] .jump-chip { animation: none !important; }
 html[data-motion="off"] .bubble-response { transition: none; }
+
+/* History: the live bubbles, continued upwards. The panel bleeds into the window
+   gutters so shadows are never clipped and bubbles keep their exact live position;
+   messages pop in and out at its soft edges instead of meeting a cutoff. */
+.history-controls { position: relative; z-index: 3; display: flex; justify-content: center; pointer-events: none; }
+.stack[data-history] > .history-controls { position: absolute; top: 4px; left: 0; right: 0; }
+.history-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px 0 10px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color var(--t1) linear, opacity var(--t2) linear, transform var(--t3) var(--ease-move);
+}
+.history-button:hover { color: var(--text-1); }
+.history-button:active { transform: scale(0.96); }
+.history-button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+.history-controls[data-away] .history-button { opacity: 0; transform: translateY(8px) scale(0.86); pointer-events: none; }
+.history-status { display: inline-flex; align-items: center; height: 26px; padding: 0 12px; border-radius: 999px; color: var(--text-2); font-size: 12px; animation: tab-pop var(--t3) var(--ease-move) both; }
+.history-button .icon { font-size: 10px; transition: transform var(--t3) var(--ease-out); }
+.stack[data-history] .history-button .icon { transform: rotate(180deg); }
+
+/* Soft while there is more below; crisp at the end so the last bubble stays whole. */
+@property --edge-bottom { syntax: "<length>"; inherits: false; initial-value: 6px; }
+.history-panel {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 calc(-1 * var(--gutter)) -8px;
+  padding: 40px calc(var(--gutter) - 8px) 8px var(--gutter);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  outline: none;
+  mask-image: linear-gradient(to bottom, transparent 6px, #000 38px, #000 calc(100% - var(--edge-bottom)), transparent);
+  transition: height var(--t3) var(--ease-out), --edge-bottom var(--t2) linear;
+}
+.history-panel[data-below] { --edge-bottom: 34px; }
+html[data-motion="off"] .history-panel { transition: none; }
+.stack[data-history] > .bubble-zone { display: none; }
+.history-panel[data-leaving] {
+  position: absolute;
+  left: calc(-1 * var(--gutter));
+  right: calc(-1 * var(--gutter));
+  bottom: var(--leave-bottom);
+  margin: 0;
+  pointer-events: none;
+  animation: history-leave var(--t2) linear both;
+}
+@keyframes history-leave { to { opacity: 0; } }
+
+/* Nothing sits behind these in a transparent window, so skip the per-bubble blur while scrolling. */
+.history-row .glass { backdrop-filter: none; }
+.history-row .bubble-response { width: fit-content; max-width: 100%; }
+/* Same text column as a long live reply, so nothing rewraps when the views swap. */
+.history-row .bubble-inner { width: max-content; max-width: 100%; padding: 12px 19px 13px 17px; }
+.history-row[data-wide] .bubble-inner,
+.history-row:has(.code-block, table) .bubble-inner { width: var(--bar-w); max-width: 100%; }
+.history-row .bubble-user .turn-content { display: block; overflow: visible; }

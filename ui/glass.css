@@ -238,9 +238,23 @@ html[data-statusdot="false"] .status-dot { display: none; }
   caret-color: var(--accent-text);
   user-select: text;
   cursor: text;
+  transition: height var(--t2) var(--ease-out);
 }
 .bar-input::placeholder { color: var(--text-2); opacity: 1; }
 .bar-input:focus-visible { outline: none; }
+html[data-motion="off"] .bar-input { transition: none; }
+.bar-input.prompt-measure {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  height: 0;
+  max-height: none;
+  min-height: 0;
+  visibility: hidden;
+  pointer-events: none;
+  overflow: hidden;
+  transition: none;
+}
 
 .bar-btn {
   flex: none;
@@ -293,26 +307,27 @@ html[data-statusdot="false"] .status-dot { display: none; }
 .send-btn[data-mode="stop"] .icon { font-size: 12px; }
 
 /* ---------------------------------------------------------------------------
-   Recent-chat tabs: index tabs tucked behind the bar's top edge
+   Recent-chat tabs: attached to the bar's top edge, with room for every title
    --------------------------------------------------------------------------- */
 .tabs {
   position: relative;
-  z-index: 1;
+  z-index: 4;
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 4px;
-  height: 32px;
-  padding-right: calc(var(--r-bar) * 0.72 + 6px);
-  margin-bottom: calc(-12px - var(--stack-gap, 0px));
+  min-width: 0;
+  padding-inline: calc(var(--r-bar) * 0.72 + 6px) 8px;
+  margin-bottom: calc(-2px - var(--stack-gap, 0px));
 }
 .tab {
+  flex: 0 1 auto;
   display: inline-flex;
-  align-items: flex-start;
-  gap: 4px;
-  height: 32px;
-  min-width: 44px;
-  justify-content: center;
-  padding: 4px 9px 0;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 9px 8px;
   border: 0;
   border-radius: var(--r-tab) var(--r-tab) 0 0;
   color: var(--text-1);
@@ -323,9 +338,11 @@ html[data-statusdot="false"] .status-dot { display: none; }
     transform var(--t2) var(--ease-move),
     opacity var(--t1) linear;
 }
-.tab .icon { font-size: 11px; line-height: 15px; color: var(--text-2); }
-.tab:hover:not(:disabled) { transform: translateY(-3px); }
-.tab:active:not(:disabled) { transform: translateY(-1px); }
+.tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tab-label { flex: none; color: var(--text-2); }
+.tab .icon { flex: none; font-size: 11px; line-height: 15px; color: var(--text-2); }
+.tab:hover:not(:disabled) { color: var(--accent-text); }
+.tab:active:not(:disabled) { opacity: 0.8; }
 .tab:disabled { opacity: 0.5; }
 .tab:focus-visible { outline-offset: -2px; }
 html[data-tabclock="false"] .tab .icon { display: none; }

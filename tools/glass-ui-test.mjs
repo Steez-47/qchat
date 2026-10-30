@@ -27,7 +27,7 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}`;
 const app = spawn(process.env.QCHAT_TEST_EDGE || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
+  ['--headless=new', '--disable-extensions', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
   { stdio: 'ignore', windowsHide: true });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -88,6 +88,7 @@ try {
     if (chats !== undefined) await evalJS(`localStorage.setItem('qchat.chats', ${JSON.stringify(JSON.stringify(chats))})`);
     await cdp('Page.navigate', { url: `${base}${url}` });
     await until(`document.readyState==='complete' && window.QSettings`);
+    await cdp('Page.bringToFront');
     await sleep(60);
   };
   const type = (text) => evalJS(`(()=>{const i=document.getElementById('prompt-input');i.value=${JSON.stringify(text)};i.dispatchEvent(new Event('input',{bubbles:true}));})()`);
@@ -114,6 +115,32 @@ try {
   check('no set_layout call or layout attribute', await count('set_layout') === 0 && await evalJS(`!document.documentElement.dataset.layout`));
   check('guest chip appears before first message', guestChip);
   check('window prefs sent on startup', await evalJS(`__mock.last('set_window_prefs')?.args.alwaysOnTop===true && __mock.last('set_window_prefs')?.args.rememberPosition===true`));
+
+  // Sample real layout frames: a height transition must pass through intermediate
+  // sizes, keep the caret, and settle without accumulating extra native resizes.
+  const composerFrames = async (text) => evalJS(`new Promise(resolve=>{
+    const input=document.getElementById('prompt-input'); input.focus();
+    input.value=${JSON.stringify(text)}; input.setSelectionRange(input.value.length,input.value.length);
+    const before=input.getBoundingClientRect().height;
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+    const frames=[]; const start=performance.now();
+    function sample(now){frames.push(input.getBoundingClientRect().height);
+      if(now-start<450)requestAnimationFrame(sample);
+      else resolve({before,frames,caret:input.selectionStart,length:input.value.length,
+        line:parseFloat(getComputedStyle(input).lineHeight),
+        padding:parseFloat(getComputedStyle(input).paddingTop)+parseFloat(getComputedStyle(input).paddingBottom),
+        overflow:getComputedStyle(input).overflowY});}
+    requestAnimationFrame(sample);
+  })`);
+  const grow = await composerFrames('First line\nSecond line\nThird line');
+  const animatedHeight = grow.frames.at(-1);
+  check('composer eases through intermediate heights on new lines', animatedHeight > grow.before && grow.frames.some(h => h > grow.before + 1 && h < animatedHeight - 1), JSON.stringify(grow));
+  check('composer resizing preserves the caret', grow.caret === grow.length);
+  const cappedInput = await composerFrames(Array(12).fill('Another line').join('\n'));
+  check('composer keeps six-line cap and scrolls longer drafts', Math.abs(cappedInput.frames.at(-1) - (6 * cappedInput.line + cappedInput.padding)) < 2 && cappedInput.overflow === 'auto', JSON.stringify(cappedInput));
+  const shrink = await composerFrames('');
+  check('composer eases back to idle height', Math.abs(shrink.frames.at(-1) - grow.before) < 1 && shrink.frames.some(h => h < shrink.before - 1 && h > grow.before + 1), JSON.stringify(shrink));
+  await settle();
 
   // --- Send flow ------------------------------------------------------------
   await evalJS(`__mock.hold=true; __mock.interval=20; __mock.reply=${JSON.stringify(Array.from({ length: 30 }, (_, i) => `Line ${i} of a response that keeps on growing nicely.`).join('\n\n'))}`);
@@ -144,7 +171,8 @@ try {
   check('streaming does not resize the window on every line', resizes < 22, String(resizes));
   await finishReply();
   await settle();
-  const done = await evalJS(`({fit:__mock.fit.height, stack:document.getElementById('stack').offsetHeight, h:document.querySelector('.bubble-response').offsetHeight, inner:document.querySelector('.bubble-inner').offsetHeight, capped:document.querySelector('[data-role=assistant]').hasAttribute('data-capped'), max:Math.round(screen.availHeight*0.6), overflow:getComputedStyle(document.querySelector('.bubble-scroll')).overflowY, send:document.getElementById('btn-send').dataset.mode})`);
+  await until(`__mock.fit.height===document.getElementById('stack').offsetHeight+56`, 'final window fit after response animation');
+  const done = await evalJS(`({inline:document.querySelector('.bubble-response').style.height,prompt:document.getElementById('prompt-input').offsetHeight,promptStyle:document.getElementById('prompt-input').style.height,zone:document.getElementById('bubble-zone').offsetHeight,pct:QSettings.settings.maxHeightPct,avail:screen.availHeight,lastFits:__mock.fits.slice(-12),fit:__mock.fit.height, stack:document.getElementById('stack').offsetHeight, h:document.querySelector('.bubble-response').offsetHeight, inner:document.querySelector('.bubble-inner').offsetHeight, capped:document.querySelector('[data-role=assistant]').hasAttribute('data-capped'), max:Math.round(screen.availHeight*0.6), overflow:getComputedStyle(document.querySelector('.bubble-scroll')).overflowY, send:document.getElementById('btn-send').dataset.mode})`);
   check('response stays after done and fit is exact', done.fit === done.stack + 56 && done.send === 'send', JSON.stringify(done));
   check('long reply caps at the height limit and scrolls itself', done.capped && done.h <= done.max && done.overflow === 'auto' && done.inner > done.h, JSON.stringify(done));
   const bar = await evalJS(`(()=>{const s=document.querySelector('.bubble-scroll');return s.offsetWidth-s.clientWidth;})()`);
@@ -172,8 +200,46 @@ try {
   await key('Escape');
   check('Esc finally hides the window', await count('hide_main') === hidesBefore + 1);
 
+  // Repeated stream snapshots should preserve already rendered DOM. A corrected
+  // snapshot and terminal event must still produce the exact final Markdown.
+  await evalJS(`__mock.hold=true`);
+  await send('Streaming layout regression');
+  await evalJS(`(()=>{window.streamId=__mock.last('chat_send').args.id;__mock.emit('bridge',{type:'delta',id:streamId,text:'Stable **paragraph**.\\n\\nGrowing tail'});})()`);
+  await until(`document.querySelector('[data-role=assistant] .turn-content p')?.textContent==='Stable paragraph.'`);
+  await evalJS(`window.stableParagraph=document.querySelector('[data-role=assistant] .turn-content p')`);
+  await evalJS(`__mock.emit('bridge',{type:'delta',id:streamId,text:'Stable **paragraph**.\\n\\nGrowing tail with more words 🌿'});`);
+  await until(`document.querySelector('[data-role=assistant] .turn-content')?.textContent.includes('more words')`);
+  check('stream updates retain completed paragraph nodes', await evalJS(`stableParagraph===document.querySelector('[data-role=assistant] .turn-content p')`));
+  await evalJS(`__mock.emit('bridge',{type:'delta',id:streamId,text:'Corrected **paragraph**.\\n\\nFinal tail 🌿'});`);
+  await until(`document.querySelector('[data-role=assistant] .turn-content')?.textContent.includes('Corrected paragraph.')`);
+  await evalJS(`__mock.emit('bridge',{type:'done',id:streamId,text:'Corrected **paragraph**.\\n\\nFinal tail 🌿',conversationId:'stream-regression'});`);
+  await finishReply();
+  check('terminal stream flush preserves corrected Markdown and Unicode', await evalJS(`document.querySelector('[data-role=assistant] .turn-content').textContent.trim()==='Corrected paragraph.\\nFinal tail 🌿' && document.querySelector('[data-role=assistant] strong')?.textContent==='paragraph'`));
+  await key('Escape');
+  await settle();
+
   // --- Slash commands -------------------------------------------------------
   await open('/');
+  await settle();
+  // Use the size requested from the native host, not the generous 800px test
+  // viewport: an overflowing menu can otherwise appear complete in the mock.
+  const nativeViewport = async () => {
+    const fit = await evalJS(`__mock.fit`);
+    await cdp('Emulation.setDeviceMetricsOverride', { width: fit.width, height: fit.height, deviceScaleFactor: 1, mobile: false, screenWidth: 1920, screenHeight: 1080 });
+    await settle();
+  };
+  await nativeViewport();
+  await type('/');
+  // Give the host a realistic resize delay, then inspect the remaining entrance
+  // frames at the requested size while the menu is still animating.
+  await sleep(50);
+  const menuFit = await evalJS(`__mock.fit`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: menuFit.width, height: menuFit.height, deviceScaleFactor: 1, mobile: false, screenWidth: 1920, screenHeight: 1080 });
+  const entranceBounds = await evalJS(`new Promise(resolve=>{const frames=[];const start=performance.now();function sample(now){const r=document.getElementById('slash-menu').getBoundingClientRect();frames.push({top:r.top,bottom:r.bottom,height:innerHeight});if(now-start<450)requestAnimationFrame(sample);else resolve(frames);}requestAnimationFrame(sample);})`);
+  check('slash entrance stays inside the resized native viewport', entranceBounds.length > 2 && entranceBounds.every(r => r.top >= 0 && r.bottom <= r.height), JSON.stringify(entranceBounds));
+  await settle();
+  const slashBounds = await evalJS(`(()=>{const menu=document.getElementById('slash-menu').getBoundingClientRect();return {top:menu.top,bottom:menu.bottom,height:innerHeight,items:[...document.querySelectorAll('#slash-menu [role=option]')].map(n=>{const r=n.getBoundingClientRect();return {command:n.dataset.command,top:r.top,bottom:r.bottom};})};})()`);
+  check('all slash commands fit inside the native fitted viewport', slashBounds.items.length === 5 && slashBounds.top >= 27 && slashBounds.bottom <= slashBounds.height - 27 && slashBounds.items.every(r => r.top >= slashBounds.top && r.bottom <= slashBounds.bottom), JSON.stringify(slashBounds));
   await type('/se');
   const filtered = await evalJS(`[...document.querySelectorAll('#slash-menu [role=option]')].map(n=>n.dataset.command)`);
   check('slash menu filters as you type', filtered.length === 1 && filtered[0] === 'settings', filtered.join());
@@ -181,6 +247,13 @@ try {
   await key('Enter');
   check('/settings opens the settings window', await evalJS(`__mock.settingsOpen===true && document.getElementById('prompt-input').value===''`));
   check('/settings is not sent as a prompt', await count('chat_send') === 0);
+  await evalJS(`window.originalSettingsInvoke=window.__TAURI__.core.invoke;window.__TAURI__.core.invoke=(cmd,args)=>cmd==='open_settings'?Promise.reject(new Error('native details')):window.originalSettingsInvoke(cmd,args)`);
+  await type('/settings');
+  await key('Enter');
+  await until(`!document.getElementById('global-error').hidden`);
+  check('/settings failure shows a friendly inline error', await evalJS(`document.getElementById('global-error-text').textContent==="Couldn't open settings. Try again." && document.getElementById('prompt-input').value===''`));
+  await evalJS(`window.__TAURI__.core.invoke=window.originalSettingsInvoke;delete window.originalSettingsInvoke;document.getElementById('btn-error-dismiss').click()`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 516, height: 800, deviceScaleFactor: 1, mobile: false, screenWidth: 1920, screenHeight: 1080 });
   await type('/');
   await key('ArrowDown');
   check('arrow keys move the selection', await evalJS(`document.getElementById('prompt-input').getAttribute('aria-activedescendant')==='slash-new'`));
@@ -226,9 +299,11 @@ try {
   check('a stopped wait leaves no empty bubble', await evalJS(`!document.querySelector('[data-role=user]') && !document.querySelector('[data-role=assistant]')`));
   await evalJS(`__mock.hold=false`);
   await type(Array.from({ length: 12 }, (_, i) => `row ${i}`).join('\n'));
+  await settle();
   const grown = await evalJS(`(()=>{const i=document.getElementById('prompt-input');const lh=parseFloat(getComputedStyle(i).lineHeight);const pad=parseFloat(getComputedStyle(i).paddingTop)*2;return {lines:(i.offsetHeight-pad)/lh, scrolls:getComputedStyle(i).overflowY};})()`);
   check('input grows to at most 6 lines, then scrolls', Math.round(grown.lines) === 6 && grown.scrolls === 'auto', JSON.stringify(grown));
   await type('');
+  await settle();
   check('input shrinks back to one line', await evalJS(`document.getElementById('prompt-input').offsetHeight<=36`));
   await evalJS(`__mock.hold=true`);
   await send('A really long prompt '.repeat(40));
@@ -263,12 +338,39 @@ try {
   check('labels use m/h/d', tabs.map((t) => t.label).join() === '30m,5h,3d', tabs.map((t) => t.label).join());
   check('tabs use the clock glyph', tabs.every((t) => t.clock === 0xE121));
   check('tab tooltip has title and last active', tabs[0].title.includes('A very recent chat') && tabs[0].title.includes('Last active 30m ago'), tabs[0].title);
-  check('no old bubble is shown on launch', await evalJS(`!document.querySelector('[data-role=assistant]') && document.getElementById('bubble-zone').hidden`));
+  check('recent chats show the title before the timestamp', await evalJS(`(()=>{const t=document.querySelector('#tabs .tab'),title=t.querySelector('.tab-title'),time=t.querySelector('.tab-label');return title?.textContent==='A very recent chat' && !!(title.compareDocumentPosition(time)&Node.DOCUMENT_POSITION_FOLLOWING);})()`));
+  check('recent chats attach to the left of the composer with visible labels', await evalJS(`(()=>{const bar=document.getElementById('bar').getBoundingClientRect(),nav=document.getElementById('tabs').getBoundingClientRect(),tabs=[...document.querySelectorAll('#tabs .tab')];return Math.abs(tabs[0].getBoundingClientRect().left-bar.left)<30 && Math.abs(nav.bottom-bar.top)<4 && tabs.every(t=>{const title=t.querySelector('.tab-title').getBoundingClientRect(),time=t.querySelector('.tab-label').getBoundingClientRect();return title.bottom<=bar.top && time.bottom<=bar.top && document.elementFromPoint(title.left+2,title.top+2)?.closest('.tab')===t;});})()`));
+  check('startup shows the previous reply as completed context', await evalJS(`document.querySelector('[data-role=assistant]')?.dataset.status==='done' && document.querySelector('[data-role=assistant] .turn-content')?.textContent.includes('Cached reply for cur') && document.getElementById('btn-send').dataset.mode==='send'`));
+  check('restored context has no stream or image generation animation', await evalJS(`document.querySelector('[data-role=assistant] .image-generation').hidden && !document.querySelector('[data-role=assistant]').classList.contains('swapping') && !document.querySelector('[data-role=assistant]').classList.contains('rising')`));
   check('no chat_open on launch', await count('chat_open') === 0);
   await evalJS(`(()=>{const real=Date.now;Date.now=()=>real()+40*60*1000;__mock.emit('qchat://shown',null);Date.now=real;})()`);
   check('labels refresh when shown', (await tabInfo())[0].label === '1h', (await tabInfo())[0].label);
   await open('/', { chats: seeded(chat('cur', 'conv-current', 5 * MIN), chat('a', 'conv-a', 20 * 1000)) });
   check('labels show now under a minute', (await tabInfo())[0].label === 'now');
+  await open('/', { settings:{barWidth:340}, chats:seeded(chat('cur','conv-current',MIN),chat('a','conv-a',MIN,'A long conversation title for testing'),chat('b','conv-b',HOUR,'Another long conversation title to shorten'),chat('c','conv-c',DAY,'😀'.repeat(12)+' a longer title')) });
+  await settle();
+  check('long recent titles are capped and keep the full accessible name', await evalJS(`(()=>{const tabs=[...document.querySelectorAll('#tabs .tab')];return tabs.every(t=>Array.from(t.querySelector('.tab-title').textContent).length<=24 && t.querySelector('.tab-title').textContent.endsWith('…')) && tabs[0].getAttribute('aria-label').includes('A long conversation title for testing');})()`));
+  check('recent chats fit the narrow composer and contribute to window height', await evalJS(`(()=>{const s=document.getElementById('stack').getBoundingClientRect(),bar=document.getElementById('bar').getBoundingClientRect(),nav=document.getElementById('tabs').getBoundingClientRect();return [...document.querySelectorAll('#tabs .tab')].every(t=>{const r=t.getBoundingClientRect();return r.left>=s.left && r.right<=s.right+1 && r.top>=s.top && Math.abs(r.bottom-bar.top)<4;}) && nav.height>20 && __mock.fit.height>=document.getElementById('stack').offsetHeight+56;})()`));
+
+  const restoredImageChat = { ...chat('image', 'conv-image', MIN), lastResponse: 'Previous image reply.\n\n![Generated image](qchat-media:qchat-media-old)', lastHasMedia: true };
+  await open('/', { chats: seeded(restoredImageChat) });
+  const restoredImage = await evalJS(`({text:document.querySelector('[data-role=assistant]')?.textContent,status:document.querySelector('[data-role=assistant]')?.dataset.status,loading:!document.querySelector('.image-generation')?.hidden,images:document.querySelectorAll('.media-preview img').length,action:!!document.querySelector('[data-action="view-media"], [data-action="signin"]')})`);
+  check('restart restores image history as a completed reply with a view action', restoredImage.status==='done' && restoredImage.text.includes('Previous image reply.') && restoredImage.action && !restoredImage.loading && restoredImage.images===0, JSON.stringify(restoredImage));
+  check('restart never loads expired media broker ids', await count('media_load')===0);
+  check('restored history persists prose and a media hint without stale handles', await evalJS(`(()=>{const c=JSON.parse(localStorage.getItem('qchat.chats')).current;return c.lastHasMedia===true && c.lastResponse==='Previous image reply.' && !JSON.stringify(c).includes('qchat-media-old');})()`));
+  const unchangedContext = await evalJS(`document.querySelector('[data-role=assistant] .turn-content').textContent`);
+  await sleep(120);
+  check('previous reply is not replayed through the character queue', await evalJS(`document.querySelector('[data-role=assistant] .turn-content').textContent===${JSON.stringify(unchangedContext)}`));
+  await evalJS(`__mock.hold=true`);
+  await send('Continue the same chat');
+  await until(`__mock.last('chat_send')`);
+  check('new send replaces restored context without inheriting its image', await evalJS(`!document.querySelector('.media-card') && document.querySelector('[data-role=assistant] .turn-content')?.textContent==='' && __mock.last('chat_open').args.conversationId==='conv-image'`));
+  await key('.', { ctrlKey: true });
+  await open('/', { chats: seeded({ ...restoredImageChat, lastResponse:'' }) });
+  check('image-only history still restores completed conversation context', await evalJS(`document.querySelector('[data-role=assistant]')?.dataset.status==='done' && !!document.querySelector('[data-action="view-media"], [data-action="signin"]') && document.querySelector('.image-generation').hidden`));
+  await evalJS(`document.querySelector('[data-action="view-media"]').click()`);
+  await until(`__mock.count('show_signin')===1`);
+  check('viewing a restored image opens its saved conversation first', await evalJS(`__mock.last('chat_open')?.args.conversationId==='conv-image' && __mock.calls.findIndex(c=>c.cmd==='chat_open')<__mock.calls.findIndex(c=>c.cmd==='show_signin')`));
 
   await open('/', { chats: seeded(chat('cur', 'conv-current', 5 * MIN, 'Current'), chat('new', 'conv-new', 30 * MIN), chat('mid', 'conv-mid', 5 * HOUR), chat('old', 'conv-old', 3 * DAY)) });
   await evalJS(`document.querySelector('#tabs .tab').click()`);
@@ -368,16 +470,17 @@ try {
   check('stored chats have the agreed shape', ['key', 'conversationId', 'title', 'lastActive', 'lastPrompt', 'lastResponse', 'createdAt'].every((k) => k in stored.recent[0]));
   await evalJS(`__mock.reply=null`);
   await open('/', { chats: { v: 1, current: chat('c', 'conv-c', MIN), recent: [{ ...chat('big', 'conv-big', MIN), lastResponse: 'x'.repeat(200000) }] } });
-  check('oversized stored reply is cut to 60 KB on load', await evalJS(`document.querySelectorAll('#tabs .tab').length===1`));
+  check('long stored conversation remains available on load', await evalJS(`document.querySelectorAll('#tabs .tab').length===1`));
   await evalJS(`document.querySelector('#tabs .tab').click()`);
   await sleep(20);
-  check('stored reply respects the 60 KB limit', await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).current.lastResponse.length<=61440`));
+  check('stored reply and transcript preserve the complete long response', await evalJS(`(()=>{const c=JSON.parse(localStorage.getItem('qchat.chats')).current;return c.lastResponse.length===200000 && c.transcript.find(t=>t.role==='assistant').text.length===200000;})()`));
 
   await cdp('Page.navigate', { url: `${base}/` });
   await until(`document.readyState==='complete'`);
   await evalJS(`localStorage.clear(); localStorage.setItem('qchat.chats','{not json')`);
   await cdp('Page.navigate', { url: `${base}/` });
   await until(`document.readyState==='complete' && window.QSettings`);
+    await cdp('Page.bringToFront');
   await sleep(40);
   check('corrupt chat history falls back to empty', await evalJS(`document.getElementById('tabs').hidden`));
 
@@ -528,6 +631,9 @@ try {
   await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
   await open('/');
   check('reduced motion turns motion off by default', await evalJS(`document.documentElement.dataset.motion`) === 'off' && await cssVar('--t3') === '1ms');
+  await type('One\nTwo\nThree');
+  check('reduced motion resizes the composer immediately', await evalJS(`(()=>{const i=document.getElementById('prompt-input');const s=getComputedStyle(i);return s.transitionDuration==='0s' && i.offsetHeight>=3*parseFloat(s.lineHeight);})()`));
+  await type('');
   await evalJS(`__mock.interval=2`);
   await send('hi');
   await finishReply();

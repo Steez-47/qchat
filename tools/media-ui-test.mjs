@@ -1,6 +1,6 @@
 // Synthetic UI regression checks in an isolated, invisible Edge profile. No account/site access.
 import { createServer } from 'node:http';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -67,6 +67,35 @@ try {
     const remove=()=>document.querySelector('#attachments button').click();
     const reset=async()=>{window.dispatchEvent(new KeyboardEvent('keydown',{key:'n',ctrlKey:true,bubbles:true,cancelable:true})); await wait(30);};
     const event=(type,more={})=>test.emit({type,id:test.turn,...more});
+    $('prompt-input').value='look something up'; $('prompt-input').dispatchEvent(new Event('input')); $('btn-send').click(); await wait(20);
+    check('tool status stays hidden until real activity arrives',document.querySelector('.tool-activity').hidden);
+    event('activity',{kind:'search',state:'running'}); await wait(40);
+    const activity=document.querySelector('.tool-activity');
+    check('search activity reveals response before text',!activity.hidden && activity.textContent.includes('Searching the web') && !activity.closest('[data-role=assistant]').hidden && !document.querySelector('.image-generation:not([hidden])'));
+    check('search shows accessible status and indeterminate bar',activity.getAttribute('role')==='status' && !!activity.querySelector('.tool-activity-track') && activity.getAttribute('aria-live')==='polite');
+    check('reduced motion keeps activity static',getComputedStyle(activity.querySelector('.progress-ring')).animationName==='none' && getComputedStyle(activity.querySelector('.tool-activity-track'),'::after').animationName==='none');
+    const previousMotion=document.documentElement.dataset.motion; document.documentElement.dataset.motion='on'; await wait(40);
+    const scanStart=getComputedStyle(activity.querySelector('.tool-activity-track'),'::after').transform; await wait(120);
+    check('search bar animates when motion is enabled',getComputedStyle(activity.querySelector('.tool-activity-track'),'::after').transform!==scanStart);
+    document.documentElement.dataset.motion=previousMotion;
+    event('delta',{text:'Checking a result…'}); await wait(40);
+    event('activity',{kind:'browse',state:'running'}); await wait(30);
+    check('activity updates without replacing streamed text or status node',document.querySelector('.tool-activity')===activity && activity.textContent.includes('Reading sources') && document.querySelector('.turn-content').textContent.includes('Checking'));
+    event('activity',{kind:'code',state:'running',label:'<script>secret arguments</script>'}); await wait(30);
+    check('tool labels describe activity without raw arguments',activity.textContent.includes('Running code') && !activity.textContent.includes('secret'));
+    event('activity',{kind:'code',state:'complete'}); await wait(30);
+    check('completed tool call hides its animation',activity.hidden);
+    event('activity',{kind:'search',state:'running'}); await wait(30);
+    event('done',{text:'Final result'}); await wait(30);
+    event('activity',{kind:'search',state:'running'}); await wait(30);
+    check('done clears activity and ignores late tool events',activity.hidden);
+    await reset(); $('prompt-input').value='tool error'; $('prompt-input').dispatchEvent(new Event('input')); $('btn-send').click(); await wait(20);
+    event('activity',{kind:'tool',state:'running'}); await wait(20); event('error',{code:'stream_failed'}); await wait(30);
+    check('errors clear tool activity',document.querySelector('.tool-activity').hidden);
+    await reset(); $('prompt-input').value='stop tool'; $('prompt-input').dispatchEvent(new Event('input')); $('btn-send').click(); await wait(20);
+    event('activity',{kind:'search',state:'running'}); await wait(20); $('btn-send').click(); await wait(30); event('activity',{kind:'search',state:'running'}); await wait(30);
+    check('Stop clears tool activity and ignores late events',!document.querySelector('.tool-activity:not([hidden])'));
+    await reset(); test.calls.length=0;
     files('<img src=x onerror=alert(1)> 😀.txt',524289);
     check('send disabled during staging',$('btn-send').disabled);
     await until(()=>document.querySelector('#attachments [data-state=ready]'));
@@ -120,7 +149,20 @@ try {
     for(const mime of ['image/svg+xml','text/html','application/octet-stream']){test.mime=mime;event('media',{items:[{id:mime,kind:'image',name:'unknown'}]});await wait(5);}
     check('SVG HTML and unknown MIME previews rejected',!document.querySelector('.media-preview img'));
     event('delta',{text:'![nice](https://example.com/image.png) [download](sandbox:/mnt/data/report.csv) [safe](https://example.com/)'}); await wait(70);
-    check('markdown images and sandbox downloads have fallback',document.querySelectorAll('[data-action=view-media]').length===2 && !document.querySelector('.turn-content img') && document.querySelector('.turn-content a').href==='https://example.com/');
+    check('web images render source links and sandbox downloads keep fallback',document.querySelectorAll('[data-action=view-media]').length===1 && !document.querySelector('.turn-content img') && document.querySelector('.turn-content a').href==='https://example.com/image.png');
+    await reset(); $('prompt-input').value='sources'; $('prompt-input').dispatchEvent(new Event('input')); $('btn-send').click(); await wait(20);
+    event('delta',{text:'Reported details. <Cite ref="turn1news0"/> Unknown <Cite ref="missing"/>'}); await wait(70);
+    event('sources',{items:[{id:'turn1news0',url:'https://example.com/report',title:'Source report'},{id:'bad',url:'javascript:alert(1)',title:'unsafe'}]}); await wait(70);
+    const sourceMenu=document.querySelector('.turn-sources');
+    check('sources dropdown starts closed and rejects unsafe URLs',sourceMenu && !sourceMenu.open && sourceMenu.querySelectorAll('a').length===1);
+    check('citation markup becomes a working numbered link',document.querySelector('.turn-content a')?.href==='https://example.com/report' && !document.querySelector('.turn-content').textContent.includes('<Cite'));
+    sourceMenu.querySelector('summary').click(); await wait(30);
+    event('sources',{items:[{id:'turn1news0',url:'https://example.com/report',title:'Updated report'}]}); await wait(30);
+    check('source updates preserve expanded state without image cards',sourceMenu.open && document.querySelectorAll('.media-card').length===0 && document.querySelector('.image-generation').hidden);
+    sourceMenu.querySelector('a').click(); await wait(10);
+    check('source opens through native external link handler',test.calls.some(c=>c.cmd==='open_external'&&c.args.url==='https://example.com/report'));
+    event('done',{text:'Reported details. <Cite ref="turn1news0"/>'}); await wait(30);
+    check('completed source metadata is saved',JSON.parse(localStorage.getItem('qchat.chats')).current.lastSources?.[0]?.url==='https://example.com/report');
     await reset(); files('stopped.txt'); await until(()=>document.querySelector('#attachments [data-state=ready]'));
     test.delaySend=true; $('prompt-input').value='keep stopped draft'; $('prompt-input').dispatchEvent(new Event('input')); $('btn-send').click();
     await until(()=>test.rejectSend); $('btn-send').click(); await wait(30); test.rejectSend(); test.delaySend=false; await wait(70);
@@ -153,8 +195,40 @@ try {
     await reset();let released=false;try{await fetch(uploadURL);}catch{released=true;}check('new chat releases local image preview URLs',released);
     $('prompt-input').value='Generate an image of a blue circle';$('prompt-input').dispatchEvent(new Event('input'));$('btn-send').click();await wait(20);
     check('explicit image request shows preparation graphic immediately',document.querySelector('.image-generation:not([hidden]) .image-generation-label')?.textContent==='Preparing image…');
+    event('sources',{items:[{id:'turn1news0',url:'https://example.com/report',title:'Source report'}]});
+    event('done',{text:'Reported details. <Cite ref="turn1news0"/>'}); await wait(50);
     return results;
   })()`);
+  await cdp('Page.reload'); await sleep(500);
+  results.push({name:'restart restores working citations with sources closed',ok:await evalJS(`!!document.querySelector('.turn-sources:not([open]) a[href="https://example.com/report"]') && document.querySelector('.turn-content a')?.href==='https://example.com/report' && !document.querySelector('.media-card')`)});
+  if (process.env.QCHAT_RICH_REPLAY) {
+    const replay = JSON.parse(await readFile(process.env.QCHAT_RICH_REPLAY, 'utf8'));
+    const richCheck = await evalJS(`(async()=>{
+      const wait=ms=>new Promise(r=>setTimeout(r,ms));
+      window.dispatchEvent(new KeyboardEvent('keydown',{key:'n',ctrlKey:true,bubbles:true,cancelable:true})); await wait(40);
+      QSettings.apply(document.documentElement,{...QSettings.settings,animations:'on'});
+      const input=document.getElementById('prompt-input'); input.value='Explain the Edge exclusive'; input.dispatchEvent(new Event('input')); document.getElementById('btn-send').click(); await wait(40);
+      const samples=[]; const timer=setInterval(()=>samples.push(document.querySelector('[data-role=assistant] .turn-content')?.textContent||''),16);
+      for(const event of ${JSON.stringify(replay)}) {test.emit({...event,id:test.turn}); await wait(140);}
+      await wait(1500); clearInterval(timer);
+      const content=document.querySelector('[data-role=assistant] .turn-content');
+      return content.querySelectorAll('h2').length===1 && content.textContent.includes('And honestly, there is more to unpack.') && !content.textContent.includes('And how his') && content.querySelector('a')?.href==='https://example.com/edge' && samples.every(text=>!/<row|<box|<text|AsyncImage/.test(text) && (text.match(/Interpreting the Edge/g)||[]).length<=1);
+    })()`);
+    results.push({name:'actual bridge DIL events render once through paced UI with corrected text and links',ok:richCheck});
+    if (process.env.QCHAT_RICH_SCREENSHOT) {
+      const capture = await cdp('Page.captureScreenshot', {format:'png'});
+      await writeFile(process.env.QCHAT_RICH_SCREENSHOT, Buffer.from(capture.data,'base64'));
+    }
+  }
+  if (process.env.QCHAT_TEST_SCREENSHOT) {
+    const capture = await cdp('Page.captureScreenshot', {format:'png'});
+    await writeFile(process.env.QCHAT_TEST_SCREENSHOT, Buffer.from(capture.data, 'base64'));
+  }
+  if (process.env.QCHAT_ACTIVITY_SCREENSHOT) {
+    await evalJS(`(async()=>{ window.dispatchEvent(new KeyboardEvent('keydown',{key:'n',ctrlKey:true,bubbles:true,cancelable:true})); await new Promise(r=>setTimeout(r,40)); const input=document.getElementById('prompt-input'); input.value='Search for the latest game news'; input.dispatchEvent(new Event('input')); document.getElementById('btn-send').click(); await new Promise(r=>setTimeout(r,40)); test.emit({type:'activity',id:test.turn,kind:'search',state:'running'}); await new Promise(r=>setTimeout(r,100)); })()`);
+    const capture = await cdp('Page.captureScreenshot', {format:'png'});
+    await writeFile(process.env.QCHAT_ACTIVITY_SCREENSHOT, Buffer.from(capture.data, 'base64'));
+  }
   for (const { name, ok } of results) { console.log(`${ok ? 'PASS' : 'FAIL'} ${name}`); if (!ok) failed++; }
 } catch (e) { console.error(e); failed++; }
 finally {

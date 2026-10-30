@@ -13,6 +13,11 @@
 <body>
   <div class="stage" id="stage">
     <div class="stack" id="stack">
+      <div class="history-controls" id="history-controls" hidden>
+        <button type="button" class="history-button glass glass-tiny" id="btn-history" aria-expanded="false" aria-controls="history-panel"><span class="icon" aria-hidden="true">&#xE70E;</span><span id="history-label">History</span></button>
+        <span class="history-status glass glass-tiny" id="history-status" role="status" hidden></span>
+      </div>
+      <section class="history-panel scroll" id="history-panel" tabindex="0" aria-label="Message history" hidden></section>
       <section class="bubble-zone" id="bubble-zone" role="log" aria-live="polite" aria-relevant="additions" aria-label="ChatGPT response" hidden></section>
 
       <div class="notice glass glass-tiny" id="guest-notice" hidden>

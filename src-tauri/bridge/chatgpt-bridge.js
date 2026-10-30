@@ -45,6 +45,37 @@
   const media = new Map();
   let mediaSerial = 0, inputSerial = 0, uploads = 0, uploadFailureAt = -Infinity, attachmentSelectionAt = -Infinity, cancelledAttachments, downloadActivation;
   function error(id, code, message) { emit({ type: 'error', ...(id == null ? {} : { id }), code, message }); }
+  function toolActivity(recipient) {
+    if (typeof recipient !== 'string' || !recipient || ['all', 'all_tools'].includes(recipient)) return null;
+    if (/^(?:web|browser)(?:[._]|$)/i.test(recipient)) return /(?:open|browse|read|click|find|screenshot)/i.test(recipient)
+      ? { kind: 'browse', label: 'Reading sources' } : { kind: 'search', label: 'Searching the web' };
+    if (/^(?:python|code_interpreter|computer\.terminal|functions\.(?:exec|run))(?:[._]|$)/i.test(recipient)) return { kind: 'code', label: 'Running code' };
+    return { kind: 'tool', label: 'Using a tool' };
+  }
+  function completeActivity(job) {
+    if (!job.activity) return;
+    if (job.activityKey?.startsWith('message:')) (job.completedActivities ||= new Set()).add(job.activityKey);
+    emit({ type: 'activity', id: job.id, ...job.activity, state: 'complete' });
+    job.activity = null;
+  }
+  function startActivity(job, activity, key) {
+    if (active !== job || job.finished || job.cancelled || job.completedActivities?.has(key)) return;
+    if (job.activityKey === key && job.activity) return;
+    if (job.activity) completeActivity(job);
+    job.activityKey = key; job.activity = activity;
+    emit({ type: 'activity', id: job.id, ...activity, state: 'running' });
+  }
+  function messageActivity(job, message) {
+    if (!message || job.previousAssistantIds.has(message.id)) return;
+    const role = message.author?.role;
+    if (role === 'assistant') {
+      const activity = toolActivity(message.recipient);
+      if (activity) startActivity(job, activity, `message:${message.id || message.recipient}`);
+    } else if (role === 'tool' && job.activity && (!message.author.name || toolActivity(message.author.name)?.kind === job.activity.kind)) {
+      (job.completedActivities ||= new Set()).add(job.activityKey);
+      completeActivity(job);
+    }
+  }
   function cancelTimers(job) { clearTimeout(job.watchdog); clearTimeout(job.startTimer); clearTimeout(job.deltaTimer); clearInterval(job.domTimer); job.observer?.disconnect(); job.settle?.(); }
   function disposeReader(job) {
     if (!job.reader || job.readerDisposed) return;
@@ -55,7 +86,9 @@
   }
   function fail(job, code, message) {
     if (active !== job || job.finished) return;
+    job.text = citationText(job, job.text);
     if (job.text !== job.sentText) { emit({ type: 'delta', id: job.id, text: job.text }); job.sentText = job.text; }
+    completeActivity(job);
     job.finished = true; cancelTimers(job); active = null;
     disposeReader(job);
     error(job.id, code, message);
@@ -70,7 +103,7 @@
     if (delay > 0) {
       job.deltaTimer = setTimeout(() => delta(job, final), delay); return;
     }
-    const text = wellFormed(final ? job.text : job.text.replace(/[\uD800-\uDBFF]$/, ''));
+    const text = wellFormed(citationText(job, final ? job.text : job.text.replace(/[\uD800-\uDBFF]$/, '')));
     if (text !== job.sentText && (text || final)) {
       emit({ type: 'delta', id: job.id, text });
       job.sentText = text; job.lastDelta = Date.now();
@@ -106,6 +139,8 @@
       job.finishing = false; job.stream = false; job.streamEnded = true; job.detached = true; disposeReader(job); return;
     }
     if (job.sawImageGeneration && /^(?:(?:Loading images?|Creating image|Generating image|Image created|Edit)(?:[.\u2026\s]|\d{1,3}\s*%)*)+$/i.test(job.text.trim())) job.text = '';
+    job.text = citationText(job, job.text);
+    completeActivity(job);
     delta(job, true); job.finished = true; cancelTimers(job); active = null;
     disposeReader(job);
     if (job.media?.size) emit({ type: 'media', id: job.id, items: [...job.media.values()], final: true });
@@ -115,6 +150,82 @@
     const excluded = '[data-user-message-bubble], [data-message-author-role="user"], [data-message-channel="analysis"], [data-channel="analysis"], [data-thinking], [data-testid*="thinking"], [hidden], [aria-hidden="true"]';
     return [...document.querySelectorAll(selectors.assistant.join(','))].filter(node =>
       !node.closest(excluded) && !node.querySelector('[data-user-message-bubble]'));
+  }
+  const userSelector = '[data-message-author-role="user"], [data-message-role="user"], [data-turn="user"], [data-user-message-bubble]';
+  function messageIds(node) {
+    const owner = node.closest('[data-message-id], [data-dil-source-message-id], [data-dil-message-id], [data-chatgpt-search-message-ids]');
+    return [...new Set([node, owner, node.querySelector('[data-dil-message-id]')].filter(Boolean).flatMap(item =>
+      ['data-message-id', 'data-dil-source-message-id', 'data-dil-message-id', 'data-chatgpt-search-message-ids']
+        .flatMap(key => (item.getAttribute(key) || '').split(/[\s,]+/).filter(Boolean))))];
+  }
+  function currentAssistants(job) {
+    if (!job.submitted) return [];
+    const users = [...document.querySelectorAll(userSelector)];
+    const latest = users[users.length - 1];
+    const ids = latest ? messageIds(latest) : [];
+    const boundary = latest && (job.userMessageIds?.size
+      ? ids.some(id => job.userMessageIds.has(id))
+      : !job.previousUsers.has(latest) && !ids.some(id => job.previousUserIds.has(id)) &&
+        (latest.innerText || latest.textContent || '').trim() === job.prompt);
+    return assistantNodes().filter(node => {
+      const ids = messageIds(node);
+      // Node identity alone is unsafe: restored history can hydrate or remount
+      // after Send. Accept only stream-correlated messages or this user turn.
+      if (job.previousAssistants.has(node) || ids.some(id => job.previousAssistantIds.has(id))) return false;
+      if (job.scopedAssistants.has(node) || ids.some(id => job.responseIds.has(id))) return true;
+      const order = boundary ? latest.compareDocumentPosition?.(node) || 0 : 0;
+      if (!(order & 4) || order & 1) return false;
+      job.scopedAssistants.add(node);
+      ids.forEach(id => job.responseIds.add(id));
+      return true;
+    });
+  }
+  // The conversation as the site rendered it, so History can show what the app never saw.
+  function conversationNodes() {
+    const nodes = [...assistantNodes(), ...[...document.querySelectorAll(userSelector)].filter(node => !node.closest('[hidden], [aria-hidden="true"]'))];
+    return nodes.filter(node => !nodes.some(other => other !== node && node.contains(other)))
+      .sort((a, b) => a.compareDocumentPosition(b) & 4 ? -1 : 1);
+  }
+  function nodeMarkdown(node) {
+    if (node.nodeType === 3) return node.nodeValue;
+    if (node.nodeType !== 1 || node.matches('button, svg, style, script, img, video, audio, [hidden], [aria-hidden="true"], .sr-only')) return '';
+    const inner = (from = node) => [...from.childNodes].map(nodeMarkdown).join('');
+    const tag = node.tagName.toLowerCase();
+    if (/^h[1-6]$/.test(tag)) return `${'#'.repeat(+tag[1])} ${inner().trim()}\n\n`;
+    if (tag === 'p') return `${inner().trim()}\n\n`;
+    if (tag === 'br') return '\n';
+    if (tag === 'hr') return '---\n\n';
+    if (tag === 'strong' || tag === 'b') return `**${inner()}**`;
+    if (tag === 'em' || tag === 'i') return `*${inner()}*`;
+    if (tag === 'code') return `\`${node.textContent}\``;
+    if (tag === 'pre') {
+      const code = node.querySelector('code');
+      const language = code?.className.match(/language-([\w+#.-]+)/)?.[1] || '';
+      return `\`\`\`${language}\n${(code || node).textContent.replace(/\n$/, '')}\n\`\`\`\n\n`;
+    }
+    if (tag === 'a') return /^https:/.test(node.href) ? `[${inner()}](${node.href})` : inner();
+    if (tag === 'blockquote') return `${inner().trim().split('\n').map(line => `> ${line}`).join('\n')}\n\n`;
+    if (tag === 'ul' || tag === 'ol') {
+      const items = [...node.children].filter(item => item.tagName === 'LI').map((item, index) => {
+        const marker = tag === 'ol' ? `${index + 1}. ` : '- ';
+        return marker + inner(item).trim().replace(/\n+/g, '\n').split('\n').join(`\n${' '.repeat(marker.length)}`);
+      });
+      return `${items.join('\n')}\n\n`;
+    }
+    if (tag === 'table') {
+      const rows = [...node.rows].map(row => `| ${[...row.cells].map(cell => inner(cell).trim().replace(/\|/g, '\\|').replace(/\n+/g, ' ')).join(' | ')} |`);
+      if (rows.length) rows.splice(1, 0, `|${' --- |'.repeat(node.rows[0].cells.length)}`);
+      return `${rows.join('\n')}\n\n`;
+    }
+    return inner();
+  }
+  function conversationMessages() {
+    return conversationNodes().map(node => {
+      const role = node.matches(userSelector) ? 'user' : 'assistant';
+      const body = role === 'assistant' ? node.querySelector(selectors.body.join(',')) || node : node;
+      const text = role === 'user' ? (body.innerText || body.textContent || '').trim() : nodeMarkdown(body).trim();
+      return { role, text, hasMedia: !!node.querySelector('img, video, audio') };
+    }).filter(item => item.text || item.hasMedia);
   }
   function safeURL(raw) {
     if (typeof raw !== 'string' || raw.length > 8 * 1024 * 1024) return null;
@@ -162,11 +273,65 @@
     }
     return entry.id;
   }
+  function sourceURL(raw) {
+    try {
+      const url = new URL(raw);
+      return /^https?:$/.test(url.protocol) && !url.username && !url.password ? url.href.replace(/\(/g, '%28').replace(/\)/g, '%29') : null;
+    } catch (_) { return null; }
+  }
+  function collectSources(job, references) {
+    if (!Array.isArray(references)) return;
+    job.sources ||= new Map();
+    const visit = (reference, inherited = []) => {
+      if (!reference || typeof reference !== 'object') return;
+      const refId = ref => {
+        if (typeof ref === 'string') return ref;
+        if (typeof ref?.ref_id === 'string') return ref.ref_id;
+        return Number.isInteger(ref?.turn_index) && /^[a-z]+$/i.test(ref?.ref_type || '') && Number.isInteger(ref?.ref_index)
+          ? `turn${ref.turn_index}${ref.ref_type}${ref.ref_index}` : null;
+      };
+      const ownRefs = [refId(reference.ref_id), ...(Array.isArray(reference.refs) ? reference.refs.map(refId) : [])].filter(Boolean);
+      const refs = [...ownRefs, ...inherited];
+      const page = reference.webpage || reference;
+      const url = sourceURL(page.url);
+      if (url) {
+        const id = refId(page.ref_id) || ownRefs[0] || url;
+        const item = { id: String(id), url, title: String(page.title || reference.title || new URL(url).hostname).slice(0, 500) };
+        job.sources.set(item.id, item);
+        job.sourceRefs ||= new Map();
+        for (const ref of [item.id, ...refs]) {
+          if (!inherited.includes(ref) || !job.sourceRefs.has(ref)) job.sourceRefs.set(ref, item);
+        }
+      }
+      if (Array.isArray(reference.items)) reference.items.forEach(item => visit(item, refs));
+    };
+    references.forEach(reference => visit(reference));
+    const items = [...job.sources.values()], signature = JSON.stringify(items);
+    if (items.length && signature !== job.sourcesSignature) {
+      job.sourcesSignature = signature;
+      emit({ type: 'sources', id: job.id, items });
+    }
+  }
+  function citationText(job, text) {
+    const links = refs => [...new Set(refs.split(/[\s,;\uE202]+/).filter(Boolean))].map(ref => {
+      const item = job.sourceRefs?.get(ref);
+      return item ? `[${item.title.replace(/[\\[\]]/g, '\\$&')}](${item.url})` : '';
+    }).filter(Boolean).join(' ');
+    return text.replace(/<Cite\b[^>]*\bref\s*=\s*["']([^"']*)["'][^>]*\/?>(?:\s*<\/Cite>)?/gi, (_, refs) => links(refs))
+      .replace(/\uE200(?:cite|navlist|image)\uE202([^\uE201]*)\uE201/g, (_, refs) => links(refs))
+      .replace(/<\/?Cite\b[^>]*>/gi, '')
+      .replace(/<(?:C|Ci|Cit|Cite\b[^>]*)$|\uE200[^\uE201]*$/gi, '')
+      .replace(/[\uE200-\uE202]/g, '');
+  }
+  function attachmentURL(url) {
+    return /^(?:sandbox:|blob:|data:)/i.test(url || '') ||
+      !!safeURL(url) && /(?:\.oaiusercontent\.com\/|\/(?:backend-api\/)?(?:files|download)\/)/i.test(url || '');
+  }
   function markdownMedia(job, text) {
     let rendered = text;
     for (const match of text.matchAll(/(!?)\[([^\]]*)\]\(([^\s)]+)(?:\s+"[^"]*")?\)/g)) {
       const [, image, label, url] = match;
-      if (image || /^(sandbox:|blob:|data:)/.test(url) || /\.(?:png|jpe?g|gif|webp|avif|mp3|wav|ogg|m4a|mp4|webm|pdf|zip|csv|docx?|xlsx?|txt)(?:[?#]|$)/i.test(url) || /\/(?:files|download)\//i.test(url)) {
+      if (attachmentURL(url)) {
         const id = registerMedia(job, { url, kind: image ? 'image' : mediaKind(url), name: label || url.split('/').pop()?.split('?')[0] || 'Attachment' });
         if (id) rendered = rendered.replace(match[0], `${image}[${label || 'Attachment'}](qchat-media:${id})`);
       }
@@ -183,18 +348,18 @@
     const kind = /image/i.test(type) ? 'image' : /audio/i.test(type) ? 'audio' : /video/i.test(type) ? 'video' : mediaKind(name, mime);
     const mediaType = /^(?:image|audio|video|file|document|attachment)(?:[_-]|$)/i.test(type);
     const reference = [url, part.filename, part.file_id, part.attachment_id].some(value => typeof value === 'string' && value.length > 0);
-    if (mediaType || reference || /^(?:image|audio|video)\//i.test(mime || '')) {
+    if (mediaType || reference && (part.file_id || part.attachment_id || part.filename || attachmentURL(url)) || /^(?:image|audio|video)\//i.test(mime || '')) {
       registerMedia(job, { url, name, kind, mime, key: url || `${job.message?.id || ''}:${index}:${type}` });
     }
     for (const [key, value] of Object.entries(part)) {
-      if (/^(?:parts|attachments|assets|images|audio|video|files)$/.test(key) && Array.isArray(value)) {
+      if ((/^(?:parts|attachments|assets|audio|video|files)$/.test(key) || key === 'images' && mediaType) && Array.isArray(value)) {
         value.forEach((child, n) => { if (typeof child === 'object') structuredMedia(job, child, `${index}.${key}.${n}`); });
       }
     }
   }
   function internalContent(value) {
     const type = String(value?.content_type || value?.type || '');
-    return /^(?:thoughts?|reason(?:ing)?|analysis|tool|metadata|debug|notifications?|status|context|citations?|references?|search_result)(?:[_-]|$)/i.test(type) ||
+    return /^(?:thoughts?|reason(?:ing)?|analysis|tool|metadata|debug|notifications?|status|context|citations?|references?|search_result|webpage|image_search|image_result|search_image)(?:[_-]|$)/i.test(type) ||
       !!(value?.channel && value.channel !== 'final') || !!(value?.role && value.role !== 'assistant');
   }
   function domMedia(job, body) {
@@ -215,7 +380,8 @@
       if (!['img', 'audio', 'video', 'source', 'a'].includes(tag)) continue;
       const url = tag === 'a' ? node.href : node.currentSrc || node.src;
       const name = node.getAttribute('download') || node.getAttribute('alt') || node.textContent?.trim() || 'Attachment';
-      if (tag === 'a' && !node.hasAttribute('download') && !/^(sandbox:|blob:)/.test(url || '') && mediaKind(url) === 'file' && !/\.(pdf|zip|csv|docx?|xlsx?|txt)(?:[?#]|$)|\/(files|download)\/|^https:\/\/[^/]*\.oaiusercontent\.com\//i.test(url || '')) continue;
+      if (!generated && tag === 'img' && (node.closest('a[href]') || !attachmentURL(url))) continue;
+      if (tag === 'a' && !node.hasAttribute('download') && !attachmentURL(url)) continue;
       const parentKind = node.parentElement?.tagName?.toLowerCase();
       const kind = tag === 'img' ? 'image' : ['audio', 'video'].includes(tag) ? tag :
         tag === 'source' && ['audio', 'video'].includes(parentKind) ? parentKind : mediaKind(url, node.type);
@@ -309,24 +475,48 @@
     return walk(body).trim() || plain;
   }
   function sampleDOM(job) {
-    if (active !== job || job.finished) return;
-    const nodes = assistantNodes().filter(node => !job.previousAssistants.has(node));
+    if (active !== job || job.finished || job.cancelled) return;
+    const nodes = currentAssistants(job);
+    // Inspect only explicit, visible status surfaces in this submitted turn.
+    // Never infer tool use from reply prose, source links, or old turns.
+    const statuses = nodes.flatMap(root => [root, ...root.querySelectorAll('[role="status"],[aria-live],[data-testid="tool-status"],[data-testid="search-status"]')]);
+    let domActivity;
+    for (const status of statuses) {
+      if (!status.getClientRects?.().length || status.closest('[hidden], [aria-hidden="true"]')) continue;
+      if (status.getAttribute('role') !== 'status' && !status.hasAttribute('aria-live') && !['tool-status', 'search-status'].includes(status.getAttribute('data-testid'))) continue;
+      const label = (status.innerText || status.getAttribute('aria-label') || '').trim();
+      if (/^Searching(?: the)? web(?:\.{3}|\u2026)?$/i.test(label)) domActivity = { kind: 'search', label: 'Searching the web' };
+      else if (/^(?:Reading|Browsing) sources(?:\.{3}|\u2026)?$/i.test(label)) domActivity = { kind: 'browse', label: 'Reading sources' };
+      else if (/^(?:Running|Executing) code(?:\.{3}|\u2026)?$/i.test(label)) domActivity = { kind: 'code', label: 'Running code' };
+    }
+    if (domActivity) {
+      if (job.domActivityKind !== domActivity.kind && job.activity?.kind !== domActivity.kind) startActivity(job, domActivity, `dom:${domActivity.kind}`);
+      job.domActivityKind = domActivity.kind;
+    } else {
+      job.domActivityKind = null;
+      if (job.activityKey?.startsWith('dom:')) completeActivity(job);
+    }
     for (const root of nodes) domMedia(job, root);
     imageProgress(job, nodes);
     const node = nodes[nodes.length - 1];
-    if (node) job.assistantNode = node;
+    job.assistantNode = node;
     const body = node && (selectors.body.map(s => node.querySelector(s)).find(Boolean) || node);
-    const text = body?.querySelector('[data-testid="generated-image-gallery"]') ? completedMarkdown(job, body, '') : body?.innerText?.trim() || '';
+    const plain = body?.innerText?.trim() || '';
+    let text = job.requiresDOM || body?.querySelector('[data-testid="generated-image-gallery"]') ? completedMarkdown(job, body, plain) : plain;
+    // DIL is a layout language, not answer text. A source/copy surface can
+    // mount before the real rendered content; never forward that surface.
+    if (richLayout(text)) text = '';
+    if (domActivity && /^(?:Searching(?: the)? web|(?:Reading|Browsing) sources|(?:Running|Executing) code)(?:\.{3}|\u2026)?$/i.test(text)) text = '';
     if (body) domMedia(job, body);
     if (text && text !== job.domText) {
       job.domText = text; job.stableAt = Date.now(); progress(job);
-      if (!job.netText || job.detached) { job.text = text; delta(job); }
+      if ((!job.canonicalFallback && (!job.netText || job.detached)) || job.requiresDOM) { job.text = text; delta(job); }
     }
     // Current signed-in DIL streams can contain richer updates than the parsed
     // text packets. At completion prefer a longer scoped visible reply over a
     // stale network prefix; retain network markdown when it already covers it.
     const dil = job.assistantNode?.hasAttribute('data-dil-source-message-id');
-    if (text && job.finishing && (text.length > (dil ? (job.netText || '').length : job.text.length) || job.domPreferred || (dil && job.detached))) {
+    if (text && job.finishing && (job.requiresDOM || !job.canonicalFallback && (text.length > (dil ? (job.netText || '').length : job.text.length) || job.domPreferred || (dil && job.detached)))) {
       job.domPreferred = true;
       job.text = dil ? completedMarkdown(job, body, text) : text;
       delta(job);
@@ -339,19 +529,38 @@
         (job.sawStop || job.streamEnded) && Date.now() - (job.stableAt || job.noStopAt) >= 800 &&
         Date.now() - job.noStopAt >= 800) finish(job);
   }
-  function networkText(job, text) {
+  function richLayout(text) {
+    // Leave literal markup in fenced/inline code alone. These components and
+    // JSX props identify the site's rich layout stream outside code examples.
+    const prose = text.replace(/(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\1[^\n]*|$)|`+[^`\n]*`+/g, '');
+    const partial = /<([a-z]+)$/i.exec(prose)?.[1].toLowerCase();
+    return /<(?:AsyncImage|row|box|text)\b/i.test(prose) ||
+      !!partial && ['asyncimage', 'row', 'box', 'text'].some(name => name.startsWith(partial));
+  }
+  function networkText(job, text, canonicalFallback = false) {
     if (active !== job || job.finished || job.finishing) return;
     job.netText = text;
-    job.text = markdownMedia(job, text) || job.domText || '';
+    job.canonicalFallback = canonicalFallback;
+    job.requiresDOM = richLayout(text);
+    if (job.requiresDOM) { sampleDOM(job); return; }
+    job.text = markdownMedia(job, text) || (!canonicalFallback && job.domText) || '';
     delta(job);
   }
   function applyNDJSON(job, packet) {
     if (!packet || typeof packet !== 'object') return;
+    if (active !== job || job.finished || job.finishing || job.cancelled) return;
+    // The NDJSON transport also accepts the same message envelopes as SSE.
+    if (packet.message || packet.author && packet.content) { apply(job, packet); return; }
+    if (packet.type === 'content' && packet.recipient && !['all', 'all_tools'].includes(packet.recipient)) {
+      messageActivity(job, { ...packet, id: packet.messageId, author: packet.author || { role: packet.role || 'assistant' } }); return;
+    }
     if (packet.channel && packet.channel !== 'final' || packet.role && packet.role !== 'assistant' || packet.author?.role && packet.author.role !== 'assistant') return;
     if (packet.detail?.conversationId) job.conversationId = packet.detail.conversationId;
     if (['done', 'completed', 'finish'].includes(packet.type)) { job.protocolDone = true; return; }
     if (packet.type === 'error') { fail(job, 'stream_failed', 'ChatGPT reported a response error. View the conversation in ChatGPT.'); return; }
     if (packet.type === 'content') {
+      if (job.previousAssistantIds.has(packet.messageId)) return;
+      if (packet.messageId) job.responseIds.add(packet.messageId);
       const messages = job.contents ||= new Map();
       const prior = messages.get(packet.messageId);
       if (prior && packet.revision <= prior.revision) return;
@@ -361,11 +570,16 @@
       const fragment = typeof packet.markdown === 'string' ? packet.markdown : '';
       const markdown = packet.mode === 'append' ? (prior?.markdown || '') + fragment : fragment;
       // DIL fallbackMarkdown is a complete snapshot even on append packets.
-      const fallback = packet.dil?.fallbackMarkdown ?? (packet.mode === 'append' ? prior?.fallback : '');
-      const text = markdown || (typeof fallback === 'string' ? fallback : '');
+      const fallback = typeof packet.dil?.fallbackMarkdown === 'string' ? packet.dil.fallbackMarkdown : (packet.mode === 'append' ? prior?.fallback : undefined);
+      // fallbackMarkdown is an authoritative full snapshot, even when the
+      // accompanying layout/markdown field is an append delta. Never combine
+      // the two representations or retain an earlier rendered prefix.
+      const text = typeof fallback === 'string' ? fallback : markdown;
+      collectSources(job, packet.metadata?.content_references);
       if (Array.isArray(packet.parts)) packet.parts.forEach((part, i) => structuredMedia(job, part, i));
       messages.set(packet.messageId, { revision: packet.revision, markdown, fallback, text });
-      networkText(job, [...messages.values()].map(m => m.text).join('\n\n'));
+      if (text) completeActivity(job);
+      networkText(job, [...messages.values()].map(m => m.text).join('\n\n'), [...messages.values()].every(m => typeof m.fallback === 'string'));
     } else apply(job, packet);
   }
   function visible(message) {
@@ -376,7 +590,7 @@
   }
   function apply(job, packet) {
     if (!packet || typeof packet !== 'object') return;
-    if (active !== job || job.finished || job.finishing) return;
+    if (active !== job || job.finished || job.finishing || job.cancelled) return;
     if (packet.error) { fail(job, 'stream_failed', 'ChatGPT reported a response error. View the conversation in ChatGPT.'); return; }
     if (packet.op && packet.path !== undefined) packet = { ...packet, p: packet.path, o: packet.op, v: packet.value };
     if (packet.conversation_id) job.conversationId = packet.conversation_id;
@@ -414,7 +628,11 @@
     renderMessage(job);
   }
   function renderMessage(job) {
+    messageActivity(job, job.message);
     if (!visible(job.message)) return;
+    if (job.previousAssistantIds.has(job.message.id)) return;
+    if (job.message.id) job.responseIds.add(job.message.id);
+    collectSources(job, job.message.metadata?.content_references);
     const content = job.message.content || {};
     const parts = Array.isArray(content.parts) ? content.parts : [content];
     let text = '', hasText = false;
@@ -423,7 +641,7 @@
       else if (part && ['text', 'output_text'].includes(part.type || part.content_type) && typeof part.text === 'string') { text += part.text; hasText = true; }
       else structuredMedia(job, part, i);
     });
-    if (hasText && text !== job.netText) networkText(job, text);
+    if (hasText) { if (text) completeActivity(job); networkText(job, text); }
   }
   function detach(job, reason) {
     if (active !== job || job.finished || job.finishing) return;
@@ -484,6 +702,11 @@
       if (method === 'POST' && /\/(?:backend-(?:api|anon)|unauth-mweb)\/(?:f\/)?conversation(?:\/updates)?\/?$/.test(url.pathname) && active) {
         const current = active;
         if (!current.started) {
+          try {
+            const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+            const ids = body?.messages?.filter(message => (message.author?.role || message.role) === 'user').map(message => message.id).filter(Boolean);
+            if (ids?.length) current.userMessageIds = new Set(ids.slice(-1));
+          } catch (_) {}
           current.started = true; clearTimeout(current.startTimer); progress(current);
           emit({ type: 'start', id: current.id });
         }
@@ -573,7 +796,7 @@
     return transportValue({ kind: entry.kind, name: entry.name, ...(entry.mime ? { mime: entry.mime } : {}) });
   }
   function mediaControls(entry) {
-    const turn = entry.scope.assistantNode || assistantNodes().find(node => !entry.scope.previousAssistants.has(node));
+    const turn = currentAssistants(entry.scope).at(-1);
     if (turn) entry.scope.assistantNode = turn;
     if (!turn) return [];
     return [...turn.querySelectorAll('a[href],button,[data-d-component="pressable"][role="link"]')];
@@ -666,7 +889,7 @@
     if (!entry.url && !entry.node) {
       // Download anchors can mount after the terminal stream packet. Search only
       // assistant turns created for this job and match the displayed filename.
-      const turn = entry.scope.assistantNode || assistantNodes().find(node => !entry.scope.previousAssistants.has(node));
+      const turn = currentAssistants(entry.scope).at(-1);
       if (turn) entry.scope.assistantNode = turn;
       const links = [...(turn?.querySelectorAll('a[href]') || [])];
       entry.node = links.find(node => (node.getAttribute('download') || node.textContent?.trim()) === entry.name && safeURL(node.href));
@@ -765,7 +988,10 @@
       const attachmentNames = [...document.querySelectorAll('input[type="file"]')].flatMap(input => [...(input.files || [])].map(file => file.name));
       let settle;
       const settled = new Promise(resolve => { settle = resolve; });
-      const job = active = { id, attachmentCount, attachmentNames, settled, settle, text: '', sentText: '', lastDelta: 0, previousAssistants: new Set(assistantNodes()) };
+      const previousAssistants = assistantNodes(), previousUsers = [...document.querySelectorAll(userSelector)];
+      const job = active = { id, attachmentCount, attachmentNames, settled, settle, prompt: prompt.trim(), text: '', sentText: '', lastDelta: 0,
+        responseIds: new Set(), scopedAssistants: new Set(), previousAssistants: new Set(previousAssistants), previousAssistantIds: new Set(previousAssistants.flatMap(messageIds)),
+        previousUsers: new Set(previousUsers), previousUserIds: new Set(previousUsers.flatMap(messageIds)) };
       job.observer = new MutationObserver(() => sampleDOM(job));
       job.observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
       job.domTimer = setInterval(() => sampleDOM(job), 100);
@@ -804,7 +1030,7 @@
           const button = find('send');
           if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
             job.startTimer = setTimeout(() => fail(job, 'send_failed', 'No conversation request started within 20 seconds.'), 20000);
-            button.click(); return;
+            job.submitted = true; button.click(); return;
           }
           const block = blocking(); if (block) { fail(job, ...block); return; }
           await sleep(100);
@@ -812,13 +1038,14 @@
         if (active === job && !job.started && !job.cancelled) {
           if (attachmentCount > 0) { fail(job, 'attachment_failed', 'Attachments did not become ready within two minutes. Check them in ChatGPT.'); return; }
           job.startTimer = setTimeout(() => fail(job, 'send_failed', 'No conversation request started within 20 seconds.'), 20000);
-          composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+          job.submitted = true; composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
         }
       } catch (e) { fail(job, 'send_failed', e.message); }
     },
     stop() {
       const job = active; if (!job) return Promise.resolve();
       job.cancelled = true;
+      completeActivity(job);
       if (!job.started && job.attachmentCount > 0) {
         const controls = attachmentRemovers(job.attachmentNames);
         cancelledAttachments = { names: job.attachmentNames, hadControls: controls.length >= job.attachmentCount };
@@ -830,6 +1057,31 @@
       try { find('stop')?.click(); } catch (_) {}
       finish(job, false);
       return job.settled;
+    },
+    async readConversation(id) {
+      if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(id)) throw new Error('invalid_id');
+      // Messages hydrate after the route settles: wait for the count to hold steady.
+      for (let i = 0, last = -1; i < 16; i++) {
+        const count = conversationNodes().length;
+        if (count && count === last) break;
+        last = count;
+        await sleep(500);
+      }
+      // Long conversations may load earlier turns only when scrolled to.
+      const scroller = (node => { for (; node; node = node.parentElement) if (node.scrollHeight > node.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(node).overflowY)) return node; })(conversationNodes()[0]);
+      if (scroller) {
+        const from = scroller.scrollTop;
+        for (let i = 0, last = conversationNodes().length; i < 12; i++) {
+          scroller.scrollTop = 0;
+          await sleep(400);
+          const count = conversationNodes().length;
+          if (count === last) break;
+          last = count;
+        }
+        if (!active) scroller.scrollTop = from;
+      }
+      const here = location.pathname.endsWith('/c/' + id);
+      emit({ type: 'transcript', conversationId: id, messages: !active && here ? conversationMessages() : null });
     },
     async openConversation(id) {
       if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(id)) throw new Error('invalid_id');

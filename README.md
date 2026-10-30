@@ -16,7 +16,7 @@ QChat accepts up to 10 attachments totalling 512 MB. ChatGPT's own account, uplo
 ## Build and run
 ```
 npm install
-npm run build          # installer + exe in src-tauri/target/release
+npm run build          # regenerates assets/icon.svg icons and writes dist/QChat.exe
 # or for development:
 cd src-tauri && cargo build && target/debug/qchat.exe
 ```
