@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-selection-clipboard"
+description = "Enables the set_selection_clipboard command without any pre-configured scope."
+commands.allow = ["set_selection_clipboard"]
+
+[[permission]]
+identifier = "deny-set-selection-clipboard"
+description = "Denies the set_selection_clipboard command without any pre-configured scope."
+commands.deny = ["set_selection_clipboard"]

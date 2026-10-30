@@ -40,3 +40,5 @@ An optional `node tools/live-media-smoke.mjs --run-with-saved-profile` checks th
 Chat tools: click the orb or press Ctrl+K for commands. Ctrl+P opens searchable recent chats; up to 50 chats are kept locally, with full transcripts for the newest eight. Tabs show three recent chats. ArrowUp in an empty composer recalls session prompts; ArrowDown moves forward. Finished replies offer Copy, Retry and Open in ChatGPT. Fenced code is highlighted locally. /model reads the ChatGPT model menu; /temp starts a temporary chat. /keys lists shortcuts. Model selectors still need verification against a signed-in ChatGPT page.
 
 Feature checks: `node tools/feature-ui-test.mjs`.
+
+Press Ctrl+Alt+Q to ask about selected text; configure or disable it in Behavior (Backspace while recording).

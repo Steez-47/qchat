@@ -109,6 +109,7 @@
     showStatusDot: bool(true),
 
     rememberPosition: bool(true),
+    selectionClipboard: bool(true),
     alwaysOnTop: bool(true),
     hideOnBlur: bool(false),
     sendKey: choice("enter", ["enter", "ctrl"]),

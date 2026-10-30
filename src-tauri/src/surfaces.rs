@@ -166,6 +166,7 @@ pub fn set_hotkey(
     accelerator: String,
 ) -> Result<String, String> {
     let new = parse(&accelerator)?;
+    if crate::selection::matches(&app, &new) { return Err("Shortcut already used for selection".into()) }
     let mut s = state.0.lock().unwrap();
     let old = parse(&s.hotkey)?;
     if crate::test_profile().is_none() {

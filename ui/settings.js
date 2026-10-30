@@ -394,15 +394,17 @@
   SECTIONS.find(s => s.id === "chats").title = "Chats";
   SECTIONS.find(s => s.id === "account").title = "Account";
   function desktopControl(kind) {
+    const isHotkey = kind === "hotkey" || kind === "selection";
+    const command = kind === "selection" ? "selection_hotkey" : "hotkey";
     const button = make("button", "pill-btn", "Loading...");
     const hint = make("small", "", "");
-    const row = actionRow(kind === "hotkey" ? "Global shortcut" : "Launch at login", hint, button);
-    let current = kind === "hotkey" ? "Record shortcut" : false;
-    const sync = () => { button.textContent = kind === "hotkey" ? current : current ? "On" : "Off"; if (kind !== "hotkey") button.setAttribute("aria-checked", String(current)); };
-    if (kind !== "hotkey") { button.setAttribute("role", "switch"); button.setAttribute("aria-label", "Launch at login"); }
-    invoke(kind === "hotkey" ? "get_hotkey" : "get_autostart").then(v => { if (kind === "hotkey" ? typeof v === "string" : typeof v === "boolean") current = v; sync(); }).catch(() => { sync(); hint.textContent = "Available in the desktop app"; });
+    const row = actionRow(isHotkey ? (kind === "selection" ? "Ask about selection" : "Global shortcut") : "Launch at login", hint, button);
+    let current = isHotkey ? "Record shortcut" : false;
+    const sync = () => { button.textContent = isHotkey ? (current || "Disabled") : current ? "On" : "Off"; if (!isHotkey) button.setAttribute("aria-checked", String(current)); };
+    if (!isHotkey) { button.setAttribute("role", "switch"); button.setAttribute("aria-label", "Launch at login"); }
+    invoke(isHotkey ? "get_" + command : "get_autostart").then(v => { if (isHotkey ? typeof v === "string" : typeof v === "boolean") current = v; sync(); }).catch(() => { sync(); hint.textContent = "Available in the desktop app"; });
     button.addEventListener("click", async () => {
-      if (kind === "hotkey") { button.dataset.recording = "true"; button.textContent = "Press a key combination"; return; }
+      if (isHotkey) { button.dataset.recording = "true"; button.textContent = "Press a key combination"; return; }
       try { await invoke("set_autostart", {enabled: !current}); current = !current; sync(); hint.textContent = ""; } catch (e) { hint.textContent = String(e.message || e); }
     });
     button.addEventListener("keydown", async e => {
@@ -410,13 +412,14 @@
       e.preventDefault(); e.stopPropagation();
       if (e.key === "Escape") { delete button.dataset.recording; sync(); return; }
       if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return;
+      if (kind === "selection" && e.key === "Backspace") { await invoke("set_selection_hotkey", {accelerator: ""}); current = ""; delete button.dataset.recording; sync(); return; }
       if (!e.ctrlKey && !e.altKey && !e.metaKey) { hint.textContent = "Include Ctrl, Alt or Windows"; return; }
       const accelerator = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super", e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join("+");
-      try { await invoke("set_hotkey", {accelerator}); current = accelerator; sync(); hint.textContent = ""; delete button.dataset.recording; } catch (err) { hint.textContent = String(err.message || err); }
+      try { await invoke("set_" + command, {accelerator}); current = accelerator; sync(); hint.textContent = ""; delete button.dataset.recording; } catch (err) { hint.textContent = String(err.message || err); }
     });
     return row;
   }
-  SECTIONS.find(s => s.id === "behavior").groups.unshift([() => desktopControl("hotkey"), () => desktopControl("autostart"), () => switchRow({key: "nativeBlur", label: "Desktop blur"})]);
+  SECTIONS.find(s => s.id === "behavior").groups.unshift([() => desktopControl("hotkey"), () => desktopControl("selection"), () => switchRow({key: "selectionClipboard", label: "Copy selection if needed", hint: "Briefly uses the clipboard when an app doesn't share its selection, then restores it"}), () => desktopControl("autostart"), () => switchRow({key: "nativeBlur", label: "Desktop blur"})]);
   const scrollEl = $("section-scroll");
   const nav = $("section-nav");
   const preview = $("preview");

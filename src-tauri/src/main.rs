@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod clipboard;
+mod selection;
 mod surfaces;
 mod media;
 use media::{
@@ -538,7 +539,7 @@ fn main() {
         }
     }
     let builder = tauri::Builder::default()
-        .manage(media::MediaState::default()).manage(surfaces::State::default())
+        .manage(selection::State::default()).manage(media::MediaState::default()).manage(surfaces::State::default())
         .register_asynchronous_uri_scheme_protocol("qchat-media", |context, request, responder| {
             let app = context.app_handle().clone();
             let label = context.webview_label().to_owned();
@@ -552,9 +553,10 @@ fn main() {
     builder
  .manage(Host(Mutex::new(Activity{hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0,logged_in:false,signin_was_logged_in:false,anchor:None,remember_position:true,always_on_top:true,positioned:Instant::now(),save_due:None,save_generation:0})))
 
- .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,_,event|{if event.state()==ShortcutState::Pressed{toggle(app);}}).build())
- .invoke_handler(tauri::generate_handler![surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,surfaces::get_hotkey,surfaces::set_hotkey,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_models,chat_model_choose,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy])
+ .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,shortcut,event|{if event.state()==ShortcutState::Pressed{if selection::matches(app,shortcut) { selection::activate(app); } else { toggle(app); }}}).build())
+ .invoke_handler(tauri::generate_handler![surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,surfaces::get_hotkey,surfaces::set_hotkey,selection::get_selection_hotkey,selection::set_selection_hotkey,selection::set_selection_clipboard,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_models,chat_model_choose,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy])
  .setup(|app|{
+ app.add_capability(r#"{"identifier":"selection-settings","windows":["settings"],"permissions":["allow-get-selection-hotkey","allow-set-selection-hotkey","allow-get-hotkey","allow-set-hotkey","allow-get-autostart","allow-set-autostart"]}"#)?;
  if let Ok(dir)=app.path().app_data_dir() {
    if let Ok(data)=std::fs::read(dir.join("window-state.json")) { app.state::<Host>().0.lock().unwrap().anchor=serde_json::from_slice(&data).ok(); }
  }
@@ -583,6 +585,7 @@ fn main() {
  .on_download(|webview,event|media::on_download(webview.app_handle(),event)).build()?;
  background(app.handle());
  surfaces::start(app.handle());
+ selection::start(app.handle());
  use tauri::{menu::{Menu,MenuItem},tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState}};
  let items=[MenuItem::with_id(app,"show","Show QChat",true,None::<&str>)?,MenuItem::with_id(app,"new","New chat",true,None::<&str>)?,MenuItem::with_id(app,"settings","Settings\u{2026}",true,None::<&str>)?,MenuItem::with_id(app,"signin","Sign in to ChatGPT\u{2026}",true,None::<&str>)?,MenuItem::with_id(app,"quit","Quit",true,None::<&str>)?];
  let menu=Menu::with_items(app,&items.iter().map(|x|x as &dyn tauri::menu::IsMenuItem<_>).collect::<Vec<_>>())?;

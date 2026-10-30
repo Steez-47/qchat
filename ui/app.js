@@ -2301,6 +2301,7 @@
 
   function sendWindowPrefs() {
     const { alwaysOnTop, rememberPosition } = QSettings.settings;
+    invoke("set_selection_clipboard", { enabled: QSettings.settings.selectionClipboard }).catch(() => {});
     const prefs = JSON.stringify({ alwaysOnTop, rememberPosition });
     if (prefs === lastPrefs) return;
     lastPrefs = prefs;
@@ -2688,6 +2689,15 @@
     }
   });
 
+  listen("qchat://selection", ({ payload }) => {
+    if (typeof payload !== "string" || !payload) return;
+    const quote = payload.replace(/\r\n?/g, "\n").split("\n").map(line => "> " + line).join("\n");
+    el.promptInput.value += (el.promptInput.value ? "\n\n" : "") + quote + "\n\n";
+    el.promptInput.dispatchEvent(new Event("input", { bubbles: true }));
+    el.promptInput.focus();
+    el.promptInput.setSelectionRange(el.promptInput.value.length, el.promptInput.value.length);
+    autoResizePrompt();
+  });
   listen("qchat://shown", () => {
     el.promptInput.focus();
     try { if (!localStorage.getItem("qchat.introduced")) { firstRunHint = true; updateComposerMode(); } } catch (_) {}
