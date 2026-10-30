@@ -3,7 +3,10 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    window::{Effect, EffectsBuilder},
+    Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
+};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -11,8 +14,39 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::{
     core::{Interface, HSTRING},
+    UI::ViewManagement::{UIColorType, UISettings},
     Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
 };
+#[tauri::command]
+fn get_theme() -> serde_json::Value {
+    let hex = |c: windows::UI::Color| format!("#{:02X}{:02X}{:02X}", c.R, c.G, c.B);
+    if let Ok((accent, light1, light2, dark1, bg)) = UISettings::new().and_then(|s| {
+        Ok((
+            s.GetColorValue(UIColorType::Accent)?,
+            s.GetColorValue(UIColorType::AccentLight1)?,
+            s.GetColorValue(UIColorType::AccentLight2)?,
+            s.GetColorValue(UIColorType::AccentDark1)?,
+            s.GetColorValue(UIColorType::Background)?,
+        ))
+    }) {
+        let lum = (0.2126 * bg.R as f32 + 0.7152 * bg.G as f32 + 0.0722 * bg.B as f32) / 255.0;
+        serde_json::json!({
+            "accent": hex(accent),
+            "accentLight1": hex(light1),
+            "accentLight2": hex(light2),
+            "accentDark1": hex(dark1),
+            "dark": lum < 0.5,
+        })
+    } else {
+        serde_json::json!({
+            "accent": "#0078D4",
+            "accentLight1": "#429CE3",
+            "accentLight2": "#8AC8F0",
+            "accentDark1": "#005A9E",
+            "dark": true,
+        })
+    }
+}
 fn tool_window(w: &tauri::WebviewWindow, tool: bool) {
     if let Ok(hwnd) = w.hwnd() {
         unsafe {
@@ -318,9 +352,9 @@ fn main() {
  .manage(Host(Mutex::new(Activity{hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0})))
  .plugin(tauri_plugin_single_instance::init(|app,_,_|show(app)))
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,_,event|{if event.state()==ShortcutState::Pressed{toggle(app);}}).build())
- .invoke_handler(tauri::generate_handler![bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,open_external,show_signin,import_session_token])
+ .invoke_handler(tauri::generate_handler![bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,open_external,show_signin,import_session_token,get_theme])
  .setup(|app|{
- WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())).title("QChat").inner_size(420.,620.).min_inner_size(340.,420.).decorations(false).shadow(true).transparent(false).always_on_top(true).skip_taskbar(true).resizable(true).visible(false).build()?;
+ WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())).title("QChat").inner_size(420.,620.).min_inner_size(340.,420.).decorations(false).shadow(true).transparent(true).effects(EffectsBuilder::new().effect(Effect::Mica).build()).always_on_top(true).skip_taskbar(true).resizable(true).visible(false).build()?;
  WebviewWindowBuilder::new(app,"chatgpt",WebviewUrl::External("https://chatgpt.com/".parse()?)).title("QChat – ChatGPT sign-in").inner_size(1000.,760.).skip_taskbar(true).decorations(false).visible(false)
  .initialization_script("if(location.hostname === 'chatgpt.com' || location.hostname.endsWith('.chatgpt.com')) window.__QCHAT_EMIT__ = (evt) => window.__TAURI_INTERNALS__.invoke('bridge_event', {event:evt});")
  .initialization_script(include_str!("../bridge/chatgpt-bridge.js")).build()?;
@@ -329,7 +363,7 @@ fn main() {
  use tauri::{menu::{Menu,MenuItem},tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState}};
  let items=[MenuItem::with_id(app,"show","Show QChat",true,None::<&str>)?,MenuItem::with_id(app,"new","New chat",true,None::<&str>)?,MenuItem::with_id(app,"signin","Sign in to ChatGPT…",true,None::<&str>)?,MenuItem::with_id(app,"quit","Quit",true,None::<&str>)?];
  let menu=Menu::with_items(app,&items.iter().map(|x|x as &dyn tauri::menu::IsMenuItem<_>).collect::<Vec<_>>())?;
- TrayIconBuilder::new().icon(app.default_window_icon().ok_or("Window icon unavailable")?.clone()).tooltip("QChat").menu(&menu).show_menu_on_left_click(false).on_tray_icon_event(|tray,e|{if matches!(e,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){toggle(tray.app_handle());}}).on_menu_event(|app,e|match e.id.as_ref(){"show"=>show(app),"new"=>{let _=app.emit_to("main","qchat://new-chat",());show(app)},"signin"=>show_signin(app.clone()),"quit"=>app.exit(0),_=>()}).build(app)?;
+ TrayIconBuilder::new().icon(app.default_window_icon().ok_or("Window icon unavailable")?.clone()).tooltip("QChat").menu(&menu).show_menu_on_left_click(false).on_tray_icon_event(|tray,e|{if matches!(e,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){toggle(tray.app_handle());}}).on_menu_event(|app,e|match e.id().as_ref(){"show"=>show(app),"new"=>{let _=app.emit_to("main","qchat://new-chat",());show(app)},"signin"=>{show(app);let _=app.emit_to("main","qchat://open-settings",serde_json::json!({"section":"account"}));},"quit"=>app.exit(0),_=>()}).build(app)?;
  let handle=app.handle().clone();std::thread::spawn(move||loop{
  std::thread::sleep(Duration::from_secs(10));
  let hidden=handle.get_webview_window("main").and_then(|w| w.is_visible().ok()).map(|v| !v).unwrap_or(false);

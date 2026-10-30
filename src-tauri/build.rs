@@ -10,6 +10,7 @@ fn main() {
             "open_external",
             "show_signin",
             "import_session_token",
+            "get_theme",
         ]),
     ))
     .expect("build manifest");

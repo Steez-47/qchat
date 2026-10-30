@@ -3,161 +3,173 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title>QChat</title>
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <div class="app-shell" id="app-shell">
-    <!-- Top Instrument Header (38px, Tauri drag region) -->
-    <header class="topbar" data-tauri-drag-region>
-      <div class="topbar-left" data-tauri-drag-region>
-        <span class="q-mark" aria-hidden="true" data-tauri-drag-region>Q</span>
-        <span class="app-title" data-tauri-drag-region>QCHAT</span>
-        <span class="topbar-sep" aria-hidden="true" data-tauri-drag-region></span>
-        <div class="status-pill" id="status-pill" data-state="connecting" data-tauri-drag-region>
-          <span class="status-dot" id="status-dot" data-tauri-drag-region></span>
-          <span class="status-label" id="status-label" data-tauri-drag-region>Connecting…</span>
-        </div>
+  <div class="app" id="app">
+    <!-- Title bar (32px, drag region) -->
+    <header class="titlebar" data-tauri-drag-region>
+      <div class="titlebar-lead" data-tauri-drag-region>
+        <span class="app-icon" aria-hidden="true" data-tauri-drag-region>Q</span>
+        <span class="titlebar-title" data-tauri-drag-region>QChat</span>
+        <span class="titlebar-status" id="status-label" data-state="connecting" role="status" data-tauri-drag-region>Connecting…</span>
       </div>
-      <div class="topbar-actions">
-        <button type="button" class="icon-btn" id="btn-new-chat" title="New chat (Ctrl+N)" aria-label="New chat">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
-            <path d="M12 5v14M5 12h14"/>
-          </svg>
+      <div class="caption-buttons">
+        <button type="button" class="caption-btn" id="btn-new-chat" title="New chat (Ctrl+N)" aria-label="New chat">
+          <span class="icon" aria-hidden="true">&#xE710;</span>
         </button>
-        <button type="button" class="icon-btn" id="btn-settings" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="settings-sheet">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
-            <line x1="4" y1="6" x2="20" y2="6"/>
-            <line x1="4" y1="12" x2="20" y2="12"/>
-            <line x1="4" y1="18" x2="20" y2="18"/>
-            <circle cx="9" cy="6" r="2" fill="var(--bg-surface)"/>
-            <circle cx="15" cy="12" r="2" fill="var(--bg-surface)"/>
-            <circle cx="10" cy="18" r="2" fill="var(--bg-surface)"/>
-          </svg>
+        <button type="button" class="caption-btn" id="btn-settings" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="settings-page">
+          <span class="icon" aria-hidden="true">&#xE713;</span>
         </button>
-        <button type="button" class="icon-btn icon-btn-close" id="btn-hide" title="Hide (Esc)" aria-label="Hide window">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
-            <path d="M18 6L6 18M6 6l12 12"/>
-          </svg>
+        <button type="button" class="caption-btn caption-close" id="btn-hide" title="Hide (Esc)" aria-label="Close">
+          <span class="icon" aria-hidden="true">&#xE8BB;</span>
         </button>
       </div>
     </header>
 
-    <!-- Guest mode slim notice -->
-    <div class="notice-bar notice-guest" id="guest-notice" hidden>
-      <span class="notice-text">Using ChatGPT as a guest. Sign in for your models &amp; history.</span>
-      <button type="button" class="notice-link" id="btn-guest-signin">Sign in</button>
-    </div>
+    <!-- Chat view -->
+    <div class="view chat-view" id="chat-view">
+      <div class="infobar-stack">
+        <div class="infobar" id="guest-notice" data-severity="informational" hidden>
+          <span class="infobar-icon" aria-hidden="true"><span class="icon ib-bg">&#xF136;</span><span class="icon ib-fg">&#xF13F;</span></span>
+          <p class="infobar-text"><strong class="infobar-title" id="guest-title">Guest mode</strong> <span id="guest-message">Sign in to use your models and history.</span></p>
+          <button type="button" class="btn btn-compact" id="btn-guest-signin">Sign in</button>
+          <button type="button" class="icon-btn infobar-close" id="btn-guest-dismiss" title="Close" aria-label="Close notice"><span class="icon" aria-hidden="true">&#xE8BB;</span></button>
+        </div>
 
-    <!-- Global (non-turn) error notice -->
-    <div class="notice-bar notice-error" id="global-error" role="alert" hidden>
-      <span class="notice-text" id="global-error-text"></span>
-      <div class="notice-actions">
-        <button type="button" class="notice-link" id="btn-error-signin" hidden>Sign in</button>
-        <button type="button" class="notice-dismiss" id="btn-error-dismiss" title="Dismiss" aria-label="Dismiss notice">×</button>
-      </div>
-    </div>
-
-    <!-- Main workspace -->
-    <main class="workspace" id="workspace">
-      <!-- Empty state -->
-      <div class="empty-state" id="empty-state">
-        <div class="empty-panel">
-          <div class="empty-mark" aria-hidden="true">Q</div>
-          <p class="empty-heading">Ask anything.</p>
-          <ul class="empty-hints" aria-label="Keyboard shortcuts">
-            <li><kbd>Alt+Q</kbd><span>toggle</span></li>
-            <li><kbd>Ctrl+N</kbd><span>new chat</span></li>
-            <li><kbd>Esc</kbd><span>hide</span></li>
-          </ul>
+        <div class="infobar" id="global-error" data-severity="critical" role="alert" hidden>
+          <span class="infobar-icon" aria-hidden="true"><span class="icon ib-bg">&#xF136;</span><span class="icon ib-fg">&#xF13D;</span></span>
+          <p class="infobar-text" id="global-error-text"></p>
+          <button type="button" class="btn btn-compact" id="btn-error-signin" hidden>Sign in</button>
+          <button type="button" class="icon-btn infobar-close" id="btn-error-dismiss" title="Close" aria-label="Close notice"><span class="icon" aria-hidden="true">&#xE8BB;</span></button>
         </div>
       </div>
 
-      <!-- Messages stream -->
-      <div class="turns-list" id="turns-list" role="log" aria-live="polite" aria-relevant="additions" hidden></div>
-
-      <!-- Scroll to latest floating pill -->
-      <button type="button" class="jump-latest" id="btn-jump-latest" hidden>↓ latest</button>
-
-      <!-- Settings Sheet (slides over conversation inside window) -->
-      <aside class="settings-sheet" id="settings-sheet" aria-label="Settings" aria-hidden="true" hidden>
-        <div class="sheet-header">
-          <span class="sheet-title">SETTINGS // CHATGPT ACCOUNT</span>
-          <button type="button" class="icon-btn" id="btn-close-settings" title="Close (Esc)" aria-label="Close settings">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
-              <path d="M18 6L6 18M6 6l12 12"/>
-            </svg>
-          </button>
+      <main class="workspace">
+        <div class="empty-state" id="empty-state">
+          <span class="app-icon app-icon-large" aria-hidden="true">Q</span>
+          <h1 class="empty-title">How can I help?</h1>
+          <div class="suggestions" aria-label="Suggestions">
+            <button type="button" class="btn suggestion" data-suggestion="Summarize this in three bullet points:&#10;&#10;"><span class="icon" aria-hidden="true">&#xE8A5;</span>Summarize text</button>
+            <button type="button" class="btn suggestion" data-suggestion="Explain what this code does:&#10;&#10;"><span class="icon" aria-hidden="true">&#xE943;</span>Explain code</button>
+            <button type="button" class="btn suggestion" data-suggestion="Draft a short, friendly email about "><span class="icon" aria-hidden="true">&#xE715;</span>Draft an email</button>
+          </div>
         </div>
 
-        <div class="sheet-body">
-          <section class="sheet-section">
-            <h2 class="section-label">ChatGPT account</h2>
-            <p class="section-desc">Sign in through the embedded ChatGPT window to use your subscription models and conversation history.</p>
-            <button type="button" class="btn-primary" id="btn-sheet-signin">Sign in to ChatGPT</button>
-          </section>
+        <div class="turns-list scroll" id="turns-list" role="log" aria-live="polite" aria-relevant="additions" hidden></div>
 
-          <section class="sheet-section">
-            <h2 class="section-label">Import session cookie</h2>
-            <p class="section-desc">Paste the value of <code>__Secure-next-auth.session-token</code> from chatgpt.com, or a full Cookie header.</p>
-            <textarea
-              id="cookie-input"
-              class="cookie-textarea"
-              rows="3"
-              placeholder="__Secure-next-auth.session-token=…"
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="off"
-              spellcheck="false"
-              aria-label="Session cookie value"
-            ></textarea>
-            <div class="cookie-row">
-              <button type="button" class="btn-secondary" id="btn-import-cookie">Import</button>
-              <span class="cookie-feedback" id="cookie-feedback" role="status" aria-live="polite"></span>
-            </div>
-          </section>
-
-          <section class="sheet-section">
-            <h2 class="section-label">Shortcuts</h2>
-            <dl class="shortcuts-grid">
-              <div><dt>Alt+Q</dt><dd>Summon / hide QChat</dd></div>
-              <div><dt>Enter</dt><dd>Send prompt</dd></div>
-              <div><dt>Shift+Enter</dt><dd>Insert newline</dd></div>
-              <div><dt>Ctrl+.</dt><dd>Stop streaming</dd></div>
-              <div><dt>Ctrl+N</dt><dd>Start new chat</dd></div>
-              <div><dt>Esc</dt><dd>Close sheet / hide window</dd></div>
-            </dl>
-          </section>
-        </div>
-      </aside>
-    </main>
-
-    <!-- Flat Composer Slab -->
-    <footer class="composer" id="composer">
-      <div class="composer-focus-rule" aria-hidden="true"></div>
-      <div class="composer-row">
-        <textarea
-          id="prompt-input"
-          class="composer-input"
-          rows="1"
-          placeholder="Prompt…"
-          aria-label="Prompt"
-          spellcheck="true"
-        ></textarea>
-        <button type="button" class="send-btn" id="btn-send" title="Send (Enter)" aria-label="Send prompt">
-          <svg class="icon-send" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
-            <path d="M5 12h14M13 6l6 6-6 6"/>
-          </svg>
-          <svg class="icon-stop" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
-            <rect x="6" y="6" width="12" height="12"/>
-          </svg>
+        <button type="button" class="btn jump-latest" id="btn-jump-latest" title="Jump to latest" hidden>
+          <span class="icon" aria-hidden="true">&#xE74B;</span>Latest
         </button>
+      </main>
+
+      <footer class="composer">
+        <div class="textbox" id="prompt-box">
+          <textarea id="prompt-input" rows="1" placeholder="Ask anything" aria-label="Message" spellcheck="true"></textarea>
+        </div>
+        <button type="button" class="btn btn-accent btn-icon send-btn" id="btn-send" data-mode="send" title="Send (Enter) · Shift+Enter for a new line" aria-label="Send" disabled>
+          <span class="icon" aria-hidden="true">&#xE724;</span>
+        </button>
+      </footer>
+    </div>
+
+    <!-- Settings page (drill-in over the chat) -->
+    <section class="view settings-page" id="settings-page" aria-labelledby="settings-title" hidden>
+      <div class="page-header">
+        <button type="button" class="icon-btn back-btn" id="btn-close-settings" title="Back (Esc)" aria-label="Back">
+          <span class="icon" aria-hidden="true">&#xE72B;</span>
+        </button>
+        <h1 class="page-title" id="settings-title">Settings</h1>
       </div>
-      <div class="composer-meta">
-        <span class="key-hints">↵ send &nbsp;⇧↵ newline &nbsp;esc hide</span>
-        <span class="stream-hint" id="stream-hint" hidden>ctrl+. stop</span>
+
+      <div class="page-body scroll">
+        <h2 class="group-header">Account</h2>
+        <div class="settings-card expander" id="account-card">
+          <div class="card-header">
+            <span class="icon card-icon" aria-hidden="true">&#xE77B;</span>
+            <div class="card-text">
+              <span class="card-title">ChatGPT account</span>
+              <span class="card-desc" id="account-status" data-state="connecting">Connecting…</span>
+            </div>
+          </div>
+          <div class="card-content">
+            <div class="signin-actions">
+              <button type="button" class="btn btn-accent" id="btn-browser-signin">
+                <span class="icon" aria-hidden="true">&#xE774;</span>Sign in with your browser
+              </button>
+              <button type="button" class="hyperlink-btn" id="btn-sheet-signin">Sign in inside QChat instead</button>
+            </div>
+
+            <ol class="signin-steps" id="signin-steps" hidden>
+              <li class="step">
+                <span class="step-num" aria-hidden="true">1</span>
+                <div class="step-body"><p>Sign in to ChatGPT in your browser.</p></div>
+              </li>
+              <li class="step">
+                <span class="step-num" aria-hidden="true">2</span>
+                <div class="step-body">
+                  <p>Press <kbd>F12</kbd> → <strong>Application</strong> → <strong>Cookies</strong> → <strong>https://chatgpt.com</strong> and copy the value of <code>__Secure-next-auth.session-token</code>.</p>
+                  <p class="step-note">If it's split into <code>.0</code> and <code>.1</code>, paste both as <code>name=value; name=value</code>.</p>
+                </div>
+              </li>
+              <li class="step">
+                <span class="step-num" aria-hidden="true">3</span>
+                <div class="step-body">
+                  <label class="field-label" for="cookie-input">Paste it here</label>
+                  <div class="connect-row">
+                    <div class="textbox textbox-single">
+                      <input type="password" id="cookie-input" placeholder="Session token" autocomplete="off" autocapitalize="off" spellcheck="false">
+                    </div>
+                    <button type="button" class="btn btn-accent" id="btn-import-cookie">Connect</button>
+                  </div>
+                  <div class="connect-progress" id="connect-progress" role="status" hidden>
+                    <svg class="progress-ring" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" pathLength="100"></circle></svg>
+                    <span>Connecting to your account…</span>
+                  </div>
+                </div>
+              </li>
+            </ol>
+
+            <div class="infobar" id="signin-result" data-severity="success" role="status" hidden>
+              <span class="infobar-icon" aria-hidden="true"><span class="icon ib-bg">&#xF136;</span><span class="icon ib-fg" id="signin-result-glyph">&#xF13E;</span></span>
+              <p class="infobar-text"><strong class="infobar-title" id="signin-result-title"></strong> <span id="signin-result-message"></span></p>
+              <button type="button" class="icon-btn infobar-close" id="btn-signin-result-dismiss" title="Close" aria-label="Close notice"><span class="icon" aria-hidden="true">&#xE8BB;</span></button>
+            </div>
+          </div>
+        </div>
+
+        <h2 class="group-header">Keyboard</h2>
+        <div class="settings-card expander">
+          <div class="card-header">
+            <span class="icon card-icon" aria-hidden="true">&#xE765;</span>
+            <div class="card-text">
+              <span class="card-title">Keyboard shortcuts</span>
+              <span class="card-desc">Work without touching the mouse</span>
+            </div>
+          </div>
+          <dl class="card-content shortcut-list">
+            <div class="shortcut"><dt>Show or hide QChat</dt><dd><kbd>Alt</kbd><kbd>Q</kbd></dd></div>
+            <div class="shortcut"><dt>New chat</dt><dd><kbd>Ctrl</kbd><kbd>N</kbd></dd></div>
+            <div class="shortcut"><dt>Stop generating</dt><dd><kbd>Ctrl</kbd><kbd>.</kbd></dd></div>
+            <div class="shortcut"><dt>Hide, or close Settings</dt><dd><kbd>Esc</kbd></dd></div>
+            <div class="shortcut"><dt>New line in a message</dt><dd><kbd>Shift</kbd><kbd>Enter</kbd></dd></div>
+          </dl>
+        </div>
+
+        <h2 class="group-header">About</h2>
+        <div class="settings-card">
+          <div class="card-header">
+            <span class="icon card-icon" aria-hidden="true">&#xE946;</span>
+            <div class="card-text">
+              <span class="card-title">QChat</span>
+              <span class="card-desc">ChatGPT from anywhere, one shortcut away.</span>
+            </div>
+          </div>
+        </div>
       </div>
-    </footer>
+    </section>
   </div>
 
   <script src="vendor/marked.min.js"></script>

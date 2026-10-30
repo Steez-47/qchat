@@ -1,10 +1,12 @@
 (function () {
   "use strict";
 
+  const IS_MOCK = typeof window.__TAURI__ === "undefined";
+
   // ---------------------------------------------------------------------------
   // 1. Mock Tauri Backend (installed when window.__TAURI__ is undefined)
   // ---------------------------------------------------------------------------
-  if (typeof window.__TAURI__ === "undefined") {
+  if (IS_MOCK) {
     const listeners = new Map();
     let mockTimer = null;
     let mockLoggedIn = false;
@@ -16,19 +18,24 @@
     };
 
     const CANNED_REPLY = [
-      "QChat is connected in **instrument mode**. Responses stream directly over the bridge channel with minimal overhead.",
-      "",
-      "- Frameless utility grid with strict hairline rhythm",
-      "- Throttled Markdown rendering (`<= 20 Hz`) with raw HTML escaping",
-      "- Keyboard-first control surface (`Alt+Q`, `Ctrl+N`, `Ctrl+.`)",
+      "Here's a small **debounce** helper. It waits until the user stops typing before running the callback:",
       "",
       "```js",
-      "async function pingBridge(id, prompt) {",
-      "  return window.__TAURI__.core.invoke('chat_send', { id, prompt });",
+      "function debounce(fn, ms = 250) {",
+      "  let timer;",
+      "  return (...args) => {",
+      "    clearTimeout(timer);",
+      "    timer = setTimeout(() => fn(...args), ms);",
+      "  };",
       "}",
       "```",
       "",
-      "Reference documentation is available at [OpenAI Platform Docs](https://platform.openai.com/docs)."
+      "| Delay | Feels like |",
+      "| --- | --- |",
+      "| `100 ms` | Instant |",
+      "| `250 ms` | Natural typing pause |",
+      "",
+      "More detail is on [MDN](https://developer.mozilla.org/docs/Web/API/setTimeout)."
     ].join("\n");
 
     const XSS_REPLY =
@@ -42,15 +49,25 @@
       }
     };
 
+    const emitStatus = (delay) => setTimeout(() => {
+      emitMock("bridge", { type: "status", ready: true, loggedIn: mockLoggedIn, url: "https://chatgpt.com/" });
+    }, delay);
+
     window.__TAURI__ = {
       core: {
         invoke: async (cmd, args = {}) => {
           switch (cmd) {
             case "chat_status":
-              setTimeout(() => {
-                emitMock("bridge", { type: "status", ready: true, loggedIn: mockLoggedIn, url: "https://chatgpt.com/" });
-              }, 15);
+              emitStatus(15);
               return null;
+            case "get_theme":
+              return {
+                accent: "#0078D4",
+                accentLight1: "#429CE3",
+                accentLight2: "#8AC8F0",
+                accentDark1: "#005A9E",
+                dark: window.matchMedia("(prefers-color-scheme: dark)").matches
+              };
             case "chat_send": {
               clearMockStream();
               const { id, prompt } = args;
@@ -90,9 +107,7 @@
               return null;
             case "show_signin":
               mockLoggedIn = true;
-              setTimeout(() => {
-                emitMock("bridge", { type: "status", ready: true, loggedIn: true, url: "https://chatgpt.com/" });
-              }, 20);
+              emitStatus(20);
               return null;
             case "import_session_token": {
               const cookie = String(args.cookie || "").trim();
@@ -100,14 +115,11 @@
                 throw new Error("Cookie value appears empty or invalid.");
               }
               mockLoggedIn = true;
-              setTimeout(() => {
-                emitMock("bridge", { type: "status", ready: true, loggedIn: true, url: "https://chatgpt.com/" });
-              }, 20);
+              emitStatus(20);
               return null;
             }
             case "hide_main":
             case "open_external":
-              return null;
             default:
               return null;
           }
@@ -130,11 +142,57 @@
   const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
   const listen = (event, cb) => window.__TAURI__.event.listen(event, cb);
 
+  // No Mica behind a plain browser tab: paint the solid base instead.
+  if (IS_MOCK) document.documentElement.classList.add("solid");
+
   // ---------------------------------------------------------------------------
-  // 2. Security & Markdown Configuration
+  // 2. Theme (system accent + light/dark)
+  // ---------------------------------------------------------------------------
+  const DEFAULT_ACCENT = { accent: "#0078D4", accentLight1: "#429CE3", accentLight2: "#8AC8F0", accentDark1: "#005A9E" };
+  const ACCENT_VARS = { accent: "--accent", accentLight1: "--accent-light1", accentLight2: "--accent-light2", accentDark1: "--accent-dark1" };
+  const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  const isHex = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
+
+  function applyTheme(theme) {
+    const root = document.documentElement;
+    const t = theme && typeof theme === "object" ? theme : {};
+    for (const [key, cssVar] of Object.entries(ACCENT_VARS)) {
+      root.style.setProperty(cssVar, isHex(t[key]) ? t[key] : DEFAULT_ACCENT[key]);
+    }
+    const dark = typeof t.dark === "boolean" ? t.dark : darkQuery.matches;
+    root.dataset.theme = dark ? "dark" : "light";
+  }
+
+  async function refreshTheme() {
+    try {
+      applyTheme(await invoke("get_theme"));
+    } catch (_) {
+      applyTheme(null);
+    }
+  }
+
+  applyTheme(null);
+  darkQuery.addEventListener("change", refreshTheme);
+
+  window.addEventListener("blur", () => document.documentElement.classList.add("inactive"));
+  window.addEventListener("focus", () => document.documentElement.classList.remove("inactive"));
+
+  // ---------------------------------------------------------------------------
+  // 3. Security & Markdown Configuration
   // ---------------------------------------------------------------------------
   const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
   const escapeHtml = (str) => String(str ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
+
+  const GLYPH = {
+    copy: "",
+    check: "",
+    send: "",
+    stop: "",
+    retry: "",
+    statusCircle: "",
+    errorX: "",
+    checkCircle: ""
+  };
 
   function sanitizeHref(rawHref) {
     if (typeof rawHref !== "string") return null;
@@ -161,20 +219,21 @@
       const labelHtml = typeof text === "string" ? text : (href?.text ?? "");
       const safeUrl = sanitizeHref(rawHref);
       if (!safeUrl) return labelHtml;
-      const titleAttr = rawTitle ? ` title="${escapeHtml(rawTitle)}"` : "";
+      const titleAttr = ` title="${escapeHtml(rawTitle || safeUrl)}"`;
       return `<a href="${escapeHtml(safeUrl)}"${titleAttr} rel="noopener noreferrer">${labelHtml}</a>`;
     };
 
     renderer.code = (code, infostring) => {
       const rawCode = typeof code === "string" ? code : (code?.text ?? "");
       const rawLang = typeof infostring === "string" ? infostring : (code?.lang ?? "");
-      const cleanLang = (rawLang.trim().split(/\s+/)[0] || "code").replace(/[^a-zA-Z0-9_+-]/g, "") || "code";
-      const safeLang = escapeHtml(cleanLang);
+      const cleanLang = (rawLang.trim().split(/\s+/)[0] || "").replace(/[^a-zA-Z0-9_+-]/g, "");
+      const safeLang = escapeHtml(cleanLang || "code");
       const safeCode = escapeHtml(rawCode.replace(/\n$/, ""));
       return (
         `<div class="code-block">` +
         `<div class="code-header"><span class="code-lang">${safeLang}</span>` +
-        `<button type="button" class="code-copy-btn" data-action="copy-code">Copy</button></div>` +
+        `<button type="button" class="code-copy-btn" data-action="copy-code" title="Copy code">` +
+        `<span class="icon" aria-hidden="true">${GLYPH.copy}</span><span class="btn-label">Copy</span></button></div>` +
         `<pre><code class="language-${safeLang}">${safeCode}</code></pre></div>`
       );
     };
@@ -189,45 +248,57 @@
   }
 
   // ---------------------------------------------------------------------------
-  // 3. Error Copy Mapping & State
+  // 4. Error Copy Mapping & State
   // ---------------------------------------------------------------------------
   const ERROR_MESSAGES = {
     not_ready: "ChatGPT is still loading. Try again in a moment.",
     busy: "ChatGPT is busy with another response.",
-    rate_limited: "ChatGPT says you've hit a limit.",
-    auth: "Session expired. Sign in again.",
-    send_failed: "Failed to send prompt to ChatGPT.",
-    stream_failed: "Response stream was interrupted.",
-    timeout: "Request timed out. Please try again."
+    rate_limited: "You've hit ChatGPT's usage limit for now.",
+    auth: "Your session expired. Sign in again to continue.",
+    send_failed: "Couldn't send your message to ChatGPT.",
+    stream_failed: "The response was interrupted.",
+    timeout: "ChatGPT took too long to respond."
   };
 
   const formatErrorCopy = (code, fallback) =>
-    (code && ERROR_MESSAGES[code]) || fallback || "An unexpected error occurred.";
+    (code && ERROR_MESSAGES[code]) || fallback || "Something went wrong.";
 
+  const $ = (id) => document.getElementById(id);
   const el = {
-    statusPill: document.getElementById("status-pill"),
-    statusLabel: document.getElementById("status-label"),
-    btnNewChat: document.getElementById("btn-new-chat"),
-    btnSettings: document.getElementById("btn-settings"),
-    btnHide: document.getElementById("btn-hide"),
-    guestNotice: document.getElementById("guest-notice"),
-    btnGuestSignin: document.getElementById("btn-guest-signin"),
-    globalError: document.getElementById("global-error"),
-    globalErrorText: document.getElementById("global-error-text"),
-    btnErrorSignin: document.getElementById("btn-error-signin"),
-    btnErrorDismiss: document.getElementById("btn-error-dismiss"),
-    emptyState: document.getElementById("empty-state"),
-    turnsList: document.getElementById("turns-list"),
-    btnJumpLatest: document.getElementById("btn-jump-latest"),
-    settingsSheet: document.getElementById("settings-sheet"),
-    btnCloseSettings: document.getElementById("btn-close-settings"),
-    btnSheetSignin: document.getElementById("btn-sheet-signin"),
-    cookieInput: document.getElementById("cookie-input"),
-    btnImportCookie: document.getElementById("btn-import-cookie"),
-    cookieFeedback: document.getElementById("cookie-feedback"),
-    promptInput: document.getElementById("prompt-input"),
-    btnSend: document.getElementById("btn-send"),
-    streamHint: document.getElementById("stream-hint")
+    statusLabel: $("status-label"),
+    btnNewChat: $("btn-new-chat"),
+    btnSettings: $("btn-settings"),
+    btnHide: $("btn-hide"),
+    chatView: $("chat-view"),
+    guestNotice: $("guest-notice"),
+    guestTitle: $("guest-title"),
+    guestMessage: $("guest-message"),
+    btnGuestSignin: $("btn-guest-signin"),
+    btnGuestDismiss: $("btn-guest-dismiss"),
+    globalError: $("global-error"),
+    globalErrorText: $("global-error-text"),
+    btnErrorSignin: $("btn-error-signin"),
+    btnErrorDismiss: $("btn-error-dismiss"),
+    emptyState: $("empty-state"),
+    turnsList: $("turns-list"),
+    btnJumpLatest: $("btn-jump-latest"),
+    promptInput: $("prompt-input"),
+    btnSend: $("btn-send"),
+    settingsPage: $("settings-page"),
+    btnCloseSettings: $("btn-close-settings"),
+    accountCard: $("account-card"),
+    accountStatus: $("account-status"),
+    btnBrowserSignin: $("btn-browser-signin"),
+    btnSheetSignin: $("btn-sheet-signin"),
+    signinSteps: $("signin-steps"),
+    cookieInput: $("cookie-input"),
+    btnImportCookie: $("btn-import-cookie"),
+    connectProgress: $("connect-progress"),
+    signinResult: $("signin-result"),
+    signinResultGlyph: $("signin-result-glyph"),
+    signinResultTitle: $("signin-result-title"),
+    signinResultMessage: $("signin-result-message"),
+    btnSigninResultDismiss: $("btn-signin-result-dismiss")
   };
 
   const turns = [];
@@ -235,15 +306,19 @@
   const renderSchedule = new Map();
   let userScrolledUp = false;
   let settingsOpen = false;
+  let settingsHideTimer = null;
+  let guestDismissed = false;
+  const bridge = { ready: false, loggedIn: false, signedOut: false };
 
   const isStreaming = () => turns.some((t) => t.status === "streaming");
 
   function updateComposerMode() {
     const active = isStreaming();
     el.btnSend.dataset.mode = active ? "stop" : "send";
-    el.btnSend.title = active ? "Stop streaming (Ctrl+.)" : "Send (Enter)";
-    el.btnSend.setAttribute("aria-label", active ? "Stop streaming" : "Send prompt");
-    el.streamHint.hidden = !active;
+    el.btnSend.firstElementChild.textContent = active ? GLYPH.stop : GLYPH.send;
+    el.btnSend.title = active ? "Stop generating (Ctrl+.)" : "Send (Enter) · Shift+Enter for a new line";
+    el.btnSend.setAttribute("aria-label", active ? "Stop generating" : "Send");
+    el.btnSend.disabled = !active && !el.promptInput.value.trim();
   }
 
   function updateWorkspaceVisibility() {
@@ -257,7 +332,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // 4. Auto-scroll & Scroll Tracking
+  // 5. Auto-scroll & Scroll Tracking
   // ---------------------------------------------------------------------------
   function scrollToBottom(force = false) {
     if (force) {
@@ -278,65 +353,101 @@
   el.btnJumpLatest.addEventListener("click", () => scrollToBottom(true));
 
   // ---------------------------------------------------------------------------
-  // 5. Turn DOM Creation & Throttled Re-rendering (<= 20 Hz / 50ms + rAF)
+  // 6. Turn DOM Creation & Throttled Re-rendering (<= 20 Hz / 50ms + rAF)
   // ---------------------------------------------------------------------------
+  function make(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function makeIcon(glyph, className = "icon") {
+    const span = make("span", className, glyph);
+    span.setAttribute("aria-hidden", "true");
+    return span;
+  }
+
+  function makeProgressRing() {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("class", "progress-ring");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("aria-hidden", "true");
+    const circle = document.createElementNS(ns, "circle");
+    circle.setAttribute("cx", "8");
+    circle.setAttribute("cy", "8");
+    circle.setAttribute("r", "7");
+    circle.setAttribute("pathLength", "100");
+    svg.appendChild(circle);
+    return svg;
+  }
+
   function createTurnRow(turn) {
-    const row = document.createElement("article");
-    row.className = "turn-row";
+    const row = make("article", "turn-row");
     row.dataset.id = turn.id;
     row.dataset.role = turn.role;
     row.dataset.status = turn.status;
+    row.setAttribute("aria-label", turn.role === "user" ? "You said" : "ChatGPT replied");
 
-    const gutter = document.createElement("div");
-    gutter.className = "turn-gutter";
-    const roleWrap = document.createElement("span");
-    roleWrap.className = "turn-role-wrap";
-
-    const roleLabel = document.createElement("span");
-    roleLabel.className = "turn-role-label";
-    roleLabel.textContent = turn.role === "user" ? "YOU" : "GPT";
-    roleWrap.appendChild(roleLabel);
-
-    if (turn.role === "assistant") {
-      const tick = document.createElement("span");
-      tick.className = "turn-stream-tick";
-      tick.setAttribute("aria-hidden", "true");
-      roleWrap.appendChild(tick);
-    }
-    gutter.appendChild(roleWrap);
-
-    const body = document.createElement("div");
-    body.className = "turn-body";
-    const contentEl = document.createElement("div");
-    contentEl.className = "turn-content";
+    const body = make("div", "turn-body");
+    const contentEl = make("div", "turn-content");
     body.appendChild(contentEl);
+    row.appendChild(body);
 
     let errorWrap = null;
     if (turn.role === "assistant") {
-      const actions = document.createElement("div");
-      actions.className = "turn-actions";
-      const copyBtn = document.createElement("button");
+      const typing = make("div", "turn-typing");
+      typing.setAttribute("role", "status");
+      typing.setAttribute("aria-label", "ChatGPT is thinking");
+      typing.append(make("span"), make("span"), make("span"));
+      const progress = make("div", "turn-progress");
+      progress.appendChild(makeProgressRing());
+      body.append(typing, progress);
+
+      const toolbar = make("div", "turn-toolbar");
+      const copyBtn = make("button", "icon-btn");
       copyBtn.type = "button";
-      copyBtn.className = "turn-copy-btn";
       copyBtn.dataset.action = "copy-turn";
       copyBtn.dataset.id = turn.id;
-      copyBtn.title = "Copy markdown";
-      copyBtn.textContent = "Copy";
-      actions.appendChild(copyBtn);
-      body.appendChild(actions);
+      copyBtn.title = "Copy";
+      copyBtn.setAttribute("aria-label", "Copy reply");
+      copyBtn.appendChild(makeIcon(GLYPH.copy));
+      toolbar.appendChild(copyBtn);
+      row.appendChild(toolbar);
 
-      errorWrap = document.createElement("div");
-      errorWrap.className = "turn-error";
+      errorWrap = make("div", "turn-error");
       errorWrap.hidden = true;
-      body.appendChild(errorWrap);
+      row.appendChild(errorWrap);
     }
-
-    row.appendChild(gutter);
-    row.appendChild(body);
 
     turnNodes.set(turn.id, { row, contentEl, errorWrap });
     renderTurnNow(turn.id);
     return row;
+  }
+
+  function buildTurnError(turn) {
+    const bar = make("div", "infobar");
+    bar.dataset.severity = "critical";
+    bar.setAttribute("role", "alert");
+    const icon = make("span", "infobar-icon");
+    icon.setAttribute("aria-hidden", "true");
+    icon.append(makeIcon(GLYPH.statusCircle, "icon ib-bg"), makeIcon(GLYPH.errorX, "icon ib-fg"));
+    const text = make("p", "infobar-text", turn.error || "Something went wrong.");
+    const actions = make("div", "turn-error-actions");
+    if (turn.code === "auth") {
+      const signin = make("button", "btn btn-compact btn-accent", "Sign in");
+      signin.type = "button";
+      signin.dataset.action = "signin";
+      actions.appendChild(signin);
+    }
+    const retry = make("button", "btn btn-compact", "Retry");
+    retry.type = "button";
+    retry.dataset.action = "retry-turn";
+    retry.dataset.id = turn.id;
+    actions.appendChild(retry);
+    bar.append(icon, text, actions);
+    return bar;
   }
 
   function renderTurnNow(turnId) {
@@ -360,17 +471,11 @@
     } else {
       entry.contentEl.innerHTML = renderMarkdownSafe(turn.text);
       if (turn.status === "error" && entry.errorWrap) {
+        entry.errorWrap.replaceChildren(buildTurnError(turn));
         entry.errorWrap.hidden = false;
-        const signinBtn = turn.code === "auth"
-          ? `<button type="button" class="turn-action-btn" data-action="signin">Sign in</button>`
-          : "";
-        entry.errorWrap.innerHTML =
-          `<span class="turn-error-msg">${escapeHtml(turn.error || "Error")}</span>` +
-          `<div class="turn-error-actions">${signinBtn}` +
-          `<button type="button" class="turn-action-btn" data-action="retry-turn" data-id="${escapeHtml(turn.id)}">Retry</button></div>`;
       } else if (entry.errorWrap) {
         entry.errorWrap.hidden = true;
-        entry.errorWrap.innerHTML = "";
+        entry.errorWrap.replaceChildren();
       }
     }
     scrollToBottom(false);
@@ -406,11 +511,24 @@
   }
 
   // ---------------------------------------------------------------------------
-  // 6. Core Commands & Status Management
+  // 7. Core Commands & Status Management
   // ---------------------------------------------------------------------------
+  const PROMPT_MAX_HEIGHT = 132; // 6 lines of 20px + padding
+
   function autoResizePrompt() {
-    el.promptInput.style.height = "auto";
-    el.promptInput.style.height = `${Math.min(el.promptInput.scrollHeight, 168)}px`;
+    const input = el.promptInput;
+    input.style.height = "auto";
+    const full = input.scrollHeight;
+    input.style.height = `${Math.min(full, PROMPT_MAX_HEIGHT)}px`;
+    input.style.overflowY = full > PROMPT_MAX_HEIGHT ? "auto" : "hidden";
+    updateComposerMode();
+  }
+
+  function takePrompt() {
+    const text = el.promptInput.value;
+    el.promptInput.value = "";
+    autoResizePrompt();
+    return text;
   }
 
   async function sendPrompt(rawPrompt) {
@@ -459,37 +577,60 @@
     renderSchedule.clear();
     turnNodes.clear();
     turns.length = 0;
-    el.turnsList.innerHTML = "";
+    el.turnsList.replaceChildren();
     hideGlobalError();
     updateWorkspaceVisibility();
     updateComposerMode();
+    if (settingsOpen) setSettingsOpen(false);
     if (notifyBackend) {
       try { await invoke("chat_new"); } catch (_) {}
     }
     el.promptInput.focus();
   }
 
+  // #status-label must read "Ready" when signed in and "Guest" when logged out.
   function updateStatusHeader({ ready, loggedIn, errorState, signedOut }) {
-    if (signedOut) {
-      el.statusPill.dataset.state = "signed-out";
-      el.statusLabel.textContent = "Signed out";
-      el.guestNotice.hidden = false;
-    } else if (errorState) {
-      el.statusPill.dataset.state = "error";
-      el.statusLabel.textContent = "Error";
-    } else if (!ready) {
-      el.statusPill.dataset.state = "connecting";
-      el.statusLabel.textContent = "Connecting…";
-      el.guestNotice.hidden = true;
-    } else if (loggedIn) {
-      el.statusPill.dataset.state = "ready";
-      el.statusLabel.textContent = "Ready";
-      el.guestNotice.hidden = true;
-    } else {
-      el.statusPill.dataset.state = "guest";
-      el.statusLabel.textContent = "Guest";
-      el.guestNotice.hidden = false;
+    let state;
+    let label;
+    if (signedOut) { state = "signed-out"; label = "Signed out"; }
+    else if (errorState) { state = "error"; label = "Error"; }
+    else if (!ready) { state = "connecting"; label = "Connecting…"; }
+    else if (loggedIn) { state = "ready"; label = "Ready"; }
+    else { state = "guest"; label = "Guest"; }
+
+    el.statusLabel.dataset.state = state;
+    el.statusLabel.textContent = label;
+
+    if (!errorState) {
+      bridge.ready = Boolean(ready);
+      bridge.loggedIn = Boolean(loggedIn);
+      bridge.signedOut = Boolean(signedOut);
     }
+    updateGuestNotice();
+    updateAccountStatus();
+  }
+
+  function updateGuestNotice() {
+    const show = bridge.ready && !bridge.loggedIn && !guestDismissed;
+    if (bridge.signedOut) {
+      el.guestTitle.textContent = "Signed out";
+      el.guestMessage.textContent = "Sign in again to keep chatting.";
+    } else {
+      el.guestTitle.textContent = "Guest mode";
+      el.guestMessage.textContent = "Sign in to use your models and history.";
+    }
+    el.guestNotice.hidden = !show;
+  }
+
+  function updateAccountStatus() {
+    let state;
+    let text;
+    if (!bridge.ready) { state = "connecting"; text = "Connecting…"; }
+    else if (bridge.loggedIn) { state = "signed-in"; text = "Signed in"; }
+    else if (bridge.signedOut) { state = "signed-out"; text = "Signed out. Sign in again to continue."; }
+    else { state = "guest"; text = "Using ChatGPT as a guest"; }
+    el.accountStatus.dataset.state = state;
+    el.accountStatus.textContent = text;
   }
 
   function showGlobalError(code, message) {
@@ -505,43 +646,126 @@
     el.btnErrorSignin.hidden = true;
   }
 
-  function setSettingsOpen(open) {
+  // ---------------------------------------------------------------------------
+  // 8. Settings page
+  // ---------------------------------------------------------------------------
+  function setSettingsOpen(open, section) {
+    const root = document.documentElement;
+    const wasOpen = settingsOpen;
     settingsOpen = Boolean(open);
-    el.settingsSheet.hidden = !settingsOpen;
-    el.settingsSheet.setAttribute("aria-hidden", String(!settingsOpen));
     el.btnSettings.setAttribute("aria-expanded", String(settingsOpen));
+    clearTimeout(settingsHideTimer);
+
     if (settingsOpen) {
-      el.cookieFeedback.textContent = "";
-      el.btnSheetSignin.focus();
+      el.settingsPage.hidden = false;
+      el.chatView.inert = true;
+      if (!wasOpen) {
+        void el.settingsPage.offsetWidth; // start the drill-in from its initial state
+        root.classList.add("settings-open");
+        updateAccountStatus();
+      }
+      if (section === "account") {
+        el.accountCard.scrollIntoView({ block: "start" });
+        el.btnBrowserSignin.focus();
+      } else if (!wasOpen) {
+        el.btnCloseSettings.focus();
+      }
     } else {
+      root.classList.remove("settings-open");
+      el.chatView.inert = false;
+      settingsHideTimer = setTimeout(() => {
+        if (!settingsOpen) el.settingsPage.hidden = true;
+      }, 260);
       el.promptInput.focus();
     }
   }
 
-  async function handleImportCookie() {
-    const cookie = el.cookieInput.value.trim();
-    if (!cookie) {
-      el.cookieFeedback.dataset.type = "error";
-      el.cookieFeedback.textContent = "Paste a session cookie first.";
-      return;
-    }
-    el.btnImportCookie.disabled = true;
-    el.cookieFeedback.dataset.type = "";
-    el.cookieFeedback.textContent = "Importing…";
-    try {
-      await invoke("import_session_token", { cookie });
-      el.cookieInput.value = "";
-      el.cookieFeedback.dataset.type = "success";
-      el.cookieFeedback.textContent = "Session cookie imported.";
-      await invoke("chat_status");
-    } catch (err) {
-      el.cookieFeedback.dataset.type = "error";
-      el.cookieFeedback.textContent = err?.message || String(err) || "Import failed.";
-    } finally {
-      el.btnImportCookie.disabled = false;
+  const openAccountSettings = () => setSettingsOpen(true, "account");
+
+  // Sign-in with the browser: open chatgpt.com, then import the session cookie.
+  const SIGNIN_POLL_MS = 1500;
+  const SIGNIN_TIMEOUT_MS = 15000;
+  const signin = { pending: false, pollTimer: null, deadline: 0 };
+
+  function showSigninResult(kind, title, message) {
+    el.signinResult.dataset.severity = kind;
+    el.signinResult.setAttribute("role", kind === "critical" ? "alert" : "status");
+    el.signinResultGlyph.textContent = kind === "critical" ? GLYPH.errorX : GLYPH.checkCircle;
+    el.signinResultTitle.textContent = title;
+    el.signinResultMessage.textContent = message;
+    el.signinResult.hidden = false;
+  }
+
+  function setSigninBusy(busy) {
+    el.btnImportCookie.disabled = busy;
+    el.cookieInput.disabled = busy;
+    el.connectProgress.hidden = !busy;
+  }
+
+  function finishSignin(ok) {
+    signin.pending = false;
+    clearInterval(signin.pollTimer);
+    signin.pollTimer = null;
+    setSigninBusy(false);
+    if (ok) {
+      el.signinSteps.hidden = true;
+      showSigninResult("success", "Signed in.", "QChat now uses your ChatGPT account.");
+    } else {
+      showSigninResult(
+        "critical",
+        "Couldn't confirm the sign-in.",
+        "Make sure you copied the whole value (both .0 and .1 if it's split), then try again."
+      );
+      el.cookieInput.focus();
     }
   }
 
+  async function handleImportCookie() {
+    if (signin.pending) return;
+    const cookie = el.cookieInput.value.trim();
+    el.signinResult.hidden = true;
+    if (!cookie) {
+      showSigninResult("critical", "Nothing to connect.", "Paste the session token value first.");
+      el.cookieInput.focus();
+      return;
+    }
+
+    setSigninBusy(true);
+    try {
+      await invoke("import_session_token", { cookie });
+    } catch (err) {
+      el.cookieInput.value = "";
+      setSigninBusy(false);
+      // Never echo the cookie back, even if the backend error contains it.
+      const detail = String(err?.message || err || "").split(cookie).join("…").slice(0, 200);
+      showSigninResult("critical", "That didn't work.", detail || "QChat couldn't use that session token.");
+      el.cookieInput.focus();
+      return;
+    }
+    el.cookieInput.value = "";
+
+    // The ChatGPT page reloads with the new session; poll until it reports in.
+    signin.pending = true;
+    signin.deadline = Date.now() + SIGNIN_TIMEOUT_MS;
+    const poll = () => {
+      if (!signin.pending) return;
+      if (Date.now() > signin.deadline) { finishSignin(false); return; }
+      invoke("chat_status").catch(() => {});
+    };
+    signin.pollTimer = setInterval(poll, SIGNIN_POLL_MS);
+    poll();
+  }
+
+  function startBrowserSignin() {
+    invoke("open_external", { url: "https://chatgpt.com/" }).catch(() => {});
+    el.signinResult.hidden = true;
+    el.signinSteps.hidden = false;
+    el.signinSteps.scrollIntoView({ block: "nearest" });
+  }
+
+  // ---------------------------------------------------------------------------
+  // 9. Clipboard
+  // ---------------------------------------------------------------------------
   async function copyWithFeedback(text, buttonEl) {
     try {
       await navigator.clipboard.writeText(String(text ?? ""));
@@ -555,15 +779,27 @@
       try { document.execCommand("copy"); } catch (_) {}
       document.body.removeChild(ta);
     }
-    if (buttonEl) {
-      const prev = buttonEl.textContent;
-      buttonEl.textContent = "Copied";
-      setTimeout(() => { buttonEl.textContent = prev; }, 1100);
+    if (!buttonEl) return;
+    const icon = buttonEl.querySelector(".icon");
+    const label = buttonEl.querySelector(".btn-label");
+    if (buttonEl._copyTimer) clearTimeout(buttonEl._copyTimer);
+    else {
+      buttonEl._prevTitle = buttonEl.title;
+      if (label) buttonEl._prevLabel = label.textContent;
     }
+    if (icon) icon.textContent = GLYPH.check;
+    if (label) label.textContent = "Copied";
+    buttonEl.title = "Copied";
+    buttonEl._copyTimer = setTimeout(() => {
+      buttonEl._copyTimer = null;
+      if (icon) icon.textContent = GLYPH.copy;
+      if (label) label.textContent = buttonEl._prevLabel;
+      buttonEl.title = buttonEl._prevTitle;
+    }, 1200);
   }
 
   // ---------------------------------------------------------------------------
-  // 7. Event Wiring & Bridge Listener
+  // 10. Event Wiring & Bridge Listener
   // ---------------------------------------------------------------------------
   el.turnsList.addEventListener("click", (e) => {
     const anchor = e.target.closest("a");
@@ -586,43 +822,61 @@
       const turn = turns.find((t) => t.id === actionBtn.dataset.id);
       if (turn && turn.prompt && !isStreaming()) sendPrompt(turn.prompt);
     } else if (action === "signin") {
-      invoke("show_signin").catch(() => {});
+      openAccountSettings();
     }
+  });
+
+  el.emptyState.addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-suggestion]");
+    if (!chip) return;
+    el.promptInput.value = chip.dataset.suggestion;
+    autoResizePrompt();
+    el.promptInput.focus();
+    const end = el.promptInput.value.length;
+    el.promptInput.setSelectionRange(end, end);
   });
 
   el.promptInput.addEventListener("input", autoResizePrompt);
   el.promptInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      if (!isStreaming() && el.promptInput.value.trim()) {
-        const text = el.promptInput.value;
-        el.promptInput.value = "";
-        autoResizePrompt();
-        sendPrompt(text);
-      }
+      if (!isStreaming() && el.promptInput.value.trim()) sendPrompt(takePrompt());
     }
   });
 
   el.btnSend.addEventListener("click", () => {
-    if (isStreaming()) {
-      stopStreaming();
-    } else if (el.promptInput.value.trim()) {
-      const text = el.promptInput.value;
-      el.promptInput.value = "";
-      autoResizePrompt();
-      sendPrompt(text);
-    }
+    if (isStreaming()) stopStreaming();
+    else if (el.promptInput.value.trim()) sendPrompt(takePrompt());
+    el.promptInput.focus();
   });
 
   el.btnNewChat.addEventListener("click", () => startNewChat(true));
   el.btnSettings.addEventListener("click", () => setSettingsOpen(!settingsOpen));
   el.btnCloseSettings.addEventListener("click", () => setSettingsOpen(false));
   el.btnHide.addEventListener("click", () => invoke("hide_main").catch(() => {}));
-  el.btnGuestSignin.addEventListener("click", () => invoke("show_signin").catch(() => {}));
-  el.btnErrorSignin.addEventListener("click", () => invoke("show_signin").catch(() => {}));
-  el.btnErrorDismiss.addEventListener("click", hideGlobalError);
+
+  el.btnGuestSignin.addEventListener("click", openAccountSettings);
+  el.btnGuestDismiss.addEventListener("click", () => {
+    guestDismissed = true;
+    updateGuestNotice();
+    el.promptInput.focus();
+  });
+  el.btnErrorSignin.addEventListener("click", openAccountSettings);
+  el.btnErrorDismiss.addEventListener("click", () => {
+    hideGlobalError();
+    el.promptInput.focus();
+  });
+
+  el.btnBrowserSignin.addEventListener("click", startBrowserSignin);
   el.btnSheetSignin.addEventListener("click", () => invoke("show_signin").catch(() => {}));
   el.btnImportCookie.addEventListener("click", handleImportCookie);
+  el.cookieInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleImportCookie();
+    }
+  });
+  el.btnSigninResultDismiss.addEventListener("click", () => { el.signinResult.hidden = true; });
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
@@ -643,6 +897,7 @@
     switch (evt.type) {
       case "status":
         updateStatusHeader({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
+        if (signin.pending && evt.ready && evt.loggedIn) finishSignin(true);
         break;
       case "start": {
         const turn = turns.find((t) => t.id === evt.id);
@@ -692,11 +947,18 @@
 
   listen("qchat://shown", () => {
     if (!settingsOpen) el.promptInput.focus();
+    refreshTheme();
     invoke("chat_status").catch(() => {});
   });
 
   listen("qchat://new-chat", () => startNewChat(true));
 
+  listen("qchat://open-settings", ({ payload } = {}) => {
+    setSettingsOpen(true, payload && payload.section === "account" ? "account" : undefined);
+  });
+
+  updateComposerMode();
   el.promptInput.focus();
+  refreshTheme();
   invoke("chat_status").catch(() => {});
 })();
