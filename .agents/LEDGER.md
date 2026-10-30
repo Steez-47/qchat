@@ -29,3 +29,4 @@ Edit these anytime. The orchestrator reads them at kickoff and before each miles
 - 2026-10-30 20:55 | E review | antigravity/claude-sonnet-5-5/medium | running | shell + bridge security/correctness
 - 2026-10-30 21:10 | E review | antigravity/claude-sonnet-5-5/medium | done | 10 findings (0 high); finding 3 reproduced by tools/app-e2e.mjs
 - 2026-10-30 21:15 | F fixes | codex/gpt-6.1-sol/medium | running | all review findings; acceptance app-e2e ALL PASS
+- 2026-10-30 21:45 | F fixes | codex/gpt-6.1-sol/medium | done | 11 findings fixed; e2e 7/7 verified by T0; release exe 4.3MB

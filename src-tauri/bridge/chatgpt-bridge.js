@@ -109,11 +109,12 @@
     if (!packet || typeof packet !== 'object') return;
     if (packet.conversation_id) job.conversationId = packet.conversation_id;
     if (packet.o === 'patch' && Array.isArray(packet.v)) { packet.v.forEach(op => apply(job, op)); return; }
+    if (!Object.prototype.hasOwnProperty.call(packet, 'v')) return;
     if (packet.p !== undefined) job.path = packet.p;
     if (packet.o !== undefined) job.operation = packet.o;
     const path = packet.p === undefined ? job.path : packet.p;
     const operation = packet.o === undefined ? job.operation : packet.o;
-    const value = packet.v === undefined ? packet : packet.v;
+    const value = packet.v;
     if (value && typeof value === 'object' && value.message) {
       job.message = value.message;
       if (value.conversation_id) job.conversationId = value.conversation_id;
@@ -171,7 +172,8 @@
         if (done) { if (buffer.trim()) line(buffer); line(''); break; }
       }
       if (ended) await job.reader.cancel();
-      await finish(job);
+      if (job.netText) await finish(job);
+      else { job.stream = false; sampleDOM(job); }
     } catch (e) { if (!job.finished && !job.finishing) fail(job, 'stream_failed', e.message); }
   }
   const originalFetch = window.fetch;
@@ -196,16 +198,25 @@
     return request;
   };
   function blocking() {
-    const text = document.body?.innerText || '';
-    if (/You've reached our limit|You’ve reached our limit|reached your.*limit/i.test(text)) return ['rate_limited', 'Guest chat limit reached.'];
-    if (/Just a moment|Verify you are human|Checking your browser/i.test(document.title + text.slice(0, 2000))) return ['not_ready', 'Cloudflare challenge is blocking chat.'];
-    const dialog = document.querySelector('[role="dialog"]');
-    if (dialog) {
-      const stay = [...dialog.querySelectorAll('button')].find(b => /stay logged out/i.test(b.textContent));
-      if (stay) { stay.click(); return; }
-      if (/log in|sign up/i.test(dialog.innerText) && !find('composer')) return ['auth', 'Login dialog is blocking chat.'];
+    const excluded = '[data-message-author-role], [data-message-role], [data-turn], article, nav';
+    const real = node => !node.closest(excluded);
+    const challenge = [...document.querySelectorAll('iframe[src*="challenges.cloudflare.com"], #challenge-form, [id^="cf-"], [class^="cf-"]')].some(real);
+    if (/Just a moment|Verify you are human|Checking your browser/i.test(document.title) || challenge) return ['not_ready', 'Cloudflare challenge is blocking chat.'];
+    const composer = find('composer');
+    const area = composer?.closest('form') || composer?.parentElement?.parentElement;
+    const walls = [...document.querySelectorAll('[role="dialog"], [role="alert"]')];
+    if (area) walls.push(...area.querySelectorAll('[data-testid*="banner"], [class*="banner"]'));
+    for (const wall of walls.filter(real)) {
+      const copy = wall.cloneNode(true);
+      copy.querySelectorAll(excluded).forEach(n => n.remove());
+      const text = copy.textContent || '';
+      if (/You've reached our limit|You’ve reached our limit|reached your.*limit/i.test(text)) return ['rate_limited', 'Guest chat limit reached.'];
+      const stay = [...wall.querySelectorAll('button')].find(b => /stay logged out/i.test(b.textContent));
+      if (stay) { stay.click(); continue; }
+      if (/log in|sign up/i.test(text) && !composer) return ['auth', 'Login dialog is blocking chat.'];
     }
   }
+
   async function status() {
     if (Date.now() - loginAt > 30000) {
       loginAt = Date.now(); loginCache = false;

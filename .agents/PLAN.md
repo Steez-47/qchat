@@ -31,18 +31,26 @@ Other Rust → UI events: `qchat://shown` (focus the input), `qchat://new-chat` 
 ## M1: core (parallel)
 | id | task | tier/model | owns | deps | status |
 |---|---|---|---|---|---|
-| A | Tauri shell: windows, tray, hotkey, IPC relay, cookie import, suspend | T2 codex/gpt-6.1-sol medium | package.json, src-tauri/** (not bridge/) | none | running |
-| B | chatgpt.com bridge script + CDP test harness | T2 codex/gpt-6.1-sol medium | src-tauri/bridge/chatgpt-bridge.js, tools/bridge-test.mjs | none | running |
-| C | Popup UI (design direction below) + mock backend | T2-UI antigravity/gemini-4-argon medium | ui/** | none | running |
+| A | Tauri shell: windows, tray, hotkey, IPC relay, cookie import, suspend | T2 codex/gpt-6.1-sol medium | package.json, src-tauri/** (not bridge/) | none | done |
+| B | chatgpt.com bridge script + CDP test harness | T2 codex/gpt-6.1-sol medium | src-tauri/bridge/chatgpt-bridge.js, tools/bridge-test.mjs | none | done |
+| C | Popup UI (design direction below) + mock backend | T2-UI antigravity/gemini-4-argon medium | ui/** | none | done |
 
 ## M2: integration
 | id | task | tier/model | owns | deps | status |
 |---|---|---|---|---|---|
-| D | End-to-end run via WebView2 CDP, glue fixes | T0 (me) | any | A,B,C | todo |
-| E | Cross-family review of shell + bridge | R antigravity/claude-sonnet-5-5 medium | none | D | todo |
+| D | End-to-end run via WebView2 CDP, glue fixes | T0 (me) | any | A,B,C | done |
+| E | Cross-family review of shell + bridge | R antigravity/claude-sonnet-5-5 medium | none | D | done |
+
+| F | Fix review findings (11) | T2 codex/gpt-6.1-sol medium | main.rs, tauri.conf.json, bridge | E | done |
+
+Status (M1+M2 done): `node tools/app-e2e.mjs` 7/7 PASS (guest). Unverified live: logged-in SSE path, cookie import persistence, sign-in window flow, hotkey focus over other apps.
+Testing rule: the user may be gaming. Use only the headless tools/app-e2e.mjs; never send keys or show windows.
 
 ## Design direction (UI)
 Dark graphite "instrument panel", Swiss grid, one signal-red accent (#E5484D / icon #dc2626). System fonts: Segoe UI Variable (text), Cascadia Mono (labels and code). No bubbles: each turn is a row with a mono uppercase gutter label (YOU / GPT) and hairline dividers. Flat composer slab docked at the bottom with a red focus rule and key hints. Subtle motion (≤160ms), reduced-motion respected, SVG icons, no gradients, glass or emoji. Light variant via prefers-color-scheme (warm paper #F4F1EC).
+
+## Next candidates
+Verify logged-in path after the user signs in; unload the chatgpt page after long idle (saves ~300MB, costs a 2-4s cold start); model picker; temporary-chat toggle; autostart; release installer.
 
 ## Future (not now)
 Global "prompt on selection" hotkey (UIAutomation / clipboard capture → popup near caret → replace or insert), model picker, temporary-chat toggle, history list, autostart.
