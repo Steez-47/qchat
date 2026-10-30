@@ -609,7 +609,7 @@ try {
   await evalJS(`document.querySelector('.turn-content a').click()`);
   check('links go through open_external', await evalJS(`__mock.last('open_external')?.args.url.startsWith('https://developer.mozilla.org')`));
   check('hover tools are labelled and at least 28px', await evalJS(`[...document.querySelectorAll('.bubble-tools button')].every(b=>b.getAttribute('aria-label')&&b.offsetHeight>=28)`));
-  check('response zone is a polite log', await evalJS(`document.getElementById('bubble-zone').getAttribute('role')==='log' && document.getElementById('bubble-zone').getAttribute('aria-live')==='polite'`));
+  check('response zone is a quiet log with its own announced status', await evalJS(`document.getElementById('bubble-zone').getAttribute('role')==='log' && document.getElementById('bubble-zone').getAttribute('aria-live')==='off'`));
   await evalJS(`document.querySelector('[data-action=dismiss-turn]').click()`);
   await sleep(10);
   check('dismiss button removes the reply', await evalJS(`!document.querySelector('[data-role=assistant]')`));

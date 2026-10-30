@@ -27,6 +27,8 @@
     loggedIn: params.get("mock") === "signedin",
     interval: 30,
     hold: false,
+    statusHold: params.get("status") === "hold",
+    connectTimeout: Number(params.get("connect")) || 0,
     reply: null,
     failOpen: null,
     silentOpen: false,
@@ -129,7 +131,7 @@
           case "media_save": return "Demo image.png";
           case "image_copy": return null;
           case "chat_status":
-            emitStatus(15);
+            if (!mock.statusHold) emitStatus(15);
             return null;
           case "get_theme":
             return {

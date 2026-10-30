@@ -47,6 +47,7 @@ try {
     test.emit = payload => (test.handlers.bridge || []).forEach(fn => fn({payload}));
     window.__TAURI__ = { event: {listen: async (name, fn) => { (test.handlers[name] ||= []).push(fn); }}, core: {invoke: async (cmd, args={}) => {
       test.calls.push({cmd,args});
+      if(cmd==='chat_status') { test.emit({type:'status',ready:true,loggedIn:false,url:'https://chatgpt.com/'}); return; }
       if(cmd==='get_theme') return {dark:true};
       if(cmd==='attachment_begin') { const file={...args,id:'file-'+(++test.next),offset:0}; test.files.set(file.id,file); if(test.delayBegin) await new Promise(r=>test.releaseBegin=r); return file; }
       if(cmd==='attachment_chunk') { if(test.delayChunk) await new Promise(r=>test.releaseChunk=r); const file=test.files.get(args.id); const size=atob(args.data).length; if(size>524288 || args.offset!==file.offset) throw Error('bad chunk'); file.offset+=size; return; }

@@ -10,6 +10,8 @@
   const MAX_RECENT = 3;
   const OPEN_TIMEOUT = 12000;
   const FRESH_TIMEOUT = 2500;
+  const MAX_STORED_TEXT = 40000;
+  const CONNECT_DEADLINE = Number(window.__mock?.connectTimeout) || 25000;
 
   // rAF stalls while the native window is hidden, so never let work depend on it alone.
   function nextFrame(fn) {
@@ -155,7 +157,8 @@
     stream_failed: "The response was interrupted.",
     timeout: "ChatGPT took too long to respond.",
     open_timeout: "That chat is taking too long to open. Try sending again.",
-    invalid_id: "That chat can't be reopened. Start a new one with /new."
+    invalid_id: "That chat can't be reopened. Start a new one with /new.",
+    offline: "Can't reach ChatGPT. Check your connection, then try again."
   };
 
   const formatErrorCopy = (code, fallback) =>
@@ -221,9 +224,12 @@
   const backfilled = new WeakSet();
   let backfillTimer = null;
   const bridge = { ready: false, loggedIn: false, signedOut: false };
+  let connectTimer = null;
+  let connectErrorShown = false;
 
   const isStreaming = () => turns.some((t) => t.status === "streaming");
   const isBusy = () => sending || isStreaming();
+  const stopBackend = () => invoke("chat_stop").catch(() => {});
 
   function make(tag, className, text) {
     const node = document.createElement(tag);
@@ -265,6 +271,7 @@
     lastResponse: "",
     lastHasMedia: false,
     transcript: [],
+    draft: "",
     createdAt: Date.now()
   });
 
@@ -293,19 +300,26 @@
       typeof item.id === "string" && (item.role === "user" || item.role === "assistant") && typeof item.text === "string")
       .map(item => {
         const snapshot = item.role === "user" ? { text: item.text, hasMedia: Boolean(item.hasMedia) } : completedSnapshot(item.text, item.hasMedia);
-        return { id: item.id, role: item.role, text: snapshot.text, hasMedia: snapshot.hasMedia, sources: cleanSources(item.sources) };
+        return { id: item.id, role: item.role, text: snapshot.text, hasMedia: snapshot.hasMedia, stopped: item.role === "assistant" && Boolean(item.stopped), sources: cleanSources(item.sources) };
       });
     // Older versions saved only the latest exchange; earlier turns are unavailable.
     const transcript = [];
     if (raw.lastPrompt) transcript.push({ id: crypto.randomUUID(), role: "user", text: String(raw.lastPrompt) });
-    if (lastSnapshot.text || lastSnapshot.hasMedia) transcript.push({ id: crypto.randomUUID(), role: "assistant", ...lastSnapshot, sources: cleanSources(raw.lastSources) });
+    if (lastSnapshot.text || lastSnapshot.hasMedia) transcript.push({ id: crypto.randomUUID(), role: "assistant", text: lastSnapshot.text, hasMedia: lastSnapshot.hasMedia, stopped: false, sources: cleanSources(raw.lastSources) });
     return transcript;
   }
 
-  function snapshotTurn(turn) {
+  function snapshotTurn(turn, text = turn.text) {
     const hasMedia = Boolean(turn.media?.length || turn.attachments?.length || turn.cachedMedia);
-    const snapshot = turn.role === "user" ? { text: String(turn.text || ""), hasMedia } : completedSnapshot(turn.text, hasMedia);
-    return { id: turn.id, role: turn.role, text: snapshot.text, hasMedia: snapshot.hasMedia, sources: cleanSources(turn.sources) };
+    const snapshot = turn.role === "user" ? { text: String(text || ""), hasMedia } : completedSnapshot(text, hasMedia);
+    return {
+      id: turn.id,
+      role: turn.role,
+      text: snapshot.text,
+      hasMedia: snapshot.hasMedia,
+      sources: cleanSources(turn.sources),
+      stopped: turn.role === "assistant" && Boolean(turn.stopped)
+    };
   }
 
   function rememberTurn(turn) {
@@ -321,7 +335,9 @@
     const items = chats.current.transcript.slice();
     for (const turn of turns) {
       if (turn.chatKey && turn.chatKey !== chats.current.key) continue;
-      const item = snapshotTurn(turn);
+      const entry = turnNodes.get(turn.id);
+      const visible = turn.status === "streaming" && entry?.reveal ? entry.reveal.visible : turn.text;
+      const item = snapshotTurn(turn, visible);
       const index = items.findIndex(existing => existing.id === item.id);
       if (index < 0) items.push(item);
       else items[index] = item;
@@ -384,8 +400,12 @@
         row = createHistoryRow(item);
         panel.insertBefore(row, panel.children[i] || null);
       }
+      const stoppedNote = row.querySelector(".turn-note");
+      if (item.role === "assistant" && item.stopped) {
+        if (!stoppedNote) row.append(make("div", "turn-note", "Stopped"));
+      } else if (stoppedNote) stoppedNote.remove();
       // Completed messages are immutable during a stream; avoid reparsing them.
-      const fingerprint = JSON.stringify([item.text, item.hasMedia, item.sources]);
+      const fingerprint = JSON.stringify([item.text, item.hasMedia, item.sources, item.stopped]);
       if (row._historyFingerprint === fingerprint) continue;
       row._historyFingerprint = fingerprint;
       row._copyText = item.text;
@@ -675,7 +695,7 @@
     pageSync = pageSync.catch(() => {}).then(() => {
       if (chats.current === chat && page.conv !== chat.conversationId) return openInPage(chat);
     }).then(() => {
-      if (chats.current !== chat) return;
+      if (chats.current !== chat) { backfilled.delete(chat); return; }
       backfillTimer = setTimeout(() => backfillFailed(chat), 20000);
       return invoke("chat_read_transcript", { conversationId: chat.conversationId });
     }).catch(() => backfillFailed(chat));
@@ -708,6 +728,11 @@
     renderHistory();
   }
 
+  const capText = (value) => {
+    const text = String(value ?? "");
+    return text.length > MAX_STORED_TEXT ? `${text.slice(0, MAX_STORED_TEXT - 1)}…` : text;
+  };
+
   function cleanChat(raw) {
     if (!raw || typeof raw !== "object" || typeof raw.key !== "string" || !raw.key) return null;
     const text = (value, max) => (typeof value === "string" ? value.slice(0, max) : "");
@@ -723,6 +748,7 @@
       lastHasMedia: snapshot.hasMedia,
       lastSources: cleanSources(raw.lastSources),
       transcript: cleanTranscript(raw, snapshot),
+      draft: text(raw.draft, Infinity),
       createdAt: time(raw.createdAt)
     };
   }
@@ -751,11 +777,38 @@
 
   const chats = loadChats();
 
+  function storedChat(chat, capped = false) {
+    if (!capped) return chat;
+    return {
+      ...chat,
+      lastPrompt: capText(chat.lastPrompt),
+      lastResponse: capText(chat.lastResponse),
+      draft: capText(chat.draft),
+      transcript: (chat.transcript || []).map(item => ({ ...item, text: capText(item.text) }))
+    };
+  }
+
   function saveChats() {
-    try {
-      if (!QSettings.settings.keepHistory) localStorage.removeItem(CHATS_KEY);
-      else localStorage.setItem(CHATS_KEY, JSON.stringify({ v: CHATS_VERSION, current: chats.current, recent: chats.recent }));
-    } catch (_) {}
+    if (!QSettings.settings.keepHistory) {
+      try { localStorage.removeItem(CHATS_KEY); } catch (_) {}
+      return;
+    }
+    let current = storedChat(chats.current);
+    let recent = chats.recent.map(chat => storedChat(chat));
+    const write = () => localStorage.setItem(CHATS_KEY, JSON.stringify({ v: CHATS_VERSION, current, recent }));
+    try { write(); return; } catch (_) {}
+    // Under quota pressure, cap each message before dropping older transcripts.
+    current = storedChat(chats.current, true);
+    recent = chats.recent.map(chat => storedChat(chat, true));
+    try { write(); return; } catch (_) {}
+    for (let i = recent.length - 1; i >= 0; i--) {
+      if (!recent[i].transcript.length) continue;
+      recent[i] = { ...recent[i], transcript: [] };
+      try { write(); return; } catch (_) {}
+    }
+    try { write(); return; } catch (_) {}
+    // Keep the latest exchange of the current chat if the quota is still tight.
+    try { localStorage.setItem(CHATS_KEY, JSON.stringify({ v: CHATS_VERSION, current: { ...current, draft: "", transcript: current.transcript.slice(-2) }, recent: [] })); } catch (_) {}
   }
 
   function pushRecent(chat) {
@@ -776,10 +829,14 @@
 
   function clearRecentChats() {
     chats.recent = [];
-    if (!isBusy() && !turns.length) chats.current = freshChat();
+    dismissExchange();
+    chats.current = freshChat();
+    el.promptInput.value = "";
+    autoResizePrompt();
     saveChats();
     renderTabs();
     updateIdleChips();
+    updateComposerMode();
   }
 
   // ---------------------------------------------------------------------------
@@ -966,7 +1023,10 @@
     }
   }
   function addFiles(files) {
-    if (isStreaming() || sending) return;
+    if (isStreaming() || sending) {
+      showGlobalError("attachment_failed", "Finish or stop the reply first.");
+      return false;
+    }
     for (const file of Array.from(files || [])) {
       if (pendingFiles.length >= 10 || file.size > MAX_BYTES || pendingFiles.reduce((n, f) => n + f.file.size, 0) + file.size > MAX_BYTES) {
         showGlobalError("attachment_failed", "Attach up to 10 files, totalling at most 512 MB.");
@@ -977,6 +1037,7 @@
       stageQueue = stageQueue.then(() => stageAttachment(item));
     }
     renderAttachments();
+    return true;
   }
 
   function safeMediaSource(meta, kind) {
@@ -1417,6 +1478,7 @@
   function finishReveal(turn, entry) {
     if (!turn.backendDone || turn.status !== "streaming") return;
     turn.status = "done";
+    el.statusLabel.textContent = "ChatGPT replied";
     // Multiline answers keep their wrapping width when the streaming class ends.
     entry.row.toggleAttribute("data-wide", /\n/.test(turn.text) || entry.inner.offsetHeight > 72);
     renderTurnNow(turn.id);
@@ -1566,7 +1628,12 @@
     clearTimeout(autoDismissTimer);
     autoDismissTimer = null;
     userScrolledUp = false;
-    for (const turn of turns.slice()) retireTurn(turn, immediate);
+    let stopping = false;
+    for (const turn of turns.slice()) {
+      if (turn.status === "streaming") { stopping = true; turn.status = "done"; turn.stopped = true; }
+      retireTurn(turn, immediate);
+    }
+    if (stopping) void stopBackend();
     updateComposerMode();
   }
 
@@ -1590,7 +1657,7 @@
     const snapshot = completedSnapshot(cachedTurn ? cachedTurn.text : chat.lastResponse, cachedTurn ? cachedTurn.hasMedia : chat.lastHasMedia);
     const fallback = snapshot.hasMedia || (!snapshot.text && chat.conversationId && chat.lastPrompt);
     if (!snapshot.text && !fallback) return;
-    const turn = { id: cachedTurn?.id || crypto.randomUUID(), role: "assistant", text: snapshot.text, sources: cleanSources(cachedTurn ? cachedTurn.sources : chat.lastSources), status: "done", cachedMedia: Boolean(fallback), chatKey: chat.key, prompt: chat.lastPrompt };
+    const turn = { id: cachedTurn?.id || crypto.randomUUID(), role: "assistant", text: snapshot.text, sources: cleanSources(cachedTurn ? cachedTurn.sources : chat.lastSources), status: "done", cachedMedia: Boolean(fallback), chatKey: chat.key, prompt: chat.lastPrompt, stopped: Boolean(cachedTurn?.stopped) };
     turns.push(turn);
     el.zone.append(createResponseRow(turn));
     const entry = turnNodes.get(turn.id);
@@ -1616,12 +1683,15 @@
   function updateComposerMode() {
     const active = isStreaming();
     const sendKey = QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter";
+    el.promptInput.placeholder = bridge.ready ? "Ask anything" : "Connecting…";
     el.btnSend.dataset.mode = active ? "stop" : "send";
     el.btnSend.firstElementChild.textContent = active ? GLYPH.stop : GLYPH.send;
     el.btnSend.title = active ? "Stop generating (Ctrl+.)" : `Send (${sendKey})`;
     el.btnSend.setAttribute("aria-label", active ? "Stop generating" : "Send");
+    const staging = pendingFiles.some((f) => f.state === "staging");
+    const attachable = pendingFiles.some((f) => f.state === "ready");
     el.btnAttach.disabled = active || sending;
-    el.btnSend.disabled = !active && (sending || pendingFiles.some((f) => f.state !== "ready") || (!el.promptInput.value.trim() && !pendingFiles.length));
+    el.btnSend.disabled = !active && (!bridge.ready || sending || staging || (!el.promptInput.value.trim() && !attachable));
     syncTabsDisabled();
   }
 
@@ -1652,11 +1722,11 @@
 
   async function sendPrompt(rawPrompt, { fromInput = false } = {}) {
     const prompt = String(rawPrompt ?? "").trim();
-    if (isBusy() || pendingFiles.some((f) => f.state !== "ready") || (!prompt && !pendingFiles.length)) return;
+    const files = pendingFiles.filter((f) => f.state === "ready");
+    if (isBusy() || pendingFiles.some((f) => f.state === "staging") || (!prompt && !files.length)) return;
     sending = true;
     const generation = chatGeneration;
     const chat = chats.current;
-    const files = pendingFiles.slice();
     const draft = el.promptInput.value;
     const restoreDraft = () => {
       if (fromInput && !el.promptInput.value) { el.promptInput.value = draft; autoResizePrompt(); }
@@ -1693,7 +1763,7 @@
     chat.lastActive = Date.now();
     saveChats();
 
-    if (fromInput) { el.promptInput.value = ""; autoResizePrompt(); }
+    if (fromInput) { el.promptInput.value = ""; chat.draft = ""; autoResizePrompt(); }
     updateGuestNotice();
     updateIdleChips();
     updateComposerMode();
@@ -1738,18 +1808,24 @@
     if (!isStreaming()) return;
     const stopping = turns.filter((t) => t.status === "streaming");
     for (const t of stopping) {
-      if (t.status === "streaming") {
-        flushReveal(t);
-        t.status = "done";
-        recordPartial(t);
-        const entry = turnNodes.get(t.id);
-        if (t.text || t.media?.length) { revealResponse(t); scheduleTurnRender(t.id, true); }
-        else if (entry && !entry.row.hidden) scheduleTurnRender(t.id, true);
+      if (t.status !== "streaming") continue;
+      flushReveal(t);
+      t.status = "done";
+      if (!t.text && !t.media?.length) {
+        // Nothing arrived, so there is no reply to keep: restore the prompt and
+        // remove the empty exchange instead of leaving a completed-looking one.
+        if (!el.promptInput.value) { el.promptInput.value = t.prompt || ""; autoResizePrompt(); }
+        for (const turn of turns.slice()) retireTurn(turn, true);
+        continue;
       }
+      t.stopped = true;
+      recordPartial(t);
+      const entry = turnNodes.get(t.id);
+      if (entry) { revealResponse(t); scheduleTurnRender(t.id, true); }
     }
     updateComposerMode();
     queueSizes();
-    try { await invoke("chat_stop"); } catch (_) {}
+    await stopBackend();
     if (!sending && !turns.some((t) => t.role === "assistant" && (t.text || t.media?.length))) dismissExchange();
     updateComposerMode();
     queueSizes();
@@ -1761,6 +1837,8 @@
   }
 
   async function startNewChat(notifyBackend = true) {
+    if (isStreaming()) await stopStreaming();
+    chats.current.draft = el.promptInput.value;
     for (const t of turns) recordPartial(t);
     chatGeneration++;
     sending = false;
@@ -1859,11 +1937,14 @@
     const now = Date.now();
     const target = chats.recent[index];
     const previous = chats.current;
+    previous.draft = el.promptInput.value;
     chats.recent.splice(index, 1);
     if (hasContent(previous)) { previous.lastActive = now; chats.recent.unshift(previous); }
     chats.recent = chats.recent.slice(0, MAX_RECENT);
     target.lastActive = now;
     chats.current = target;
+    el.promptInput.value = target.draft || "";
+    autoResizePrompt();
     setHistoryOpen(false);
     saveChats();
     renderTabs();
@@ -1923,8 +2004,10 @@
     const matches = query === null ? [] : COMMANDS.filter((c) => c.name.startsWith(query));
     if (!matches.length) { if (slashOpen()) closeSlashMenu(); return; }
     const wasOpen = slashOpen();
+    const previous = slashMatches.map((c) => c.name).join(",");
     slashMatches = matches;
-    slashIndex = wasOpen ? Math.min(slashIndex, matches.length - 1) : 0;
+    const changed = matches.map((c) => c.name).join(",") !== previous;
+    slashIndex = wasOpen && !changed ? Math.min(slashIndex, matches.length - 1) : 0;
     el.slashMenu.replaceChildren(...matches.map((cmd) => {
       const item = make("div", "slash-item");
       item.id = `slash-${cmd.name}`;
@@ -1974,25 +2057,47 @@
   // 12. Status
   // ---------------------------------------------------------------------------
   // Readiness and authentication are separate while the ChatGPT page loads.
-  function updateStatusHeader({ ready, loggedIn, errorState, signedOut }) {
+  function paintStatusDot() {
     let state;
     let label;
-    if (signedOut) { state = "signed-out"; label = "Signed out"; }
-    else if (errorState) { state = "error"; label = "Error"; }
-    else if (!ready) { state = "connecting"; label = loggedIn ? "Loading chat…" : "Connecting…"; }
-    else if (loggedIn) { state = "ready"; label = "Ready"; }
+    if (bridge.signedOut) { state = "signed-out"; label = "Signed out"; }
+    else if (!bridge.ready) { state = "connecting"; label = bridge.loggedIn ? "Loading chat…" : "Connecting…"; }
+    else if (bridge.loggedIn) { state = "ready"; label = "Ready"; }
     else { state = "guest"; label = "Guest"; }
 
     el.statusDot.dataset.state = state;
     el.statusLabel.textContent = label;
     el.orb.title = `Drag QChat · ${label}`;
+  }
 
-    if (!errorState) {
-      bridge.ready = Boolean(ready);
-      bridge.loggedIn = Boolean(loggedIn);
-      bridge.signedOut = Boolean(signedOut);
+  function setStatusError() {
+    el.statusDot.dataset.state = "error";
+    el.statusLabel.textContent = "Error";
+    el.orb.title = "Drag QChat · Error";
+  }
+
+  function updateStatusHeader({ ready, loggedIn, signedOut }) {
+    bridge.ready = Boolean(ready);
+    bridge.loggedIn = Boolean(loggedIn);
+    bridge.signedOut = Boolean(signedOut);
+    paintStatusDot();
+    if (bridge.ready) {
+      clearTimeout(connectTimer);
+      connectTimer = null;
+      if (connectErrorShown) hideGlobalError();
     }
     updateGuestNotice();
+    updateComposerMode();
+  }
+
+  function armConnectDeadline() {
+    clearTimeout(connectTimer);
+    connectTimer = null;
+    if (bridge.ready) return;
+    connectTimer = setTimeout(() => {
+      connectTimer = null;
+      if (!bridge.ready) showGlobalError("offline");
+    }, CONNECT_DEADLINE);
   }
 
   function updateGuestNotice() {
@@ -2014,9 +2119,13 @@
 
   function showGlobalError(code, message) {
     el.globalErrorText.textContent = formatErrorCopy(code, message);
-    el.btnErrorSignin.hidden = code !== "auth";
+    const retry = code === "offline";
+    el.btnErrorSignin.hidden = !(code === "auth" || retry);
+    el.btnErrorSignin.textContent = retry ? "Try again" : "Sign in";
+    el.btnErrorSignin.dataset.action = retry ? "retry-connect" : "signin";
+    connectErrorShown = retry;
     el.globalError.hidden = false;
-    updateStatusHeader({ ready: true, loggedIn: false, signedOut: code === "auth", errorState: code !== "auth" });
+    setStatusError();
     queueSizes();
   }
 
@@ -2025,6 +2134,10 @@
     el.globalError.hidden = true;
     el.globalErrorText.textContent = "";
     el.btnErrorSignin.hidden = true;
+    el.btnErrorSignin.textContent = "Sign in";
+    el.btnErrorSignin.dataset.action = "signin";
+    connectErrorShown = false;
+    paintStatusDot();
     queueSizes();
   }
 
@@ -2101,6 +2214,9 @@
   // ---------------------------------------------------------------------------
   // 15. Event Wiring & Bridge Listener
   // ---------------------------------------------------------------------------
+  // Announcement is handled by the polite status label; the log itself would
+  // otherwise repeat every streamed snapshot.
+  el.zone.setAttribute("aria-live", "off");
   el.historyButton.addEventListener("click", () => { if (historyOpen) returnToLatest(); else setHistoryOpen(true); });
   el.historyPanel.addEventListener("scroll", () => { syncHistoryEdge(); wakeHistoryMotion(); }, { passive: true });
   el.historyPanel.addEventListener("wheel", pullHistory, { passive: true });
@@ -2151,7 +2267,10 @@
       el.promptInput.focus();
     } else if (action === "retry-turn") {
       const turn = turns.find((t) => t.id === actionBtn.dataset.id);
-      if (turn && typeof turn.prompt === "string" && !isStreaming()) sendPrompt(turn.prompt);
+      if (turn && typeof turn.prompt === "string" && !isStreaming()) {
+        sendPrompt(turn.prompt);
+        el.promptInput.focus();
+      }
     } else if (action === "view-media") {
       const row = actionBtn.closest(".turn-row");
       const turn = turns.find((t) => t.id === row?.dataset.id);
@@ -2197,12 +2316,14 @@
   el.attachmentInput.addEventListener("change", () => { filePickerOpen = false; addFiles(el.attachmentInput.files); el.attachmentInput.value = ""; updateIdleChips(); });
   el.promptInput.addEventListener("paste", (e) => {
     const files = Array.from(e.clipboardData?.files || []);
-    if (files.length) { e.preventDefault(); addFiles(files); }
+    if (files.length && addFiles(files)) e.preventDefault();
   });
   el.stage.addEventListener("dragover", (e) => {
     if (Array.from(e.dataTransfer?.types || []).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = isBusy() ? "none" : "copy"; }
   });
-  el.stage.addEventListener("drop", (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); addFiles(e.dataTransfer.files); } });
+  el.stage.addEventListener("drop", (e) => {
+    if (e.dataTransfer?.files?.length && addFiles(e.dataTransfer.files)) e.preventDefault();
+  });
 
   el.promptInput.addEventListener("keydown", (e) => {
     if (e.isComposing) return;
@@ -2225,8 +2346,11 @@
     const needsCtrl = QSettings.settings.sendKey === "ctrl";
     const wantsSend = needsCtrl ? (e.ctrlKey || e.metaKey) : !e.shiftKey;
     if (!wantsSend) return;
+    // Leave Enter alone while a reply streams so the textarea inserts a newline.
+    if (isStreaming()) return;
     e.preventDefault();
-    if (!isStreaming()) submitFromInput();
+    if (!bridge.ready) return;
+    submitFromInput();
   });
 
   el.btnSend.addEventListener("click", () => {
@@ -2241,7 +2365,17 @@
     updateGuestNotice();
     el.promptInput.focus();
   });
-  el.btnErrorSignin.addEventListener("click", openSignin);
+  el.btnErrorSignin.addEventListener("click", () => {
+    if (el.btnErrorSignin.dataset.action === "retry-connect") {
+      hideGlobalError();
+      invoke("chat_status").catch(() => {});
+      armConnectDeadline();
+      el.promptInput.focus();
+      return;
+    }
+    openSignin();
+  });
+
   el.btnErrorDismiss.addEventListener("click", () => {
     hideGlobalError();
     el.promptInput.focus();
@@ -2257,6 +2391,7 @@
   });
 
   window.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") {
       e.preventDefault();
       if (historyOpen) { returnToLatest(); return; }
@@ -2426,7 +2561,9 @@
     el.promptInput.focus();
     refreshTheme();
     renderTabs();
+    if (connectErrorShown) hideGlobalError();
     invoke("chat_status").catch(() => {});
+    armConnectDeadline();
     queueSizes();
   });
 
@@ -2449,10 +2586,12 @@
   if (hasContent(chats.current)) saveChats();
   showCachedResponse(chats.current);
   updateIdleChips();
+  if (chats.current.draft) el.promptInput.value = chats.current.draft;
   autoResizePrompt();
   updateBubbleMax();
   fitNow();
   el.promptInput.focus();
   refreshTheme();
   invoke("chat_status").catch(() => {});
+  armConnectDeadline();
 })();
