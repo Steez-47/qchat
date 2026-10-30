@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>QChat settings</title>
+  <script src="mock.js"></script>
+  <script src="settings-core.js"></script>
+  <link rel="stylesheet" href="glass.css">
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <div class="sheet glass" id="sheet">
+    <header class="sheet-head" data-tauri-drag-region>
+      <div class="orb" aria-hidden="true" data-tauri-drag-region></div>
+      <h1 class="sheet-title" data-tauri-drag-region>Settings</h1>
+      <div class="sheet-actions">
+        <span class="reset-all-wrap" id="reset-all-wrap">
+          <button type="button" class="pill-btn" id="btn-reset-all">Reset all</button>
+          <button type="button" class="pill-btn pill-accent" id="btn-reset-confirm" hidden>Reset everything</button>
+          <button type="button" class="pill-btn" id="btn-reset-cancel" hidden>Keep</button>
+        </span>
+        <button type="button" class="head-close" id="btn-close" title="Close (Esc)" aria-label="Close settings"><span class="icon" aria-hidden="true">&#xE8BB;</span></button>
+      </div>
+    </header>
+
+    <div class="sheet-body">
+      <nav class="section-nav" id="section-nav" aria-label="Settings sections"></nav>
+      <div class="sheet-main">
+        <div class="preview" id="preview" aria-hidden="true">
+          <div class="preview-stack" id="preview-stack">
+            <div class="preview-bubble bubble bubble-sample glass" id="preview-bubble">This is how a reply sits on your desktop.</div>
+            <div class="preview-tabs tabs">
+              <div class="tab glass glass-tiny"><span class="icon">&#xE121;</span><span>30m</span></div>
+              <div class="tab glass glass-tiny"><span class="icon">&#xE121;</span><span>2h</span></div>
+            </div>
+            <div class="bar glass preview-bar">
+              <div class="orb"></div>
+              <div class="preview-placeholder">Ask anything</div>
+              <div class="bar-btn"><span class="icon">&#xE723;</span></div>
+              <div class="bar-btn send-btn preview-send" data-mode="send"><span class="icon">&#xE74A;</span></div>
+            </div>
+          </div>
+          <button type="button" class="pill-btn preview-replay" id="btn-replay" tabindex="-1">Replay</button>
+        </div>
+        <div class="section-scroll scroll" id="section-scroll" tabindex="-1"></div>
+      </div>
+    </div>
+  </div>
+  <script src="settings.js"></script>
+</body>
+</html>

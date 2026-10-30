@@ -9,6 +9,7 @@ A tiny Windows popup for chatting with ChatGPT through your own chatgpt.com sess
 - Without signing in it chats as a ChatGPT guest.
 - Attach files with the paperclip, paste from the clipboard, or drop them onto the chat. Attachments can be sent with or without text.
 - Replies support image previews, audio/video controls, and files saved to Downloads without overwriting existing files. Unsupported previews can be opened in ChatGPT.
+- Images show thumbnails before sending and previews in the chat. **Copy image** copies pixels to the Windows clipboard. Image requests show a preparation/generation graphic, with ChatGPT's percentage when the site supplies one.
 
 QChat accepts up to 10 attachments totalling 512 MB. ChatGPT's own account, upload and format limits still apply; audio/video playback also depends on WebView2's codecs. Live voice/camera sessions are not implemented. Files are staged in bounded chunks and reply media is cached on disk, then cleared on New chat or Quit. Normal sign-in stays saved.
 
@@ -33,3 +34,5 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 The runtime harnesses use an isolated profile, terminate only their own process tree, and leave any running QChat alone.
 
 An optional `node tools/live-media-smoke.mjs --run-with-saved-profile` checks the saved account with synthetic emoji prompts, text/image uploads and a generated CSV download. Quit all QChat instances first. This test sends messages to your account and preserves the saved profile.
+
+`node tools/image-live-e2e.mjs --run-with-saved-profile` generates a test image, verifies its preview/progress and native copying, then uploads it to check the sent-image preview. It writes test screenshots under `dist/qa` and copies the test image to the clipboard. Quit QChat first.

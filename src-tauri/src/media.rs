@@ -40,6 +40,7 @@ struct Cached {
     kind: String,
     path: PathBuf,
     size: u64,
+    revision: u64,
 }
 #[derive(Default)]
 pub struct MediaState {
@@ -136,6 +137,21 @@ fn safe_name(name: &str) -> String {
         result = format!("file_{result}");
     }
     result
+}
+fn image_name(name: String, mime: &str) -> String {
+    if Path::new(&name).extension().is_some() {
+        return name;
+    }
+    let extension = match mime {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/avif" => "avif",
+        "image/bmp" => "bmp",
+        _ => return name,
+    };
+    format!("{name}.{extension}")
 }
 fn kind(mime: &str) -> String {
     if matches!(
@@ -345,6 +361,10 @@ pub fn finish_turn(app: &tauri::AppHandle, id: &str) {
     }
 }
 pub fn clear_all(app: &tauri::AppHandle) {
+    clear_reply_media(app);
+    clear_uploads(app);
+}
+pub fn clear_reply_media(app: &tauri::AppHandle) {
     let state = app.state::<MediaState>();
     state.generation.fetch_add(1, Ordering::SeqCst);
     state.sent.lock().unwrap().clear();
@@ -354,7 +374,6 @@ pub fn clear_all(app: &tauri::AppHandle) {
             .sender
             .send(Err("Media request was cancelled".into()));
     }
-    clear_uploads(app);
     for (_, item) in state.cached.lock().unwrap().drain() {
         remove_cached_file(&item.path);
     }
@@ -529,20 +548,27 @@ fn allowed_media_url(raw: &str) -> bool {
             && url.port_or_known_default() == Some(443)
             && host.ends_with(".blob.core.windows.net"))
 }
-async fn load(app: &tauri::AppHandle, media_id: &str) -> Result<Cached, String> {
+async fn load(app: &tauri::AppHandle, media_id: &str, revision: u64) -> Result<Cached, String> {
     let state = app.state::<MediaState>();
     let generation = state.generation.load(Ordering::SeqCst);
     let _guard = state.download_gate.lock().await;
     if state.generation.load(Ordering::SeqCst) != generation {
         return Err("Media request was cancelled".into());
     }
-    if let Some(item) = state.cached.lock().unwrap().get(media_id).cloned() {
+    if let Some(item) = state
+        .cached
+        .lock()
+        .unwrap()
+        .get(media_id)
+        .filter(|item| item.revision >= revision)
+        .cloned()
+    {
         return Ok(item);
     }
     let args = serde_json::to_string(media_id).map_err(|_| "Invalid media")?;
     let source = match evaluate(app, format!("window.__qchat.resolveMedia({args})")).await {
         Ok(value) => value,
-        Err(_) => return site_download(app, media_id, generation).await,
+        Err(_) => return site_download(app, media_id, generation, revision).await,
     };
     let url = source["url"]
         .as_str()
@@ -610,7 +636,7 @@ async fn load(app: &tauri::AppHandle, media_id: &str) -> Result<Cached, String> 
         Err(e) => {
             remove_cached_file(&path);
             if source["kind"] == "file" && state.generation.load(Ordering::SeqCst) == generation {
-                return site_download(app, media_id, generation).await;
+                return site_download(app, media_id, generation, revision).await;
             }
             return Err(e);
         }
@@ -620,19 +646,29 @@ async fn load(app: &tauri::AppHandle, media_id: &str) -> Result<Cached, String> 
         remove_cached_file(&path);
         return Err("Media request was cancelled".into());
     }
-    if cached.values().map(|v| v.size).sum::<u64>() + size > LIMIT {
+    if cached
+        .iter()
+        .filter(|(key, _)| key.as_str() != media_id)
+        .map(|(_, v)| v.size)
+        .sum::<u64>()
+        + size
+        > LIMIT
+    {
         remove_cached_file(&path);
         return Err("Media cache is full. Start a new chat to clear it.".into());
     }
     let item = Cached {
         id,
-        name,
+        name: image_name(name, &mime),
         mime: mime.clone(),
         kind: kind(&mime),
         path,
         size,
+        revision,
     };
-    cached.insert(media_id.into(), item.clone());
+    if let Some(previous) = cached.insert(media_id.into(), item.clone()) {
+        remove_cached_file(&previous.path);
+    }
     Ok(item)
 }
 #[tauri::command]
@@ -640,10 +676,11 @@ pub async fn media_load(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     media_id: String,
+    revision: Option<u64>,
 ) -> Result<Value, String> {
     main_only(&window)?;
     crate::resume(&app);
-    let item = load(&app, &media_id).await?;
+    let item = load(&app, &media_id, revision.unwrap_or(0)).await?;
     Ok(
         json!({"id":media_id,"name":item.name,"kind":item.kind,"mime":item.mime,"src":format!("http://qchat-media.localhost/{}",item.id)}),
     )
@@ -653,10 +690,11 @@ pub async fn media_save(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     media_id: String,
+    revision: Option<u64>,
 ) -> Result<String, String> {
     main_only(&window)?;
     crate::resume(&app);
-    let item = load(&app, &media_id).await?;
+    let item = load(&app, &media_id, revision.unwrap_or(0)).await?;
     let destination = if let Some(p) = crate::test_profile() {
         p.join("Downloads")
     } else {
@@ -702,6 +740,7 @@ async fn site_download(
     app: &tauri::AppHandle,
     media_id: &str,
     generation: u64,
+    revision: u64,
 ) -> Result<Cached, String> {
     let encoded = serde_json::to_string(media_id).map_err(|_| "Invalid media")?;
     let info = evaluate(app, format!("window.__qchat.mediaInfo({encoded})")).await?;
@@ -717,6 +756,7 @@ async fn site_download(
         kind: kind(&mime),
         path: folder.join(name),
         size: 0,
+        revision,
     };
     let _cleanup = PendingCleanup {
         app: app.clone(),
@@ -863,7 +903,12 @@ pub fn on_download(app: &tauri::AppHandle, event: tauri::webview::DownloadEvent<
                             .len();
                         let mut cached = state.cached.lock().unwrap();
                         if pending.item.size > LIMIT
-                            || cached.values().map(|v| v.size).sum::<u64>() + pending.item.size
+                            || cached
+                                .iter()
+                                .filter(|(id, _)| id.as_str() != pending.media_id)
+                                .map(|(_, v)| v.size)
+                                .sum::<u64>()
+                                + pending.item.size
                                 > LIMIT
                         {
                             return Err("Media cache is full. Start a new chat to clear it.".into());
@@ -871,7 +916,11 @@ pub fn on_download(app: &tauri::AppHandle, event: tauri::webview::DownloadEvent<
                         if pending.generation != state.generation.load(Ordering::SeqCst) {
                             return Err("Media request was cancelled".into());
                         }
-                        cached.insert(pending.media_id.clone(), pending.item.clone());
+                        if let Some(previous) =
+                            cached.insert(pending.media_id.clone(), pending.item.clone())
+                        {
+                            remove_cached_file(&previous.path);
+                        }
                         Ok(pending.item.clone())
                     })();
                     if result.is_err() {
@@ -1030,6 +1079,11 @@ mod tests {
         assert_eq!(safe_name("CON.txt"), "file_CON.txt");
         assert_eq!(safe_name("x.exe"), "x.exe");
         assert!(!safe_name("a\\b/c").contains(['\\', '/']));
+        assert_eq!(
+            image_name("Generated image 1".into(), "image/png"),
+            "Generated image 1.png"
+        );
+        assert_eq!(image_name("photo.jpg".into(), "image/jpeg"), "photo.jpg");
     }
     #[test]
     fn media_sources_exclude_local_and_active_content() {

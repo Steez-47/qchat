@@ -43,13 +43,13 @@ try {
   for (let i = 0; i < 80 && !/Ready|Guest/.test(status); i++) { status = await ui.evaluate(`document.getElementById('status-label').textContent`); await sleep(500); }
   check('bridge ready', /Ready|Guest/.test(status), status);
 
-  const lastTurn = `(()=>{const ts=[...document.querySelectorAll('#turns-list > *')];const l=ts[ts.length-1];return l?{txt:l.querySelector('.turn-content')?.innerText||'',err:!l.querySelector('.turn-error')?.hidden,streaming:l.dataset.status==='streaming'}:null})()`;
+  const lastTurn = `(()=>{const ts=[...document.querySelectorAll('#bubble-zone [data-role=assistant]')];const l=ts[ts.length-1];return l?{txt:l.querySelector('.turn-content')?.innerText||'',err:!l.querySelector('.turn-error')?.hidden,streaming:l.dataset.status==='streaming'}:null})()`;
   async function ask(q, { stopAfterFirst = false } = {}) {
     await ui.evaluate(`(()=>{const t=document.getElementById('prompt-input');t.value=${JSON.stringify(q)};t.dispatchEvent(new Event('input',{bubbles:true}));t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));})()`);
     const t0 = Date.now(); let stopped = false;
     for (let i = 0; i < 480; i++) {
       await sleep(250);
-      const busy = await ui.evaluate(`!!document.querySelector('#turns-list [data-status=streaming]')`);
+      const busy = await ui.evaluate(`!!document.querySelector('#bubble-zone [data-status=streaming]')`);
       const r = await ui.evaluate(lastTurn);
       if (stopAfterFirst && !stopped && r?.txt.trim()) { await ui.evaluate(`window.__TAURI__.core.invoke('chat_stop')`); stopped = true; }
       if (i > 3 && r && !busy && (r.txt.trim() || r.err)) return { ...r, ms: Date.now() - t0 };
@@ -65,9 +65,9 @@ try {
   check('limit phrase in chat is not a block', !r.err && r.txt.trim().length > 0, JSON.stringify(r.txt.slice(0, 80)));
   r = await ask('Say ok.');
   check('send after limit phrase', !r.err && r.txt.trim().length > 0, JSON.stringify(r.txt.slice(0, 40)));
-  await ui.evaluate(`document.getElementById('btn-new-chat').click()`); await sleep(2000);
+  await ui.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown',{key:'n',ctrlKey:true,bubbles:true,cancelable:true}))`); await sleep(2000);
   r = await ask('Write a 3-item markdown list of fruits and a one-line python code block.');
-  const html = await ui.evaluate(`document.querySelector('#turns-list > :last-child .turn-content')?.innerHTML || ''`);
+  const html = await ui.evaluate(`[...document.querySelectorAll('#bubble-zone [data-role=assistant] .turn-content')].pop()?.innerHTML || ''`);
   check('new chat + markdown', /<li>/.test(html) && /code-block/.test(html) && !/\[object Object\]/.test(r.txt), `${r.ms}ms`);
   r = await ask('Count from 1 to 200, separated by spaces.', { stopAfterFirst: true });
   check('stop mid-stream', !r.timeout && r.txt.trim().length > 0 && !/\b200\b/.test(r.txt), `${r.txt.length} chars`);

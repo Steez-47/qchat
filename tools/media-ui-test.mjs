@@ -31,7 +31,7 @@ try {
   await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
   let serial = 0;
   const pending = new Map();
-  ws.onmessage = e => { const result = JSON.parse(e.data); if (result.id) { pending.get(result.id)?.(result); pending.delete(result.id); } };
+  ws.onmessage = e => { const result = JSON.parse(e.data); if (result.id) { pending.get(result.id)?.(result); pending.delete(result.id); } else if(result.method==='Fetch.requestPaused') cdp('Fetch.fulfillRequest',{requestId:result.params.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'image/png'},{name:'Access-Control-Allow-Origin',value:'*'}],body:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='}).catch(()=>{}); };
   const cdp = (method, params = {}) => new Promise((resolve, reject) => { const id = ++serial; pending.set(id, d => d.error ? reject(new Error(d.error.message)) : resolve(d.result)); ws.send(JSON.stringify({ id, method, params })); });
   const evalJS = async expression => {
     const result = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
@@ -39,6 +39,9 @@ try {
     return result.result.value;
   };
   await cdp('Page.enable');
+  // Exits finish at once, so each check sees only the bubble it is about.
+  await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  await cdp('Fetch.enable',{patterns:[{urlPattern:'http://qchat-media.localhost/*',requestStage:'Request'}]});
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
     window.test = {calls:[], handlers:{}, files:new Map(), delayBegin:false, delayChunk:false, failSend:false, badSrc:null, next:0};
     test.emit = payload => (test.handlers.bridge || []).forEach(fn => fn({payload}));
@@ -62,7 +65,7 @@ try {
     const until=async fn=>{for(let i=0;i<100;i++){if(fn())return;await wait(10);}throw Error('UI wait timed out');};
     const files=(name,size=1)=>{const data=new DataTransfer(); data.items.add(new File([new Uint8Array(size)],name,{type:'application/octet-stream'})); $('attachment-input').files=data.files; $('attachment-input').dispatchEvent(new Event('change'));};
     const remove=()=>document.querySelector('#attachments button').click();
-    const reset=async()=>{$('btn-new-chat').click(); await wait(30);};
+    const reset=async()=>{window.dispatchEvent(new KeyboardEvent('keydown',{key:'n',ctrlKey:true,bubbles:true,cancelable:true})); await wait(30);};
     const event=(type,more={})=>test.emit({type,id:test.turn,...more});
     files('<img src=x onerror=alert(1)> 😀.txt',524289);
     check('send disabled during staging',$('btn-send').disabled);
@@ -101,7 +104,7 @@ try {
     check('clipboard files stage',document.querySelector('#attachments').textContent.includes('paste.png'));
     await reset();
     const dropped=new DataTransfer(); dropped.items.add(new File(['drop'],'drop.txt'));
-    $('chat-view').dispatchEvent(new DragEvent('drop',{dataTransfer:dropped,cancelable:true}));
+    $('stack').dispatchEvent(new DragEvent('drop',{dataTransfer:dropped,cancelable:true,bubbles:true}));
     await until(()=>document.querySelector('#attachments [data-state=ready]'));
     check('DOM drop files stage',document.querySelector('#attachments').textContent.includes('drop.txt'));
     await reset();
@@ -122,6 +125,34 @@ try {
     test.delaySend=true; $('prompt-input').value='keep stopped draft'; $('prompt-input').dispatchEvent(new Event('input')); $('btn-send').click();
     await until(()=>test.rejectSend); $('btn-send').click(); await wait(30); test.rejectSend(); test.delaySend=false; await wait(70);
     check('Stop before native acceptance removes blank turns and keeps draft/files',!document.querySelector('[data-role=assistant]') && !document.querySelector('[data-role=user]') && $('prompt-input').value==='keep stopped draft' && !!document.querySelector('#attachments [data-state=ready]'));
+    await reset();
+    const bytes=Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='),c=>c.charCodeAt(0));
+    const data=new DataTransfer();data.items.add(new File([bytes],'preview.png',{type:'image/png'}));$('attachment-input').files=data.files;$('attachment-input').dispatchEvent(new Event('change'));
+    await until(()=>document.querySelector('#attachments [data-state=ready] img')?.naturalWidth===1);
+    check('selected image has decoded thumbnail',!!document.querySelector('#attachments img'));
+    document.querySelector('#attachments .image-copy').click();await until(()=>document.querySelector('#attachments .image-copy').textContent==='Copied');
+    const copied=test.calls.filter(c=>c.cmd==='image_copy').at(-1);
+    check('copy sends decoded image pixels to native clipboard',copied?.args.width===1&&copied?.args.height===1&&atob(copied?.args.rgba||'').length===4);
+    $('btn-send').click();await wait(30);await until(()=>document.querySelector('.uploaded-image img')?.naturalWidth===1);
+    const uploadURL=document.querySelector('.uploaded-image img').src;
+    check('sent image remains visible after pending thumbnail is released',!!document.querySelector('.uploaded-image .image-copy')&&$('attachments').hidden);
+    event('image_progress',{state:'generating',percentage:44});await wait(20);
+    check('site generation percentage is displayed',document.querySelector('.image-generation:not([hidden]) .image-generation-value')?.textContent==='44%');
+    event('image_progress',{state:'generating'});await wait(20);
+    check('unknown generation progress shows graphic without invented percentage',!!document.querySelector('.image-generation:not([hidden]) svg')&&document.querySelector('.image-generation-value').textContent==='');
+    test.mime='image/png';test.mediaKind='image';const before=test.calls.filter(c=>c.cmd==='media_load').length;
+    event('media',{items:[{id:'generated-preview',kind:'image',name:'Generated image',pending:true,revision:0}]});await wait(20);
+    check('pending image waits for a usable source',test.calls.filter(c=>c.cmd==='media_load').length===before);
+    event('media',{items:[{id:'generated-preview',kind:'image',name:'Generated image',pending:false,revision:1}]});await until(()=>document.querySelector('[data-role=assistant] .media-preview img')?.naturalWidth===1);
+    event('media',{items:[{id:'generated-preview',kind:'image',name:'Generated image',pending:false,revision:2}]});await wait(50);
+    const loads=test.calls.filter(c=>c.cmd==='media_load'&&c.args.mediaId==='generated-preview');
+    check('progressive image refreshes one card with new cache revision',loads.length===2&&loads[0].args.revision===1&&loads[1].args.revision===2&&document.querySelectorAll('[data-role=assistant] .media-card').length===1);
+    document.querySelector('[data-role=assistant] .image-copy').click();await until(()=>document.querySelector('[data-role=assistant] .image-copy').textContent==='Copied');
+    check('broker image can be copied without a cross-origin canvas error',true);
+    event('done');await wait(20);check('generation graphic hides on completion',document.querySelector('.image-generation').hidden);
+    await reset();let released=false;try{await fetch(uploadURL);}catch{released=true;}check('new chat releases local image preview URLs',released);
+    $('prompt-input').value='Generate an image of a blue circle';$('prompt-input').dispatchEvent(new Event('input'));$('btn-send').click();await wait(20);
+    check('explicit image request shows preparation graphic immediately',document.querySelector('.image-generation:not([hidden]) .image-generation-label')?.textContent==='Preparing image…');
     return results;
   })()`);
   for (const { name, ok } of results) { console.log(`${ok ? 'PASS' : 'FAIL'} ${name}`); if (!ok) failed++; }

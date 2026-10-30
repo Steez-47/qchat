@@ -39,6 +39,8 @@ try {
   check('main bridge ready', /Ready|Guest/.test(status));
   check('bridge context denies native attachment command', await safeError(site.evaluate("window.__TAURI_INTERNALS__.invoke('attachment_begin',{name:'x',mime:'text/plain',size:0})")));
   check('bridge context denies native media command', await safeError(site.evaluate("window.__TAURI_INTERNALS__.invoke('media_load',{mediaId:'x'})")));
+  check('bridge context denies native image copy', await safeError(site.evaluate("window.__TAURI_INTERNALS__.invoke('image_copy',{width:1,height:1,rgba:'AAAAAA=='})")));
+  check('native image copy rejects mismatched dimensions before touching clipboard', await safeError(ui.evaluate("window.__TAURI__.core.invoke('image_copy',{width:2,height:1,rgba:'AAAAAA=='})")));
 
   const fixture = Buffer.alloc(700123); for (let i = 0; i < fixture.length; i++) fixture[i] = (i * 31 + 17) & 255;
   const expected = fixture.toString('base64');
@@ -51,6 +53,13 @@ try {
   for (let offset = 0; offset < fixture.length;) { const bytes = fixture.subarray(offset, Math.min(offset + 512 * 1024, fixture.length)); await ui.evaluate(`window.__TAURI__.core.invoke('attachment_chunk',{id:${JSON.stringify(id)},offset:${offset},data:${JSON.stringify(bytes.toString('base64'))}})`); offset += bytes.length; }
   const finished = await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(id)}})`);
   check('stage multi-chunk attachment', finished.id === id && finished.kind === 'file');
+  // Page synchronization must retain a draft staged before a lazy chat open/new.
+  await site.evaluate(`window.__qchat.openConversation=async()=>{};window.__qchat.newChat=async()=>{}`);
+  for (const [command, args] of [['chat_open', {conversationId:'fixture-conversation',preserveUploads:true}], ['chat_new', {preserveUploads:true}]]) {
+    await ui.evaluate(`window.__TAURI__.core.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`);
+    const retained = await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(id)}})`);
+    check(`${command} page synchronization retains staged attachment`, retained.id === id);
+  }
   check('reject staged filename traversal', await safeError(ui.evaluate("window.__TAURI__.core.invoke('attachment_begin',{name:'../../escape.txt',mime:'text/plain',size:0})")));
   const removed = await ui.evaluate("window.__TAURI__.core.invoke('attachment_begin',{name:'remove.txt',mime:'text/plain',size:0})");
   await ui.evaluate(`window.__TAURI__.core.invoke('attachment_remove',{id:${JSON.stringify(removed.id)}})`);
@@ -84,6 +93,9 @@ try {
   check('broker HEAD has length and no body', head.status === 200 && Number(head.len) === Buffer.from(png,'base64').length && head.body === 0, head.error ? 'fetch rejected' : `status ${head.status}`);
   const image = await ui.evaluate(`new Promise(resolve=>{const i=new Image();i.onload=()=>resolve(i.naturalWidth);i.onerror=()=>resolve(0);i.src=${JSON.stringify(media.src)}})`);
   check('broker image renders', image === 1);
+  const refreshed=await ui.evaluate("window.__TAURI__.core.invoke('media_load',{mediaId:'fixture-image',revision:2})");
+  const replaced=await ui.evaluate(`Promise.all([fetch(${JSON.stringify(media.src)}).then(r=>r.status),fetch(${JSON.stringify(refreshed.src)}).then(r=>r.status)])`);
+  check('new image revision replaces cached preview without retaining old URL',refreshed.src!==media.src&&replaced[0]===404&&replaced[1]===200);
   const first = await ui.evaluate("window.__TAURI__.core.invoke('media_save',{mediaId:'fixture-image'})");
   const second = await ui.evaluate("window.__TAURI__.core.invoke('media_save',{mediaId:'fixture-image'})");
   const dl = path.join(profile, 'Downloads');

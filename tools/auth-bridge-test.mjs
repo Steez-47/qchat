@@ -10,7 +10,10 @@ const response = (body, ok = true) => ({ ok, json: async () => body });
 function browser({ ready = false, focused = true, composer = 'legacy', hidden = false, prepareBeforeSend = false } = {}) {
   let now = 0, nextTimer = 0, sendClicks = 0;
   const timers = new Map(), requests = [], events = [], replies = [];
+  const navigations = [];
   const location = { hostname: 'chatgpt.com', href: 'https://chatgpt.com/', pathname: '/' };
+  const navigate = path => { navigations.push(path); location.pathname = path; location.href = `https://chatgpt.com${path}`; };
+  location.assign = navigate;
   const composerSelector = composer === 'semantic' ? 'form .ProseMirror[contenteditable="true"][role="textbox"]'
     : composer === 'unrelated' ? '[contenteditable="true"]' : '#prompt-textarea';
   const editable = { closest: () => null, getClientRects: () => hidden ? [] : [{}], focus() {} };
@@ -32,6 +35,7 @@ function browser({ ready = false, focused = true, composer = 'legacy', hidden = 
     const id = ++nextTimer; timers.set(id, { fn, at: now + delay, interval }); return id;
   };
   const window = {
+    dispatchEvent() {},
     __QCHAT_EMIT__: event => events.push(event),
     fetch: (url, options) => {
       requests.push({ url, options });
@@ -58,6 +62,7 @@ function browser({ ready = false, focused = true, composer = 'legacy', hidden = 
   };
   window.top = window;
   const context = vm.createContext({
+    history: { pushState: (_, __, path) => navigate(path) }, PopStateEvent: class {},
     window, document, location, URL, AbortController, console, TextDecoder,
     MutationObserver: class { observe() {} disconnect() {} },
     Date: class extends Date { static now() { return now; } },
@@ -66,7 +71,8 @@ function browser({ ready = false, focused = true, composer = 'legacy', hidden = 
   });
   vm.runInContext(source, context);
   return {
-    requests, events, document,
+    requests, events, document, navigations,
+    openConversation: id => window.__qchat.openConversation(id),
     reply(body, ok = true) { replies.push(async () => response(body, ok)); },
     fail() { replies.push(async () => { throw new Error('Offline'); }); },
     hang() { replies.push(() => new Promise(() => {})); },
@@ -196,6 +202,24 @@ test('prepare before Send enables does not start a turn or prevent the actual se
   assert.deepEqual(b.events.filter(event => event.type !== 'status').map(event => event.type), ['start', 'delta', 'delta', 'done']);
   assert.deepEqual(b.events.filter(event => event.type === 'delta').map(event => event.text), ['synthetic', 'synthetic answer']);
   assert.equal(b.events.at(-1).text, 'synthetic answer');
+});
+
+test('openConversation navigates to a validated route and emits ready status', async () => {
+  const b = browser({ ready: true }); b.reply({ user: {} }); await b.status();
+  const opening = b.openConversation('abcdefgh-123'); await drain(); await b.tick(2000); await opening;
+  assert.deepEqual(b.navigations, ['/c/abcdefgh-123']);
+  assert.equal(b.last().ready, true); assert.equal(b.last().url, 'https://chatgpt.com/c/abcdefgh-123');
+});
+test('openConversation rejects invalid ids without navigation', async () => {
+  const b = browser({ ready: true });
+  for (const id of ['short', '../abcdefgh', 'abcdefgh?redirect=evil', 'a'.repeat(81)]) {
+    await assert.rejects(b.openConversation(id), /invalid_id/);
+  }
+  assert.deepEqual(b.navigations, []);
+});
+test('openConversation on the same route only refreshes status', async () => {
+  const b = browser({ ready: true }); b.navigate('/c/abcdefgh'); b.reply({ user: {} }); await b.status();
+  await b.openConversation('abcdefgh'); assert.deepEqual(b.navigations, []); assert.equal(b.last().ready, true);
 });
 
 let failed = 0;

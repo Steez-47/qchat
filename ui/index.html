@@ -5,196 +5,58 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
   <title>QChat</title>
+  <script src="mock.js"></script>
+  <script src="settings-core.js"></script>
+  <link rel="stylesheet" href="glass.css">
   <link rel="stylesheet" href="app.css">
-  <script src="look.js"></script>
 </head>
 <body>
-  <div class="app" id="app">
-    <!-- Chat view (floating sheet + float-row + attachments + pill composer) -->
-    <div class="view chat-view" id="chat-view">
-      <div class="sheet glass chat-sheet" id="chat-sheet">
-        <!-- Slim header (44px, drag region) -->
-        <header class="titlebar" data-tauri-drag-region>
-          <div class="titlebar-lead" data-tauri-drag-region>
-            <span class="app-icon" aria-hidden="true" data-tauri-drag-region>Q</span>
-            <span class="titlebar-title" data-tauri-drag-region>QChat</span>
-            <span class="titlebar-status" id="status-label" data-state="connecting" role="status" data-tauri-drag-region>Connecting…</span>
-          </div>
-          <div class="caption-buttons">
-            <button type="button" class="caption-btn" id="btn-new-chat" title="New chat (Ctrl+N)" aria-label="New chat">
-              <span class="icon" aria-hidden="true">&#xE710;</span>
-            </button>
-            <button type="button" class="caption-btn" id="btn-settings" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="settings-page">
-              <span class="icon" aria-hidden="true">&#xE713;</span>
-            </button>
-            <button type="button" class="caption-btn caption-close" id="btn-hide" title="Hide (Esc)" aria-label="Close">
-              <span class="icon" aria-hidden="true">&#xE8BB;</span>
-            </button>
-          </div>
-        </header>
+  <div class="stage" id="stage">
+    <div class="stack" id="stack">
+      <section class="bubble-zone" id="bubble-zone" role="log" aria-live="polite" aria-relevant="additions" aria-label="ChatGPT response" hidden></section>
 
-        <main class="workspace">
-          <div class="empty-state" id="empty-state">
-            <span class="app-icon app-icon-large" aria-hidden="true">Q</span>
-            <h1 class="empty-title">How can I help?</h1>
-            <p class="empty-subtitle">Ask anything, drop files, or pick a prompt below.</p>
-          </div>
-
-          <div class="turns-list scroll" id="turns-list" role="log" aria-live="polite" aria-relevant="additions" hidden></div>
-
-          <button type="button" class="btn jump-latest glass" id="btn-jump-latest" title="Jump to latest" hidden>
-            <span class="icon" aria-hidden="true">&#xE74B;</span>Latest
-          </button>
-        </main>
+      <div class="notice glass glass-tiny" id="guest-notice" hidden>
+        <p class="notice-text"><strong id="guest-title">Guest mode</strong> <span id="guest-message">Sign in to use your models and history.</span></p>
+        <button type="button" class="btn btn-compact" id="btn-guest-signin">Sign in</button>
+        <button type="button" class="icon-btn" id="btn-guest-dismiss" title="Dismiss" aria-label="Dismiss notice"><span class="icon" aria-hidden="true">&#xE8BB;</span></button>
       </div>
 
-      <!-- Floating row above composer pill (visible in compact and expanded empty state) -->
-      <div class="float-row">
-        <div class="infobar-stack">
-          <div class="infobar glass" id="guest-notice" data-severity="informational" hidden>
-            <span class="infobar-icon" aria-hidden="true"><span class="icon ib-bg">&#xF136;</span><span class="icon ib-fg">&#xF13F;</span></span>
-            <p class="infobar-text"><strong class="infobar-title" id="guest-title">Guest mode</strong> <span id="guest-message">Sign in to use your models and history.</span></p>
-            <button type="button" class="btn btn-compact" id="btn-guest-signin">Sign in</button>
-            <button type="button" class="icon-btn infobar-close" id="btn-guest-dismiss" title="Close" aria-label="Close notice"><span class="icon" aria-hidden="true">&#xE8BB;</span></button>
-          </div>
-
-          <div class="infobar glass" id="global-error" data-severity="critical" role="alert" hidden>
-            <span class="infobar-icon" aria-hidden="true"><span class="icon ib-bg">&#xF136;</span><span class="icon ib-fg">&#xF13D;</span></span>
-            <p class="infobar-text" id="global-error-text"></p>
-            <button type="button" class="btn btn-compact" id="btn-error-signin" hidden>Sign in</button>
-            <button type="button" class="icon-btn infobar-close" id="btn-error-dismiss" title="Close" aria-label="Close notice"><span class="icon" aria-hidden="true">&#xE8BB;</span></button>
-          </div>
-        </div>
-
-        <div class="suggestions" aria-label="Suggestions">
-          <button type="button" class="btn suggestion glass" data-suggestion="Summarize this in three bullet points:&#10;&#10;"><span class="icon" aria-hidden="true">&#xE8A5;</span>Summarize text</button>
-          <button type="button" class="btn suggestion glass" data-suggestion="Explain what this code does:&#10;&#10;"><span class="icon" aria-hidden="true">&#xE943;</span>Explain code</button>
-          <button type="button" class="btn suggestion glass" data-suggestion="Draft a short, friendly email about "><span class="icon" aria-hidden="true">&#xE715;</span>Draft an email</button>
-        </div>
+      <div class="notice notice-error glass glass-tiny" id="global-error" role="alert" hidden>
+        <span class="icon icon-lead" aria-hidden="true">&#xE783;</span>
+        <p class="notice-text" id="global-error-text"></p>
+        <button type="button" class="btn btn-compact" id="btn-error-signin" hidden>Sign in</button>
+        <button type="button" class="icon-btn" id="btn-error-dismiss" title="Dismiss" aria-label="Dismiss error"><span class="icon" aria-hidden="true">&#xE8BB;</span></button>
       </div>
 
-      <div id="attachments" class="attachments" aria-live="polite" hidden></div>
+      <div class="notice glass glass-tiny" id="clear-confirm" role="alertdialog" aria-label="Clear recent chats" hidden>
+        <p class="notice-text">Clear recent chats from this PC?</p>
+        <button type="button" class="btn btn-compact btn-accent" id="btn-clear-yes">Clear</button>
+        <button type="button" class="btn btn-compact" id="btn-clear-no">Keep</button>
+      </div>
 
-      <footer class="composer glass">
+      <div class="suggestions" id="suggestions" aria-label="Suggestions" hidden>
+        <button type="button" class="suggestion glass glass-tiny" data-suggestion="Summarize this in three bullet points:&#10;&#10;"><span class="icon" aria-hidden="true">&#xE8A5;</span>Summarize</button>
+        <button type="button" class="suggestion glass glass-tiny" data-suggestion="Explain what this code does:&#10;&#10;"><span class="icon" aria-hidden="true">&#xE943;</span>Explain code</button>
+        <button type="button" class="suggestion glass glass-tiny" data-suggestion="Draft a short, friendly email about "><span class="icon" aria-hidden="true">&#xE715;</span>Draft an email</button>
+      </div>
+
+      <div class="slash-menu glass glass-tiny" id="slash-menu" role="listbox" aria-label="Commands" hidden></div>
+
+      <div class="attachments" id="attachments" aria-live="polite" hidden></div>
+
+      <nav class="tabs" id="tabs" aria-label="Recent chats" hidden></nav>
+
+      <footer class="bar glass" id="bar">
         <input id="attachment-input" type="file" multiple hidden>
-        <span class="app-icon composer-orb" aria-hidden="true" data-tauri-drag-region title="Drag QChat">Q</span>
-        <button type="button" class="icon-btn" id="btn-attach" aria-label="Attach files" title="Attach files"><span class="icon" aria-hidden="true">&#xE723;</span></button>
-        <div class="textbox" id="prompt-box">
-          <textarea id="prompt-input" rows="1" placeholder="Ask anything" aria-label="Message" spellcheck="true"></textarea>
+        <div class="orb" id="orb" data-tauri-drag-region title="Drag QChat">
+          <span class="status-dot" id="status-dot" data-state="connecting"></span>
         </div>
-        <button type="button" class="btn btn-accent btn-icon send-btn" id="btn-send" data-mode="send" title="Send (Enter) · Shift+Enter for a new line" aria-label="Send" disabled>
-          <span class="icon" aria-hidden="true">&#xE724;</span>
-        </button>
+        <span class="sr-only" id="status-label" role="status">Connecting…</span>
+        <textarea class="bar-input" id="prompt-input" rows="1" placeholder="Ask anything" aria-label="Message" spellcheck="true" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="slash-menu"></textarea>
+        <button type="button" class="bar-btn" id="btn-attach" aria-label="Attach files" title="Attach files"><span class="icon" aria-hidden="true">&#xE723;</span></button>
+        <button type="button" class="bar-btn send-btn" id="btn-send" data-mode="send" title="Send" aria-label="Send" disabled><span class="icon" aria-hidden="true">&#xE74A;</span></button>
       </footer>
     </div>
-
-    <!-- Settings page (floating glass sheet replacing chat sheet) -->
-    <section class="view sheet glass settings-page" id="settings-page" aria-labelledby="settings-title" hidden>
-      <div class="page-header" data-tauri-drag-region>
-        <button type="button" class="icon-btn back-btn" id="btn-close-settings" title="Back (Esc)" aria-label="Back">
-          <span class="icon" aria-hidden="true">&#xE72B;</span>
-        </button>
-        <h1 class="page-title" id="settings-title" data-tauri-drag-region>Settings</h1>
-      </div>
-
-      <div class="page-body scroll">
-        <h2 class="group-header">Account</h2>
-        <div class="settings-card expander" id="account-card">
-          <div class="card-header">
-            <span class="icon card-icon" aria-hidden="true">&#xE77B;</span>
-            <div class="card-text">
-              <span class="card-title">ChatGPT account</span>
-              <span class="card-desc" id="account-status" data-state="connecting">Connecting…</span>
-            </div>
-          </div>
-          <div class="card-content">
-            <div class="signin-actions">
-              <button type="button" class="btn btn-accent" id="btn-sheet-signin">Sign in</button>
-            </div>
-          </div>
-        </div>
-
-        <h2 class="group-header" id="appearance-heading">Appearance</h2>
-        <div class="settings-card expander" id="appearance-card">
-          <div class="card-header">
-            <span class="icon card-icon" aria-hidden="true">&#xE790;</span>
-            <div class="card-text">
-              <span class="card-title">Liquid glass look</span>
-              <span class="card-desc">Choose a surface tint and adjust glass frost</span>
-            </div>
-          </div>
-          <div class="card-content appearance-content">
-            <div class="look-grid" id="look-radiogroup" role="radiogroup" aria-labelledby="appearance-heading">
-              <button type="button" class="look-swatch" role="radio" aria-checked="true" data-look="aurora">
-                <span class="swatch-orb" data-swatch="aurora" aria-hidden="true"></span>
-                <span class="swatch-label">Aurora</span>
-              </button>
-              <button type="button" class="look-swatch" role="radio" aria-checked="false" tabindex="-1" data-look="frost">
-                <span class="swatch-orb" data-swatch="frost" aria-hidden="true"></span>
-                <span class="swatch-label">Frost</span>
-              </button>
-              <button type="button" class="look-swatch" role="radio" aria-checked="false" tabindex="-1" data-look="sunset">
-                <span class="swatch-orb" data-swatch="sunset" aria-hidden="true"></span>
-                <span class="swatch-label">Sunset</span>
-              </button>
-              <button type="button" class="look-swatch" role="radio" aria-checked="false" tabindex="-1" data-look="sakura">
-                <span class="swatch-orb" data-swatch="sakura" aria-hidden="true"></span>
-                <span class="swatch-label">Sakura</span>
-              </button>
-              <button type="button" class="look-swatch" role="radio" aria-checked="false" tabindex="-1" data-look="forest">
-                <span class="swatch-orb" data-swatch="forest" aria-hidden="true"></span>
-                <span class="swatch-label">Forest</span>
-              </button>
-              <button type="button" class="look-swatch" role="radio" aria-checked="false" tabindex="-1" data-look="graphite">
-                <span class="swatch-orb" data-swatch="graphite" aria-hidden="true"></span>
-                <span class="swatch-label">Graphite</span>
-              </button>
-              <button type="button" class="look-swatch" role="radio" aria-checked="false" tabindex="-1" data-look="system">
-                <span class="swatch-orb" data-swatch="system" aria-hidden="true"></span>
-                <span class="swatch-label">System</span>
-              </button>
-            </div>
-
-            <div class="glass-slider-row">
-              <div class="glass-slider-header">
-                <label class="glass-slider-label" for="glass-range">Glass transparency</label>
-                <span class="glass-slider-meta"><span id="glass-value">72%</span> · Clear ←→ Frosted</span>
-              </div>
-              <input type="range" class="glass-range" id="glass-range" min="35" max="100" step="1" value="72">
-            </div>
-          </div>
-        </div>
-
-        <h2 class="group-header">Keyboard</h2>
-        <div class="settings-card expander">
-          <div class="card-header">
-            <span class="icon card-icon" aria-hidden="true">&#xE765;</span>
-            <div class="card-text">
-              <span class="card-title">Keyboard shortcuts</span>
-              <span class="card-desc">Work without touching the mouse</span>
-            </div>
-          </div>
-          <dl class="card-content shortcut-list">
-            <div class="shortcut"><dt>Show or hide QChat</dt><dd><kbd>Alt</kbd><kbd>Q</kbd></dd></div>
-            <div class="shortcut"><dt>New chat</dt><dd><kbd>Ctrl</kbd><kbd>N</kbd></dd></div>
-            <div class="shortcut"><dt>Stop generating</dt><dd><kbd>Ctrl</kbd><kbd>.</kbd></dd></div>
-            <div class="shortcut"><dt>Hide, or close Settings</dt><dd><kbd>Esc</kbd></dd></div>
-            <div class="shortcut"><dt>New line in a message</dt><dd><kbd>Shift</kbd><kbd>Enter</kbd></dd></div>
-          </dl>
-        </div>
-
-        <h2 class="group-header">About</h2>
-        <div class="settings-card">
-          <div class="card-header">
-            <span class="icon card-icon" aria-hidden="true">&#xE946;</span>
-            <div class="card-text">
-              <span class="card-title">QChat</span>
-              <span class="card-desc">ChatGPT from anywhere, one shortcut away.</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
   </div>
 
   <script src="vendor/marked.min.js"></script>

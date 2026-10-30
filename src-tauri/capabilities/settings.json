@@ -1,0 +1,1 @@
+{"identifier": "settings", "windows": ["settings"], "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "core:event:allow-emit", "core:window:allow-start-dragging", "allow-close-settings", "allow-reset-position", "allow-set-window-prefs", "allow-get-theme", "allow-show-signin", "allow-open-external", "allow-quit-app", "allow-chat-status", "allow-hide-main"]}

@@ -7,7 +7,7 @@ fn main() {
             "chat_new",
             "chat_status",
             "hide_main",
-            "set_layout",
+            "fit_window", "open_settings", "close_settings", "reset_position", "set_window_prefs", "chat_open",
             "open_external",
             "show_signin",
             "quit_app",
@@ -18,6 +18,7 @@ fn main() {
             "attachment_remove",
             "media_load",
             "media_save",
+            "image_copy",
         ]),
     ))
     .expect("build manifest");

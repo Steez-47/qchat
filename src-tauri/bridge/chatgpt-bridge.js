@@ -5,7 +5,7 @@
     composer: ['#prompt-textarea', '#mobile-composer-prompt', 'textarea[name="prompt-textarea"]', '[contenteditable="true"][id*="prompt"]', 'form .ProseMirror[contenteditable="true"][role="textbox"]'],
     send: ['[data-testid="send-button"]', 'button[aria-label*="Send"]'],
     stop: ['[data-testid="stop-button"]', 'button[aria-label*="Stop"]'],
-    assistant: ['[data-message-author-role="assistant"]', '[data-message-role="assistant"]:not([data-conversation-recovery])', '[data-turn="assistant"]', '[data-dil-source-message-id][data-markdown-copy]'],
+    assistant: ['[data-message-author-role="assistant"]', '[data-message-role="assistant"]:not([data-conversation-recovery])', '[data-turn="assistant"]', '[data-dil-source-message-id][data-markdown-copy]', '[data-chatgpt-search-message-ids]'],
     body: ['[data-assistant-markdown-root]', '.markdown', '[data-message-content]', '[data-dil-message-id]'],
     fresh: ['[data-testid="create-new-chat-button"]', 'button[aria-label="New chat"]', 'a[href="/"]']
   };
@@ -83,7 +83,7 @@
       sampleDOM(job);
       // A terminal observer packet is not permission to truncate a site turn
       // that still visibly generates. Resume DOM observation until it settles.
-      if (!job.cancelled && find('stop')) {
+      if (!job.cancelled && (find('stop') || job.imageGenerating)) {
         job.finishing = false; job.stream = false; job.streamEnded = true; job.detached = true; disposeReader(job); return;
       }
       // DIL rendering can continue after the transport's terminal packet. Let
@@ -93,7 +93,7 @@
              job.assistantNode?.hasAttribute('data-dil-source-message-id') &&
              Date.now() - (job.stableAt ?? job.finishDOMAt) < 800) {
         await sleep(100); sampleDOM(job);
-        if (!job.cancelled && find('stop')) {
+        if (!job.cancelled && (find('stop') || job.imageGenerating)) {
           job.finishing = false; job.stream = false; job.streamEnded = true; job.detached = true; disposeReader(job); return;
         }
       }
@@ -102,9 +102,10 @@
     // Keep the final delta within the same 20 Hz limit before emitting done.
     await sleep(Math.max(0, 50 - (Date.now() - job.lastDelta)));
     if (active !== job || job.finished) return;
-    if (fallback && !job.cancelled && find('stop')) {
+    if (fallback && !job.cancelled && (find('stop') || job.imageGenerating)) {
       job.finishing = false; job.stream = false; job.streamEnded = true; job.detached = true; disposeReader(job); return;
     }
+    if (job.sawImageGeneration && /^(?:(?:Loading images?|Creating image|Generating image|Image created|Edit)(?:[.\u2026\s]|\d{1,3}\s*%)*)+$/i.test(job.text.trim())) job.text = '';
     delta(job, true); job.finished = true; cancelTimers(job); active = null;
     disposeReader(job);
     if (job.media?.size) emit({ type: 'media', id: job.id, items: [...job.media.values()], final: true });
@@ -144,10 +145,14 @@
     let entry = job.media.get(identity);
     if (!entry) {
       const label = String(name).replace(/(?:https?:|data:|blob:|sandbox:)\S+/gi, 'Attachment').slice(0, 200);
-      entry = { id: `qchat-media-${++mediaSerial}`, kind, name: label || 'Attachment', ...(typeof mime === 'string' ? { mime: mime.slice(0, 100) } : {}) };
+      entry = { id: `qchat-media-${++mediaSerial}`, kind, name: label || 'Attachment', revision: safe ? 1 : 0, pending: kind === 'image' && !safe, ...(typeof mime === 'string' ? { mime: mime.slice(0, 100) } : {}) };
       job.media.set(identity, entry); media.set(entry.id, { ...entry, url: safe, source: url, node, scope: job });
     } else {
-      const stored = media.get(entry.id); if (safe) stored.url = safe; if (node) stored.node = node;
+      const stored = media.get(entry.id);
+      if (safe && safe !== stored.url) { stored.url = safe; stored.source = url; entry.revision++; }
+      if (node) stored.node = node;
+      if (kind === 'image' && safe) { entry.kind = stored.kind = kind; entry.pending = false; }
+      if (mime) entry.mime = stored.mime = mime;
     }
     const items = [...job.media.values()];
     const signature = JSON.stringify(items);
@@ -194,7 +199,8 @@
   }
   function domMedia(job, body) {
     for (const node of body?.querySelectorAll('img,audio,video,source,a[href],[data-d-component="pressable"][role="link"][aria-label]') || []) {
-      if (node.closest('[data-testid*="avatar"], [class*="avatar"], [aria-hidden="true"]')) continue;
+      const generated = node.closest('[data-testid="generated-image-gallery"], [data-testid="generated-image-preview"]');
+      if (node.closest('[data-testid*="avatar"], [class*="avatar"], [hidden]') || (!generated && node.closest('[aria-hidden="true"]'))) continue;
       const tag = node.tagName?.toLowerCase();
       if (node.getAttribute('data-d-component') === 'pressable' && node.getAttribute('role') === 'link') {
         // Signed-in DIL downloads have no href. Register only the site's proven
@@ -214,10 +220,38 @@
       const kind = tag === 'img' ? 'image' : ['audio', 'video'].includes(tag) ? tag :
         tag === 'source' && ['audio', 'video'].includes(parentKind) ? parentKind : mediaKind(url, node.type);
       // A real anchor can resolve a sandbox reference discovered earlier.
-      const existing = name !== 'Attachment' && [...(job.media?.entries() || [])].find(([, item]) =>
-        media.get(item.id)?.node === node || (!media.get(item.id)?.url && (item.name === name || item.name === name.split('/').pop())));
+      const existing = [...(job.media?.entries() || [])].find(([, item]) =>
+        media.get(item.id)?.node === node || (safeURL(url) && media.get(item.id)?.url === safeURL(url)) ||
+        (!media.get(item.id)?.url && !media.get(item.id)?.node && ((kind === 'image' && item.kind === 'image') || (name !== 'Attachment' && (item.name === name || item.name === name.split('/').pop())))));
       registerMedia(job, { url, kind, name, mime: node.type || undefined, node, key: existing?.[0] });
     }
+  }
+  function imageProgress(job, roots) {
+    const nodes = roots.flatMap(root => [root, ...root.querySelectorAll('[role="progressbar"],progress,[aria-live],span,p')]);
+    const labels = nodes.filter(node => node.getClientRects?.().length && !node.closest('[hidden], [aria-hidden="true"]')).map(node => ({ node, text: (node.innerText || node.getAttribute?.('aria-label') || '').trim() }));
+    const status = labels.find(({text}) => text.length <= 90 && /^(?:Creating|Generating|Rendering|Finishing)(?: an?| your| the)? image(?:[.\u2026\s\d%:]|$)/i.test(text));
+    const generated = roots.flatMap(root => [...root.querySelectorAll('[data-testid="generated-image-preview"] img')]).filter(node => !node.hidden && node.complete !== false && node.naturalWidth > 0);
+    if (generated.length) {
+      const signature = generated.map(node => node.currentSrc || node.src).join('|');
+      if (signature !== job.imageSource) { job.imageSource = signature; job.imageStableAt = Date.now(); progress(job); }
+    }
+    if (!status && !generated.length && !job.sawImageGeneration) return;
+    job.sawImageGeneration = true;
+    const generating = !!status || !!find('stop') || !generated.length || Date.now() - (job.imageStableAt || Date.now()) < 800;
+    const bar = nodes.find(node => node.getAttribute?.('role') === 'progressbar' || node.tagName === 'PROGRESS');
+    const raw = bar?.getAttribute('aria-valuenow') ?? bar?.getAttribute('value') ?? /(?:^|\s)(\d{1,3})\s*%/.exec(status?.text || '')?.[1] ?? /^(\d{1,3})\s*%$/.exec(labels.find(({text})=>/^\d{1,3}\s*%$/.test(text))?.text || '')?.[1];
+    let percentage = raw == null ? null : Number(raw);
+    if (percentage != null && bar) {
+      const maximum = Number(bar.getAttribute('aria-valuemax') || bar.getAttribute('max') || 100);
+      const minimum = Number(bar.getAttribute('aria-valuemin') || 0);
+      percentage = maximum > minimum ? (percentage - minimum) / (maximum - minimum) * 100 : null;
+    }
+    if (!Number.isFinite(percentage)) percentage = null;
+    if (percentage != null) percentage = Math.max(0, Math.min(100, Math.round(percentage)));
+    job.imageGenerating = generating;
+    const event = { type: 'image_progress', id: job.id, state: generating ? 'generating' : 'complete', ...(generating && percentage != null ? { percentage } : {}) };
+    const signature = JSON.stringify(event);
+    if (signature !== job.imageProgressSignature) { job.imageProgressSignature = signature; progress(job); emit(event); }
   }
   function completedMarkdown(job, body, plain) {
     if (!body?.childNodes?.length) return plain;
@@ -277,10 +311,12 @@
   function sampleDOM(job) {
     if (active !== job || job.finished) return;
     const nodes = assistantNodes().filter(node => !job.previousAssistants.has(node));
+    for (const root of nodes) domMedia(job, root);
+    imageProgress(job, nodes);
     const node = nodes[nodes.length - 1];
     if (node) job.assistantNode = node;
     const body = node && (selectors.body.map(s => node.querySelector(s)).find(Boolean) || node);
-    const text = body?.innerText?.trim() || '';
+    const text = body?.querySelector('[data-testid="generated-image-gallery"]') ? completedMarkdown(job, body, '') : body?.innerText?.trim() || '';
     if (body) domMedia(job, body);
     if (text && text !== job.domText) {
       job.domText = text; job.stableAt = Date.now(); progress(job);
@@ -299,7 +335,7 @@
     if (find('stop')) job.sawStop = true;
     if (find('stop')) job.noStopAt = null;
     else job.noStopAt ||= Date.now();
-    if (!job.stream && (job.domText || job.media?.size) && !find('stop') &&
+    if ((!job.stream || (job.sawImageGeneration && !job.imageGenerating)) && (job.domText || job.media?.size) && !find('stop') && !job.imageGenerating &&
         (job.sawStop || job.streamEnded) && Date.now() - (job.stableAt || job.noStopAt) >= 800 &&
         Date.now() - job.noStopAt >= 800) finish(job);
   }
@@ -477,7 +513,7 @@
       const copy = wall.cloneNode(true);
       copy.querySelectorAll(excluded).forEach(n => n.remove());
       const text = copy.textContent || '';
-      if (/You've reached our limit|You’ve reached our limit|reached your.*limit/i.test(text)) return ['rate_limited', 'Guest chat limit reached.'];
+      if (/You've reached our limit|You\u2019ve reached our limit|reached your.*limit/i.test(text)) return ['rate_limited', 'Guest chat limit reached.'];
       const stay = [...wall.querySelectorAll('button')].find(b => /stay logged out/i.test(b.textContent));
       if (stay) { stay.click(); continue; }
       if (/log in|sign up/i.test(text) && !composer) return ['auth', 'Login dialog is blocking chat.'];
@@ -794,6 +830,19 @@
       try { find('stop')?.click(); } catch (_) {}
       finish(job, false);
       return job.settled;
+    },
+    async openConversation(id) {
+      if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(id)) throw new Error('invalid_id');
+      await window.__qchat.stop();
+      media.clear(); cancelledAttachments = null; downloadActivation = null;
+      await status();
+      if (!loginCache) return window.__qchat.newChat();
+      const path = '/c/' + id;
+      if (location.pathname === path) { await status(); return; }
+      history.pushState({}, '', path); window.dispatchEvent(new PopStateEvent('popstate'));
+      await sleep(1500);
+      if (location.pathname !== path || !find('composer')) { location.assign(path); return; }
+      await sleep(300); await status();
     },
     async newChat() {
       await window.__qchat.stop();

@@ -12,7 +12,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
-windows = { version = "0.62", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi", "UI_ViewManagement"] }
+windows = { version = "0.62", features = ["Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi", "UI_ViewManagement", "Win32_System_DataExchange", "Win32_System_Memory"] }
 webview2-com = "0.39"
 base64 = "0.23"
 uuid = { version = "1", features = ["v4"] }

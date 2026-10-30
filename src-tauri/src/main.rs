@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod clipboard;
 mod media;
 use media::{
     attachment_begin, attachment_chunk, attachment_finish, attachment_remove, media_load,
@@ -72,6 +73,12 @@ struct Activity {
     suspended: bool,
     logged_in: bool,
     signin_was_logged_in: bool,
+    anchor: Option<Anchor>,
+    remember_position: bool,
+    always_on_top: bool,
+    positioned: Instant,
+    save_due: Option<Instant>,
+    save_generation: u64,
 }
 fn should_auto_return(
     foreground: bool,
@@ -137,57 +144,110 @@ fn show(app: &tauri::AppHandle) {
     let Some(w) = app.get_webview_window("main") else {
         return;
     };
-    if let Ok(pos) = w.cursor_position() {
-        if let Ok(Some(m)) = w.monitor_from_point(pos.x, pos.y) {
-            let area = m.work_area();
-            let Ok(size) = w.outer_size() else {
-                return;
-            };
-            let lift = (area.size.height as f64 * 0.06) as i32;
-            let _ = w.set_position(tauri::PhysicalPosition::new(
-                area.position.x + (area.size.width as i32 - size.width as i32) / 2,
-                area.position.y + area.size.height as i32 - size.height as i32 - lift,
-            ));
-        }
-    }
+    place_main(app, &w);
     let _ = w.show();
     let _ = w.set_focus();
     let _ = w.emit("qchat://shown", ());
 }
-const PANEL_W: f64 = 680.0;
-const PANEL_COMPACT_H: f64 = 248.0;
-const PANEL_EXPANDED_H: f64 = 680.0;
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Anchor { cx: i32, bottom: i32 }
+#[derive(Clone, Copy)]
+struct Rect { x: i32, y: i32, w: i32, h: i32 }
+fn rect(m: &tauri::Monitor) -> Rect {
+    let a = m.work_area();
+    Rect { x: a.position.x, y: a.position.y, w: a.size.width as i32, h: a.size.height as i32 }
+}
+fn nearest_anchor(a: Anchor, areas: &[Rect]) -> Option<(Anchor, Rect)> {
+    areas.iter().map(|r| {
+        let c = Anchor { cx: a.cx.clamp(r.x, r.x+r.w), bottom: a.bottom.clamp(r.y, r.y+r.h) };
+        let dx = i64::from(c.cx)-i64::from(a.cx);
+        let dy = i64::from(c.bottom)-i64::from(a.bottom);
+        (dx*dx+dy*dy, c, *r)
+    }).min_by_key(|v| v.0).map(|(_,a,r)| (a,r))
+}
+fn fit_geometry(a: Anchor, r: Rect, width: f64, height: f64, scale: f64) -> (Anchor, i32, i32) {
+    let min = (120.0*scale).round() as i32;
+    let gap = (12.0*scale).round() as i32;
+    let w = ((width*scale).round() as i32).max(min).min((r.w-gap).max(1));
+    let bottom = a.bottom.clamp(r.y+min.min(r.h), r.y+r.h);
+    let h = ((height*scale).round() as i32).max(min).min((r.h-gap).max(1)).min(bottom-r.y);
+    let cx = a.cx.clamp(r.x+w/2, r.x+r.w-(w-w/2));
+    (Anchor { cx, bottom }, w, h)
+}
+fn position(w: &tauri::WebviewWindow, a: Anchor, width: i32, height: i32) {
+    w.app_handle().state::<Host>().0.lock().unwrap().positioned = Instant::now();
+    let _ = w.set_position(tauri::PhysicalPosition::new(a.cx-width/2, a.bottom-height));
+}
+fn cursor_monitor(w: &tauri::WebviewWindow) -> Option<tauri::Monitor> {
+    w.cursor_position().ok().and_then(|p| w.monitor_from_point(p.x,p.y).ok().flatten()).or_else(|| w.current_monitor().ok().flatten())
+}
+fn place_main(app: &tauri::AppHandle, w: &tauri::WebviewWindow) {
+    let Some(m) = cursor_monitor(w) else { return };
+    let r = rect(&m);
+    let saved = { let s=app.state::<Host>(); let a=s.0.lock().unwrap(); if a.remember_position { a.anchor } else { None } };
+    let areas: Vec<_> = w.available_monitors().unwrap_or_default().iter().map(rect).collect();
+    let (anchor,r) = saved.and_then(|a| nearest_anchor(a,&areas)).unwrap_or((Anchor { cx:r.x+r.w/2, bottom:r.y+r.h-(r.h as f64*0.06) as i32 },r));
+    if let Ok(size)=w.outer_size() {
+        let scale=w.scale_factor().unwrap_or(1.0);
+        let (anchor,width,height)=fit_geometry(anchor,r,size.width as f64/scale,size.height as f64/scale,scale);
+        let _=w.set_size(tauri::PhysicalSize::new(width as u32,height as u32));
+        app.state::<Host>().0.lock().unwrap().anchor=Some(anchor);
+        position(w,anchor,width,height);
+    }
+}
 #[tauri::command]
-fn set_layout(app: tauri::AppHandle, expanded: bool) {
-    let Some(w) = app.get_webview_window("main") else {
-        return;
-    };
-    let scale = w.scale_factor().unwrap_or(1.0);
-    let mut h = if expanded {
-        PANEL_EXPANDED_H
-    } else {
-        PANEL_COMPACT_H
-    };
-    if let Ok(Some(m)) = w.current_monitor() {
-        h = h
-            .min(m.work_area().size.height as f64 / scale - 24.0)
-            .max(PANEL_COMPACT_H);
+fn fit_window(app: tauri::AppHandle, width: f64, height: f64) {
+    if !width.is_finite() || !height.is_finite() { return }
+    let Some(w)=app.get_webview_window("main") else { return };
+    let (Ok(Some(m)),Ok(old),Ok(pos))=(w.current_monitor(),w.outer_size(),w.outer_position()) else { return };
+    let anchor=app.state::<Host>().0.lock().unwrap().anchor.unwrap_or(Anchor { cx:pos.x+old.width as i32/2,bottom:pos.y+old.height as i32 });
+    let (anchor,width,height)=fit_geometry(anchor,rect(&m),width,height,w.scale_factor().unwrap_or(1.0));
+    app.state::<Host>().0.lock().unwrap().anchor=Some(anchor);
+    if (width-old.width as i32).abs()<=1 && (height-old.height as i32).abs()<=1 { return }
+    let _=w.set_size(tauri::PhysicalSize::new(width as u32,height as u32));
+    position(&w,anchor,width,height);
+}
+fn capture_anchor(app: &tauri::AppHandle) {
+    if let Some(w)=app.get_webview_window("main") {
+        if let (Ok(p),Ok(s))=(w.outer_position(),w.outer_size()) {
+            let state=app.state::<Host>(); let mut a=state.0.lock().unwrap();
+            a.anchor=Some(Anchor { cx:p.x+s.width as i32/2,bottom:p.y+s.height as i32 });
+            a.save_generation=a.save_generation.wrapping_add(1);
+            a.save_due=Some(Instant::now()+Duration::from_millis(400));
+        }
     }
-    let (Ok(pos), Ok(old)) = (w.outer_position(), w.outer_size()) else {
-        return;
+}
+#[tauri::command]
+fn set_window_prefs(app: tauri::AppHandle, always_on_top: bool, remember_position: bool) {
+    { let s=app.state::<Host>(); let mut a=s.0.lock().unwrap(); a.always_on_top=always_on_top; a.remember_position=remember_position; }
+    if let Some(w)=app.get_webview_window("main") { let _=w.set_always_on_top(always_on_top); }
+}
+#[tauri::command]
+fn reset_position(app: tauri::AppHandle) {
+    { let s=app.state::<Host>(); let mut a=s.0.lock().unwrap(); a.anchor=None; a.save_due=None; a.save_generation=a.save_generation.wrapping_add(1); }
+    if let Ok(dir)=app.path().app_data_dir() { let _=std::fs::remove_file(dir.join("window-state.json")); }
+    if let Some(w)=app.get_webview_window("main") { place_main(&app,&w); }
+}
+#[tauri::command]
+fn open_settings(app: tauri::AppHandle) -> Result<(),String> {
+    if test_profile().is_some() { return Ok(()) }
+    let w=if let Some(w)=app.get_webview_window("settings") { w } else {
+        WebviewWindowBuilder::new(&app,"settings",WebviewUrl::App("settings.html".into())).title("QChat settings").inner_size(620.,720.).decorations(false).transparent(true).shadow(false).resizable(false).always_on_top(true).skip_taskbar(true).visible(false).build().map_err(|e|e.to_string())?
     };
-    let new_h = (h * scale).round() as i32;
-    if new_h == old.height as i32 {
-        return;
+    if let Some(main)=app.get_webview_window("main") {
+        let m=if main.is_visible().unwrap_or(false) { main.current_monitor().ok().flatten() } else { cursor_monitor(&main) };
+        if let (Some(m),Ok(s))=(m,w.outer_size()) { let r=rect(&m); let _=w.set_position(tauri::PhysicalPosition::new(r.x+(r.w-s.width as i32)/2,r.y+(r.h-s.height as i32)/2)); }
     }
-    let _ = w.set_size(tauri::LogicalSize::new(PANEL_W, h));
-    let _ = w.set_position(tauri::PhysicalPosition::new(
-        pos.x,
-        pos.y + old.height as i32 - new_h,
-    ));
+    w.show().map_err(|e|e.to_string())?; w.set_focus().map_err(|e|e.to_string())
+}
+#[tauri::command]
+fn close_settings(window: tauri::WebviewWindow) -> Result<(),String> {
+    if window.label()!="settings" { return Err("not_allowed".into()) }
+    window.destroy().map_err(|e|e.to_string())
 }
 #[tauri::command]
 fn hide_main(app: tauri::AppHandle) {
+    capture_anchor(&app);
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.hide();
     }
@@ -278,7 +338,9 @@ fn bridge_event(app: tauri::AppHandle, event: serde_json::Value) -> Result<(), S
             .is_some_and(|id| a.flight_id.as_deref() == Some(id))
         {
             match event["type"].as_str() {
-                Some("start" | "delta" | "media" | "progress") => a.last_progress = Instant::now(),
+                Some("start" | "delta" | "media" | "progress" | "image_progress") => {
+                    a.last_progress = Instant::now()
+                }
                 Some("done" | "error") => a.flight_id = None,
                 _ => (),
             }
@@ -307,8 +369,10 @@ fn bridge_event(app: tauri::AppHandle, event: serde_json::Value) -> Result<(), S
         background(&app);
         show(&app);
     }
-    app.emit_to("main", "bridge", event)
-        .map_err(|e| e.to_string())
+    for label in ["main", "settings"] {
+        if let Some(w)=app.get_webview_window(label) { let _=w.emit("bridge", &event); }
+    }
+    Ok(())
 }
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
@@ -376,10 +440,19 @@ fn chat_stop(app: tauri::AppHandle) -> Result<(), String> {
     eval(&app, "window.__qchat && window.__qchat.stop()")
 }
 #[tauri::command]
-fn chat_new(app: tauri::AppHandle) -> Result<(), String> {
-    media::clear_all(&app);
+fn chat_new(app: tauri::AppHandle, preserve_uploads: Option<bool>) -> Result<(), String> {
+    if preserve_uploads.unwrap_or(false) { media::clear_reply_media(&app); }
+    else { media::clear_all(&app); }
     app.state::<Host>().0.lock().unwrap().flight_id = None;
     eval(&app, "window.__qchat && window.__qchat.newChat()")
+}
+#[tauri::command]
+fn chat_open(app: tauri::AppHandle, conversation_id: String, preserve_uploads: Option<bool>) -> Result<(), String> {
+    if !(8..=80).contains(&conversation_id.len()) || !conversation_id.bytes().all(|c| c.is_ascii_alphanumeric() || c==b'_' || c==b'-') { return Err("invalid_id".into()) }
+    if preserve_uploads.unwrap_or(false) { media::clear_reply_media(&app); }
+    else { media::clear_all(&app); }
+    app.state::<Host>().0.lock().unwrap().flight_id=None;
+    eval(&app,&format!("window.__qchat && window.__qchat.openConversation({})",serde_json::to_string(&conversation_id).map_err(|e|e.to_string())?))
 }
 #[tauri::command]
 fn chat_status(app: tauri::AppHandle) -> Result<(), String> {
@@ -444,22 +517,43 @@ fn main() {
         builder
     };
     builder
- .manage(Host(Mutex::new(Activity{hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0,logged_in:false,signin_was_logged_in:false})))
+ .manage(Host(Mutex::new(Activity{hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0,logged_in:false,signin_was_logged_in:false,anchor:None,remember_position:true,always_on_top:true,positioned:Instant::now(),save_due:None,save_generation:0})))
 
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,_,event|{if event.state()==ShortcutState::Pressed{toggle(app);}}).build())
- .invoke_handler(tauri::generate_handler![bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,set_layout,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save])
+ .invoke_handler(tauri::generate_handler![bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy])
  .setup(|app|{
- {let b=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat").inner_size(PANEL_W,PANEL_COMPACT_H).min_inner_size(PANEL_W,PANEL_COMPACT_H).decorations(false).shadow(false).transparent(true).always_on_top(true).skip_taskbar(true).resizable(false).disable_drag_drop_handler().visible(false).build()?;
- {let b=WebviewWindowBuilder::new(app,"chatgpt",WebviewUrl::External("https://chatgpt.com/".parse()?)); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat – ChatGPT sign-in").inner_size(1000.,760.).skip_taskbar(true).decorations(false).visible(false)
+ if let Ok(dir)=app.path().app_data_dir() {
+   if let Ok(data)=std::fs::read(dir.join("window-state.json")) { app.state::<Host>().0.lock().unwrap().anchor=serde_json::from_slice(&data).ok(); }
+ }
+ let saver=app.handle().clone();
+ std::thread::spawn(move || loop {
+   std::thread::sleep(Duration::from_millis(100));
+   let state=saver.state::<Host>();
+   let mut a=state.0.lock().unwrap();
+   if a.save_due.is_some_and(|due| Instant::now()>=due) {
+     a.save_due=None;
+     if a.remember_position {
+       if let (Some(anchor),Ok(dir))=(a.anchor,saver.path().app_data_dir()) {
+         let _=std::fs::create_dir_all(&dir);
+         if let Ok(data)=serde_json::to_vec(&anchor) {
+           let tmp=dir.join("window-state.json.tmp");
+           if std::fs::write(&tmp,data).is_ok() { let _=std::fs::rename(tmp,dir.join("window-state.json")); }
+         }
+       }
+     }
+   }
+ });
+ {let b=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat").inner_size(480.,110.).min_inner_size(120.,60.).decorations(false).shadow(false).transparent(true).always_on_top(true).skip_taskbar(true).resizable(false).disable_drag_drop_handler().visible(false).build()?;
+ {let b=WebviewWindowBuilder::new(app,"chatgpt",WebviewUrl::External("https://chatgpt.com/".parse()?)); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat Ã¢â‚¬â€œ ChatGPT sign-in").inner_size(1000.,760.).skip_taskbar(true).decorations(false).visible(false)
  .initialization_script("if(location.hostname === 'chatgpt.com' || location.hostname.endsWith('.chatgpt.com')) window.__QCHAT_EMIT__ = (evt) => window.__TAURI_INTERNALS__.invoke('bridge_event', {event:evt});")
  .initialization_script(include_str!("../bridge/chatgpt-bridge.js"))
  .on_download(|webview,event|media::on_download(webview.app_handle(),event)).build()?;
  background(app.handle());
  if test_profile().is_none() { if let Err(e) = app.global_shortcut().register("Alt+Q") { eprintln!("Alt+Q unavailable: {e}"); } }
  use tauri::{menu::{Menu,MenuItem},tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState}};
- let items=[MenuItem::with_id(app,"show","Show QChat",true,None::<&str>)?,MenuItem::with_id(app,"new","New chat",true,None::<&str>)?,MenuItem::with_id(app,"signin","Sign in to ChatGPT…",true,None::<&str>)?,MenuItem::with_id(app,"quit","Quit",true,None::<&str>)?];
+ let items=[MenuItem::with_id(app,"show","Show QChat",true,None::<&str>)?,MenuItem::with_id(app,"new","New chat",true,None::<&str>)?,MenuItem::with_id(app,"settings","Settingsâ€¦",true,None::<&str>)?,MenuItem::with_id(app,"signin","Sign in to ChatGPTÃ¢â‚¬Â¦",true,None::<&str>)?,MenuItem::with_id(app,"quit","Quit",true,None::<&str>)?];
  let menu=Menu::with_items(app,&items.iter().map(|x|x as &dyn tauri::menu::IsMenuItem<_>).collect::<Vec<_>>())?;
- TrayIconBuilder::new().icon(app.default_window_icon().ok_or("Window icon unavailable")?.clone()).tooltip("QChat").menu(&menu).show_menu_on_left_click(false).on_tray_icon_event(|tray,e|{if matches!(e,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){toggle(tray.app_handle());}}).on_menu_event(|app,e|match e.id().as_ref(){"show"=>show(app),"new"=>{let _=app.emit_to("main","qchat://new-chat",());show(app)},"signin"=>show_signin(app.clone()),"quit"=>quit_app(app.clone()),_=>()}).build(app)?;
+ TrayIconBuilder::new().icon(app.default_window_icon().ok_or("Window icon unavailable")?.clone()).tooltip("QChat").menu(&menu).show_menu_on_left_click(false).on_tray_icon_event(|tray,e|{if matches!(e,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){toggle(tray.app_handle());}}).on_menu_event(|app,e|match e.id().as_ref(){"show"=>show(app),"new"=>{let _=app.emit_to("main","qchat://new-chat",());show(app)},"settings"=>{let _=open_settings(app.clone());},"signin"=>show_signin(app.clone()),"quit"=>quit_app(app.clone()),_=>()}).build(app)?;
  let handle=app.handle().clone();std::thread::spawn(move||loop{
  std::thread::sleep(Duration::from_secs(10));
  let hidden=handle.get_webview_window("main").and_then(|w| w.is_visible().ok()).map(|v| !v).unwrap_or(false);
@@ -508,12 +602,42 @@ fn main() {
  }
  });Ok(())
  })
- .on_window_event(|w,e|{if let tauri::WindowEvent::CloseRequested{api,..}=e{api.prevent_close();if w.label()=="main"{hide_main(w.app_handle().clone());}else{background(w.app_handle());let _=chat_status(w.app_handle().clone());}}})
+ .on_window_event(|w,e|{
+   if w.label()=="settings" {
+     if matches!(e,tauri::WindowEvent::Destroyed) { let _=w.app_handle().emit_to("main","qchat://settings-closed",()); }
+     return;
+   }
+   if w.label()=="main" && matches!(e,tauri::WindowEvent::Moved(_)) {
+     let own=w.app_handle().state::<Host>().0.lock().unwrap().positioned.elapsed()<Duration::from_millis(150);
+     if !own { capture_anchor(w.app_handle()); }
+   }
+   if let tauri::WindowEvent::CloseRequested{api,..}=e { api.prevent_close(); if w.label()=="main" { hide_main(w.app_handle().clone()); } else { background(w.app_handle()); let _=chat_status(w.app_handle().clone()); } }
+ })
  .run(tauri::generate_context!()).expect("QChat runtime failed");
 }
 #[cfg(test)]
 mod tests {
-    use super::{is_chat_url, should_auto_return};
+    use super::{is_chat_url, should_auto_return, Anchor, Rect, nearest_anchor, fit_geometry};
+    #[test]
+    fn anchor_uses_containing_or_nearest_work_area() {
+        let areas=[Rect{x:-1000,y:0,w:1000,h:800},Rect{x:0,y:0,w:1200,h:900}];
+        let a=Anchor{cx:-400,bottom:700};
+        assert_eq!(nearest_anchor(a,&areas).unwrap().0,a);
+        assert_eq!(nearest_anchor(Anchor{cx:1400,bottom:1000},&areas).unwrap().0,Anchor{cx:1200,bottom:900});
+        assert!(nearest_anchor(a,&[]).is_none());
+    }
+    #[test]
+    fn fit_preserves_bottom_and_center_and_stays_in_work_area() {
+        let r=Rect{x:100,y:50,w:1000,h:800};
+        let (a,w,h)=fit_geometry(Anchor{cx:600,bottom:750},r,480.,200.,1.);
+        assert_eq!((a,w,h),(Anchor{cx:600,bottom:750},480,200));
+        let (a,w,h)=fit_geometry(Anchor{cx:1050,bottom:400},r,2000.,2000.,1.);
+        assert_eq!(w,988); assert_eq!(h,350);
+        assert!(a.cx-w/2>=r.x && a.cx+(w-w/2)<=r.x+r.w);
+        assert_eq!(a.bottom-h,r.y);
+        let (_,w,h)=fit_geometry(Anchor{cx:600,bottom:800},r,1.,1.,2.);
+        assert_eq!((w,h),(240,240));
+    }
     #[test]
     fn auto_return_only_after_a_new_login_in_the_foreground() {
         assert!(should_auto_return(true, false, true, true, true));

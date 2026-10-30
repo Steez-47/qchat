@@ -1,4 +1,79 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#dc2626"/>
-  <text x="32" y="32" dy="0.35em" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="600" fill="#ffffff">Q</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <!-- Deep obsidian / carbon glass base -->
+    <linearGradient id="bw1-bg" x1="6" y1="4" x2="58" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1C1E22"/>
+      <stop offset="52%" stop-color="#101215"/>
+      <stop offset="100%" stop-color="#07080A"/>
+    </linearGradient>
+
+    <!-- Subtle internal silver-white ambient sheen -->
+    <radialGradient id="bw1-aura-top" cx="18" cy="14" r="38" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="55%" stop-color="#94A3B8" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#07080A" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="bw1-aura-bot" cx="50" cy="52" r="34" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#E2E8F0" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#07080A" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Specular top-left glass reflection -->
+    <linearGradient id="bw1-sheen" x1="8" y1="4" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="45%" stop-color="#FFFFFF" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Directional monochrome glass rim -->
+    <linearGradient id="bw1-rim" x1="4" y1="4" x2="60" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.62"/>
+      <stop offset="45%" stop-color="#CBD5E1" stop-opacity="0.28"/>
+      <stop offset="80%" stop-color="#64748B" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.10"/>
+    </linearGradient>
+
+    <!-- Sculptural Q ring gradient (pure white -> platinum -> slate silver) -->
+    <linearGradient id="bw1-ring" x1="14" y1="12" x2="48" y2="50" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="48%" stop-color="#F1F5F9"/>
+      <stop offset="82%" stop-color="#CBD5E1"/>
+      <stop offset="100%" stop-color="#94A3B8"/>
+    </linearGradient>
+
+    <!-- Luminous white tail capsule -->
+    <linearGradient id="bw1-tail" x1="33" y1="33" x2="49" y2="49" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="65%" stop-color="#F8FAFC"/>
+      <stop offset="100%" stop-color="#CBD5E1"/>
+    </linearGradient>
+
+    <filter id="bw1-glow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000000" flood-opacity="0.72"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="3.5" flood-color="#FFFFFF" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+
+  <!-- Squircle container -->
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#bw1-bg)"/>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#bw1-aura-top)"/>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#bw1-aura-bot)"/>
+
+  <!-- Top-left liquid glass highlight -->
+  <path d="M17 2.5H47C55.0081 2.5 61.5 8.99187 61.5 17V25C49 20 34 22 21 31C11 38 5 44 2.5 47V17C2.5 8.99187 8.99187 2.5 17 2.5Z" fill="url(#bw1-sheen)"/>
+
+  <!-- Frosted inner glass disc -->
+  <circle cx="30.5" cy="30.5" r="14.5" fill="#FFFFFF" fill-opacity="0.035" stroke="#FFFFFF" stroke-opacity="0.1" stroke-width="0.75"/>
+
+  <!-- Central Q Monogram + Chat Tail -->
+  <g filter="url(#bw1-glow)">
+    <path d="M41.8 36.2A14.5 14.5 0 1 1 43.2 23.8" stroke="url(#bw1-ring)" stroke-width="6.2" stroke-linecap="round"/>
+    <path d="M21.2 20.2A13.8 13.8 0 0 1 39.5 19.5" stroke="#FFFFFF" stroke-opacity="0.75" stroke-width="1.2" stroke-linecap="round"/>
+    <path d="M35.5 35.5L46.2 46.2" stroke="url(#bw1-tail)" stroke-width="6.4" stroke-linecap="round"/>
+    <circle cx="47.2" cy="30.2" r="2.4" fill="#FFFFFF"/>
+  </g>
+
+  <!-- Outer 1px directional glass rim -->
+  <rect x="2.5" y="2.5" width="59" height="59" rx="14.5" stroke="url(#bw1-rim)" stroke-width="1"/>
 </svg>

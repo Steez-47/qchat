@@ -1,3 +1,19 @@
+## Consolidated baseline (2026-10-31)
+
+All completed chat, media, bubble UI, settings and icon work is consolidated on local `main`; `feat/core-chat` and a pre-consolidation backup branch are retained. The GitHub repository has no branches; no push or publication is part of this local consolidation.
+
+Pre-merge review found that lazy conversation navigation removed staged draft attachments. Page synchronization now preserves uploads, while explicit New chat still clears them. Native regression checks cover both open and new synchronization paths. Verification: Rust tests 8/8, auth bridge 14/14, stream/media 49/49, media UI, glass UI, native media and real-app guest e2e all pass. Release executable rebuilt; saved-account tests were not run.
+
+## Current milestone: compact bubble UI (v2 redesign)
+
+User feedback on the glass sheet: too bulky, one rectangle, doesn't remember position. New design: bar-only compact pill; sent message = bubble rising above the bar; once streaming only the model response bubble is shown (grows); no background; `/settings` opens a separate settings window (many customisations: corner weight, opacity, motion, text, layout, behaviour); 3 recent-chat tabs with clock + time-since (left-most = most recent; click swaps). Window: content-fitted, bottom/centre anchored (`fit_window`), position persisted (`window-state.json`).
+
+| id | task | tier/model | owns | deps | status |
+|---|---|---|---|---|---|
+| M1 | Bubble UI, slash commands, tabs, settings window UI, tests | claudeAgent opus-5-5 high (user-requested) | ui/**, tools/media-ui-test.mjs, tools/glass-ui-test.mjs | contract | done |
+| M2 | Native: fit_window, position memory, settings window, chat_open, bridge openConversation | codex gpt-6.1-sol medium | src-tauri/**, tools/auth-bridge-test.mjs | contract | done |
+| M3 | Integrate: cargo build, app-e2e, release build, review | T0 | any | M1,M2 | done (dist/QChat-bubble.exe) |
+
 ## Current milestone: liquid-glass floating UI
 
 User asked for a liquid-glass, transparent, themed, floating chat box (not a corner block). Window: transparent, no Mica, no OS shadow, 680px wide, bottom-center, compact (248px, pill only) / expanded (680px) via `set_layout` + `html[data-layout]`. Themes via `html[data-look]` + `ui/look.js` (localStorage `qchat.look`).

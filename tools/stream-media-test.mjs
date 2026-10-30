@@ -71,7 +71,7 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
       if (selector === '#prompt-textarea') return [composer];
       if (selector === 'input[type="file"]') return inputs;
       if (selector === 'button[aria-label="Download file"]') return previewButtons.filter(node => node.getAttribute('aria-label') === 'Download file');
-      if (selector.startsWith('[data-message-author-role="assistant"]')) return assistants.filter(node => !node.dilOnly || selector.includes('[data-dil-source-message-id][data-markdown-copy]'));
+      if (selector.startsWith('[data-message-author-role="assistant"]')) return assistants.filter(node => (!node.dilOnly || selector.includes('[data-dil-source-message-id][data-markdown-copy]')) && (!node.searchOnly || selector.includes('[data-chatgpt-search-message-ids]')));
       return [];
     }
   };
@@ -117,6 +117,9 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
     dom(text = '', nodes = []) {
       const node = element('div', {}, text); node.querySelectorAll = () => nodes;
       assistants = [node]; return node;
+    },
+    gallery(text = '', nodes = []) {
+      const node = this.dom(text, nodes); node.searchOnly = true; return node;
     },
     dil(text = '', nodes = []) {
       const body = element('div', { 'data-dil-message-id': 'dil-reply' }, text); body.querySelectorAll = () => nodes;
@@ -567,6 +570,33 @@ test('attachmentInput prefers generic file input and never clicks a native picke
   assert.match(selector, /^input\[type="file"\]\[data-qchat-file-input="qchat-file-input-/);
   assert.ok(generic.getAttribute('data-qchat-file-input')); assert.equal(b.pickerClicks, 0);
   const menu = browser(); menu.openAttachments(); assert.match(await menu.api.attachmentInput(), /qchat-file-input/); assert.equal(menu.pickerClicks, 0);
+});
+
+test('generated image galleries outside markdown expose progress and retain decorative aria-hidden preview images', async () => {
+  const b = browser({data:sse(message(['Loading images...']), '[DONE]')}); b.stop(true); await b.send();
+  b.gallery('Creating image 37%', [element('span',{},'Creating image 37%')]); await b.tick(300);
+  assert.ok(b.events.some(e=>e.type==='image_progress'&&e.state==='generating'&&e.percentage===37));
+  assert.equal(terminal(b).length,0);
+  const image=element('img',{alt:'Generated image 1'}); image.src='blob:https://chatgpt.com/generated-final'; image.naturalWidth=1024;
+  image.closest=selector=>selector.includes('generated-image-gallery')?{}:selector==='[aria-hidden="true"]'?{}:null;
+  b.gallery('',[image]); b.stop(false); await b.tick(1500);
+  const media=b.events.filter(e=>e.type==='media').at(-1);
+  assert.equal(media.items.length,1);assert.equal(media.items[0].kind,'image');
+  assert.equal((await b.api.resolveMedia(media.items[0].id)).url,image.src);
+  assert.ok(b.events.some(e=>e.type==='image_progress'&&e.state==='complete'));
+  assert.equal(terminal(b).length,1);assert.equal(terminal(b)[0].type,'done');assert.equal(terminal(b)[0].text,'');
+});
+
+test('progressive image sources update one opaque card and increment its cache revision', async () => {
+  const b=browser({data:sse(message(['']), '[DONE]')}); b.stop(true); await b.send();
+  const image=element('img',{alt:'Generated image'}); image.src='blob:https://chatgpt.com/preview'; image.naturalWidth=256;
+  b.gallery('',[image]); await b.tick(200);
+  const first=b.events.filter(e=>e.type==='media').at(-1).items[0];
+  image.src='blob:https://chatgpt.com/full-resolution'; image.naturalWidth=1536; await b.tick(200);
+  const final=b.events.filter(e=>e.type==='media').at(-1).items;
+  assert.equal(final.length,1);assert.equal(final[0].id,first.id);assert.ok(final[0].revision>first.revision);
+  assert.doesNotMatch(JSON.stringify(b.events),/blob:https/);
+  b.stop(false); await b.tick(1200);
 });
 test('attachment-only Send waits for processing and a quiet upload window', async () => {
   const b = browser({ data: sse(message(['uploaded']), '[DONE]') });
