@@ -15,6 +15,11 @@ Edit these anytime. The orchestrator reads them at kickoff and before each miles
 
 ## Delegations
 
+- 2026-10-30 | H1 consented browser helper + secure receiver | codex/gpt-6.1-sol/medium | done | parent verified 19 synthetic runtime checks and 4 Rust tests
+- 2026-10-30 | H2 consent and import UI | native codex/gpt-6-luna/medium | done | parent checked narrow UI, async cancellation, disconnect, and consent
+- 2026-10-30 | H3 auth review | antigravity/gemini-4-argon/low | done | Claude quota exhausted; fixed resume/off-host reload and initial socket timeout; no secret leakage findings
+- 2026-10-30 | H3 integration | T0 codex/gpt-6.1-sol/xhigh | done | 19/19 synthetic sign-in, 4/4 Rust, extension checks and 7/7 guest chat pass; alternate release build preserves running app
+
 <!-- orchestrator: one line per delegation -->
 <!-- `- <YYYY-MM-DD HH:MM> | <task id> | <provider/model/effort> | <done/failed/escalated> | <note>` -->
 - 2026-10-30 19:20 | A shell | codex/gpt-6.1-sol/medium | running | Tauri shell, tray, hotkey, relay, suspend

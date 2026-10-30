@@ -10,6 +10,7 @@
     const listeners = new Map();
     let mockTimer = null;
     let mockLoggedIn = false;
+    let mockSigninId = 0;
 
     const emitMock = (event, payload) => {
       for (const cb of listeners.get(event) || []) {
@@ -107,6 +108,18 @@
               return null;
             case "show_signin":
               mockLoggedIn = true;
+              emitStatus(20);
+              return null;
+            case "begin_browser_signin": {
+              const id = `mock-${++mockSigninId}`;
+              setTimeout(() => emitMock("qchat://browser-signin", { id, state: "imported" }), 1500);
+              return { id, url: "https://chatgpt.com/", expiresAt: Date.now() + 120000 };
+            }
+            case "cancel_browser_signin":
+            case "open_browser_helper":
+              return null;
+            case "disconnect_chatgpt":
+              mockLoggedIn = false;
               emitStatus(20);
               return null;
             case "import_session_token": {
@@ -289,6 +302,16 @@
     accountCard: $("account-card"),
     accountStatus: $("account-status"),
     btnBrowserSignin: $("btn-browser-signin"),
+    browserConsent: $("browser-consent"),
+    browserConsentCheck: $("browser-consent-check"),
+    btnConsentContinue: $("btn-consent-continue"),
+    btnConsentCancel: $("btn-consent-cancel"),
+    browserImport: $("browser-import"),
+    browserWait: $("browser-wait"),
+    btnOpenHelper: $("btn-open-helper"),
+    btnBrowserCancel: $("btn-browser-cancel"),
+    btnManualSignin: $("btn-manual-signin"),
+    btnDisconnect: $("btn-disconnect"),
     btnSheetSignin: $("btn-sheet-signin"),
     signinSteps: $("signin-steps"),
     cookieInput: $("cookie-input"),
@@ -631,6 +654,7 @@
     else { state = "guest"; text = "Using ChatGPT as a guest"; }
     el.accountStatus.dataset.state = state;
     el.accountStatus.textContent = text;
+    el.btnDisconnect.hidden = false;
   }
 
   function showGlobalError(code, message) {
@@ -653,6 +677,12 @@
     const root = document.documentElement;
     const wasOpen = settingsOpen;
     settingsOpen = Boolean(open);
+    if (!settingsOpen && (signin.pending || signin.attemptId)) cancelBrowserSignin();
+    if (!settingsOpen && !el.browserConsent.hidden) {
+      el.browserConsent.hidden = true;
+      el.browserConsentCheck.checked = false;
+      el.btnConsentContinue.disabled = true;
+    }
     el.btnSettings.setAttribute("aria-expanded", String(settingsOpen));
     clearTimeout(settingsHideTimer);
 
@@ -684,8 +714,8 @@
 
   // Sign-in with the browser: open chatgpt.com, then import the session cookie.
   const SIGNIN_POLL_MS = 1500;
-  const SIGNIN_TIMEOUT_MS = 15000;
-  const signin = { pending: false, pollTimer: null, deadline: 0 };
+  const SIGNIN_TIMEOUT_MS = 30000;
+  const signin = { pending: false, pollTimer: null, deadline: 0, attemptId: null, generation: 0, cancelled: false, imported: false, browser: false };
 
   function showSigninResult(kind, title, message) {
     el.signinResult.dataset.severity = kind;
@@ -699,6 +729,9 @@
   function setSigninBusy(busy) {
     el.btnImportCookie.disabled = busy;
     el.cookieInput.disabled = busy;
+    el.btnBrowserSignin.disabled = busy;
+    el.btnSheetSignin.disabled = busy;
+    el.btnManualSignin.disabled = busy;
     el.connectProgress.hidden = !busy;
   }
 
@@ -706,17 +739,20 @@
     signin.pending = false;
     clearInterval(signin.pollTimer);
     signin.pollTimer = null;
+    signin.attemptId = null;
     setSigninBusy(false);
     if (ok) {
       el.signinSteps.hidden = true;
+      el.browserConsent.hidden = true;
+      el.browserImport.hidden = true;
       showSigninResult("success", "Signed in.", "QChat now uses your ChatGPT account.");
     } else {
       showSigninResult(
         "critical",
         "Couldn't confirm the sign-in.",
-        "Make sure you copied the whole value (both .0 and .1 if it's split), then try again."
+        signin.browser ? "The session transferred, but QChat couldn’t verify your account. Try again or use embedded sign-in." : "Make sure you copied the whole value (both .0 and .1 if it's split), then try again."
       );
-      el.cookieInput.focus();
+      if (!signin.browser) el.cookieInput.focus();
     }
   }
 
@@ -730,10 +766,15 @@
       return;
     }
 
+    const generation = ++signin.generation;
+    signin.pending = true;
+    signin.browser = false;
     setSigninBusy(true);
     try {
       await invoke("import_session_token", { cookie });
     } catch (err) {
+      if (generation !== signin.generation) return;
+      signin.pending = false;
       el.cookieInput.value = "";
       setSigninBusy(false);
       // Never echo the cookie back, even if the backend error contains it.
@@ -743,9 +784,11 @@
       return;
     }
     el.cookieInput.value = "";
+    if (generation !== signin.generation) return;
 
     // The ChatGPT page reloads with the new session; poll until it reports in.
     signin.pending = true;
+    signin.browser = false;
     signin.deadline = Date.now() + SIGNIN_TIMEOUT_MS;
     const poll = () => {
       if (!signin.pending) return;
@@ -757,10 +800,75 @@
   }
 
   function startBrowserSignin() {
-    invoke("open_external", { url: "https://chatgpt.com/" }).catch(() => {});
+    cancelBrowserSignin();
     el.signinResult.hidden = true;
-    el.signinSteps.hidden = false;
-    el.signinSteps.scrollIntoView({ block: "nearest" });
+    el.browserConsent.hidden = false;
+    el.browserConsentCheck.checked = false;
+    el.btnConsentContinue.disabled = true;
+    el.browserConsent.scrollIntoView({ block: "nearest" });
+  }
+
+  function stopBrowserSignin(message) {
+    signin.generation++;
+    signin.cancelled = true;
+    signin.pending = false;
+    signin.attemptId = null;
+    clearInterval(signin.pollTimer);
+    signin.pollTimer = null;
+    setSigninBusy(false);
+    if (message) showSigninResult("critical", "Browser sign-in stopped.", message);
+    el.browserImport.hidden = true;
+    el.browserConsent.hidden = true;
+    el.browserConsentCheck.checked = false;
+  }
+
+  function cancelBrowserSignin() {
+    const hadAttempt = signin.pending || signin.attemptId || !signin.cancelled;
+    stopBrowserSignin();
+    if (hadAttempt) invoke("cancel_browser_signin").catch(() => {});
+  }
+
+  async function beginBrowserSignin() {
+    if (!el.browserConsentCheck.checked || signin.pending) return;
+    const generation = ++signin.generation;
+    signin.cancelled = false;
+    el.browserConsent.hidden = true;
+    el.browserImport.hidden = false;
+    signin.pending = true;
+    signin.browser = true;
+    signin.imported = false;
+    setSigninBusy(true);
+    el.browserWait.textContent = "Starting secure browser transfer…";
+    el.signinResult.hidden = true;
+    try {
+      const attempt = await invoke("begin_browser_signin", { consent: true });
+      if (generation !== signin.generation || signin.cancelled) {
+        invoke("cancel_browser_signin").catch(() => {});
+        return;
+      }
+      if (!attempt || !attempt.id || !attempt.url || !Number.isFinite(attempt.expiresAt)) throw new Error("The browser transfer could not be started.");
+      signin.attemptId = String(attempt.id);
+      signin.deadline = attempt.expiresAt;
+      el.browserWait.textContent = "Waiting for the browser helper to transfer your session…";
+      const opened = await invoke("open_external", { url: attempt.url });
+      if (generation !== signin.generation || !signin.pending) return;
+      if (opened === false) throw new Error("QChat couldn’t open your browser. Try again or use the embedded sign-in.");
+      const tick = () => {
+        if (!signin.pending || generation !== signin.generation) return;
+        if (Date.now() >= signin.deadline) {
+          if (signin.imported) finishSignin(false);
+          else { cancelBrowserSignin(); showSigninResult("critical", "Transfer expired.", "Start again when you’re ready."); }
+          return;
+        }
+        if (signin.imported) invoke("chat_status").catch(() => {});
+      };
+      signin.pollTimer = setInterval(tick, SIGNIN_POLL_MS);
+    } catch (err) {
+      if (generation !== signin.generation) return;
+      const id = signin.attemptId;
+      stopBrowserSignin(String(err?.message || "Couldn’t open the browser transfer."));
+      if (id) invoke("cancel_browser_signin").catch(() => {});
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -868,6 +976,27 @@
   });
 
   el.btnBrowserSignin.addEventListener("click", startBrowserSignin);
+  el.browserConsentCheck.addEventListener("change", () => { el.btnConsentContinue.disabled = !el.browserConsentCheck.checked; });
+  el.btnConsentContinue.addEventListener("click", beginBrowserSignin);
+  el.btnConsentCancel.addEventListener("click", () => { el.browserConsent.hidden = true; el.browserConsentCheck.checked = false; });
+  el.btnBrowserCancel.addEventListener("click", cancelBrowserSignin);
+  el.btnOpenHelper.addEventListener("click", () => invoke("open_browser_helper").catch((err) => {
+    el.browserWait.textContent = String(err?.message || "Couldn’t open the helper folder.");
+  }));
+  el.btnManualSignin.addEventListener("click", () => {
+    el.signinSteps.hidden = !el.signinSteps.hidden;
+    if (!el.signinSteps.hidden) el.signinSteps.scrollIntoView({ block: "nearest" });
+  });
+  el.btnDisconnect.addEventListener("click", async () => {
+    cancelBrowserSignin();
+    try {
+      await invoke("disconnect_chatgpt");
+      updateStatusHeader({ ready: true, loggedIn: false });
+      el.signinResult.hidden = true;
+    } catch (err) {
+      showSigninResult("critical", "Couldn’t disconnect.", String(err?.message || "QChat couldn’t clear its saved session."));
+    }
+  });
   el.btnSheetSignin.addEventListener("click", () => invoke("show_signin").catch(() => {}));
   el.btnImportCookie.addEventListener("click", handleImportCookie);
   el.cookieInput.addEventListener("keydown", (e) => {
@@ -881,7 +1010,8 @@
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      if (settingsOpen) setSettingsOpen(false);
+      if (!el.browserConsent.hidden || !el.browserImport.hidden) cancelBrowserSignin();
+      else if (settingsOpen) setSettingsOpen(false);
       else invoke("hide_main").catch(() => {});
     } else if ((e.ctrlKey || e.metaKey) && e.key === ".") {
       e.preventDefault();
@@ -897,7 +1027,7 @@
     switch (evt.type) {
       case "status":
         updateStatusHeader({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
-        if (signin.pending && evt.ready && evt.loggedIn) finishSignin(true);
+        if (signin.pending && (!signin.browser || signin.imported) && evt.ready && evt.loggedIn) finishSignin(true);
         break;
       case "start": {
         const turn = turns.find((t) => t.id === evt.id);
@@ -942,6 +1072,23 @@
         }
         break;
       }
+    }
+  });
+
+  listen("qchat://browser-signin", ({ payload: evt } = {}) => {
+    if (!evt || !signin.pending || String(evt.id) !== signin.attemptId) return;
+    if (evt.state === "imported") {
+      signin.imported = true;
+      signin.deadline = Date.now() + SIGNIN_TIMEOUT_MS;
+      el.browserWait.textContent = "Session transferred. Checking your ChatGPT account…";
+      invoke("chat_status").catch(() => {});
+      if (!signin.pollTimer) signin.pollTimer = setInterval(() => {
+        if (!signin.pending) return;
+        if (Date.now() >= signin.deadline) { stopBrowserSignin("The session transferred, but QChat couldn’t confirm sign-in. Try again."); return; }
+        invoke("chat_status").catch(() => {});
+      }, SIGNIN_POLL_MS);
+    } else if (["error", "expired", "cancelled"].includes(evt.state)) {
+      stopBrowserSignin(evt.state === "expired" ? "The transfer expired. Start again when you’re ready." : evt.state === "cancelled" ? "The transfer was cancelled." : String(evt.message || "The browser transfer failed."));
     }
   });
 

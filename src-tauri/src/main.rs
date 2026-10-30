@@ -1,4 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod browser_signin;
+use browser_signin::{
+    begin_browser_signin, cancel_browser_signin, disconnect_chatgpt, open_browser_helper,
+};
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
@@ -14,8 +18,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::{
     core::{Interface, HSTRING},
-    UI::ViewManagement::{UIColorType, UISettings},
     Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
+    UI::ViewManagement::{UIColorType, UISettings},
 };
 #[tauri::command]
 fn get_theme() -> serde_json::Value {
@@ -108,6 +112,9 @@ fn eval(app: &tauri::AppHandle, js: &str) -> Result<(), String> {
     chat_page(app)?.eval(js).map_err(|e| e.to_string())
 }
 fn show(app: &tauri::AppHandle) {
+    if test_profile().is_some() {
+        return;
+    }
     resume(app);
     let Some(w) = app.get_webview_window("main") else {
         return;
@@ -147,6 +154,9 @@ fn toggle(app: &tauri::AppHandle) {
     }
 }
 fn background(app: &tauri::AppHandle) {
+    if test_profile().is_some() {
+        return;
+    }
     let Some(w) = app.get_webview_window("chatgpt") else {
         return;
     };
@@ -167,6 +177,9 @@ fn background(app: &tauri::AppHandle) {
 }
 #[tauri::command]
 fn show_signin(app: tauri::AppHandle) {
+    if test_profile().is_some() {
+        return;
+    }
     resume(&app);
     let Some(w) = app.get_webview_window("chatgpt") else {
         return;
@@ -248,6 +261,9 @@ fn chat_status(app: tauri::AppHandle) -> Result<(), String> {
 }
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
+    if test_profile().is_some() {
+        return Ok(());
+    }
     let parsed = tauri::Url::parse(&url).map_err(|e| e.to_string())?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err("Only http and https URLs are allowed".into());
@@ -338,6 +354,17 @@ async fn import_session_token(app: tauri::AppHandle, cookie: String) -> Result<(
         .await
         .map_err(|e| e.to_string())?
 }
+fn test_profile() -> Option<std::path::PathBuf> {
+    if cfg!(debug_assertions) && std::env::var("QCHAT_TEST_MODE").as_deref() == Ok("1") {
+        let p = std::path::PathBuf::from(
+            std::env::var_os("QCHAT_TEST_PROFILE").expect("Test profile required"),
+        );
+        assert!(p.is_absolute(), "Absolute test profile required");
+        Some(p)
+    } else {
+        None
+    }
+}
 fn main() {
     #[cfg(debug_assertions)]
     if let Ok(port) = std::env::var("QCHAT_DEBUG_PORT") {
@@ -348,18 +375,24 @@ fn main() {
             );
         }
     }
-    tauri::Builder::default()
+    let builder = tauri::Builder::default().manage(browser_signin::Receiver::default());
+    let builder = if test_profile().is_none() {
+        builder.plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
+    } else {
+        builder
+    };
+    builder
  .manage(Host(Mutex::new(Activity{hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0})))
- .plugin(tauri_plugin_single_instance::init(|app,_,_|show(app)))
+
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,_,event|{if event.state()==ShortcutState::Pressed{toggle(app);}}).build())
- .invoke_handler(tauri::generate_handler![bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,open_external,show_signin,import_session_token,get_theme])
+ .invoke_handler(tauri::generate_handler![begin_browser_signin,cancel_browser_signin,open_browser_helper,disconnect_chatgpt,bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,open_external,show_signin,import_session_token,get_theme])
  .setup(|app|{
- WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())).title("QChat").inner_size(420.,620.).min_inner_size(340.,420.).decorations(false).shadow(true).transparent(true).effects(EffectsBuilder::new().effect(Effect::Mica).build()).always_on_top(true).skip_taskbar(true).resizable(true).visible(false).build()?;
- WebviewWindowBuilder::new(app,"chatgpt",WebviewUrl::External("https://chatgpt.com/".parse()?)).title("QChat – ChatGPT sign-in").inner_size(1000.,760.).skip_taskbar(true).decorations(false).visible(false)
+ {let b=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat").inner_size(420.,620.).min_inner_size(340.,420.).decorations(false).shadow(true).transparent(true).effects(EffectsBuilder::new().effect(Effect::Mica).build()).always_on_top(true).skip_taskbar(true).resizable(true).visible(false).build()?;
+ {let b=WebviewWindowBuilder::new(app,"chatgpt",WebviewUrl::External("https://chatgpt.com/".parse()?)); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat – ChatGPT sign-in").inner_size(1000.,760.).skip_taskbar(true).decorations(false).visible(false)
  .initialization_script("if(location.hostname === 'chatgpt.com' || location.hostname.endsWith('.chatgpt.com')) window.__QCHAT_EMIT__ = (evt) => window.__TAURI_INTERNALS__.invoke('bridge_event', {event:evt});")
  .initialization_script(include_str!("../bridge/chatgpt-bridge.js")).build()?;
  background(app.handle());
- if let Err(e) = app.global_shortcut().register("Alt+Q") { eprintln!("Alt+Q unavailable: {e}"); }
+ if test_profile().is_none() { if let Err(e) = app.global_shortcut().register("Alt+Q") { eprintln!("Alt+Q unavailable: {e}"); } }
  use tauri::{menu::{Menu,MenuItem},tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState}};
  let items=[MenuItem::with_id(app,"show","Show QChat",true,None::<&str>)?,MenuItem::with_id(app,"new","New chat",true,None::<&str>)?,MenuItem::with_id(app,"signin","Sign in to ChatGPT…",true,None::<&str>)?,MenuItem::with_id(app,"quit","Quit",true,None::<&str>)?];
  let menu=Menu::with_items(app,&items.iter().map(|x|x as &dyn tauri::menu::IsMenuItem<_>).collect::<Vec<_>>())?;

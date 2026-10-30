@@ -1,7 +1,9 @@
 // End-to-end check of the real QChat app, driven over WebView2 CDP. No windows are shown.
 // Usage: node tools/app-e2e.mjs   (needs `cargo build` first; uses the debug exe)
-import { spawn, execSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -22,7 +24,9 @@ function cdp(wsUrl) {
   return { ready, evaluate, close: () => ws.close() };
 }
 
-const app = spawn(exe, [], { env: { ...process.env, QCHAT_DEBUG_PORT: String(port) }, stdio: 'ignore' });
+const profile = mkdtempSync(path.join(tmpdir(), 'qchat-e2e-'));
+const app = spawn(exe, [], { env: { ...process.env, QCHAT_DEBUG_PORT: String(port), QCHAT_TEST_MODE: '1', QCHAT_TEST_PROFILE: profile }, stdio: 'ignore' });
+let ui;
 let failed = 0;
 const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${info ? ' :: ' + info : ''}`); if (!ok) failed++; };
 
@@ -33,7 +37,7 @@ try {
     if (list.some(p => p.url.includes('chatgpt.com')) && list.some(p => p.url.includes('tauri.localhost'))) break;
     await sleep(500);
   }
-  const ui = cdp(list.find(p => p.url.includes('tauri.localhost')).webSocketDebuggerUrl); await ui.ready;
+  ui = cdp(list.find(p => p.url.includes('tauri.localhost')).webSocketDebuggerUrl); await ui.ready;
 
   let status = '';
   for (let i = 0; i < 80 && !/Ready|Guest/.test(status); i++) { status = await ui.evaluate(`document.getElementById('status-label').textContent`); await sleep(500); }
@@ -67,12 +71,15 @@ try {
   check('new chat + markdown', /<li>/.test(html) && /code-block/.test(html) && !/\[object Object\]/.test(r.txt), `${r.ms}ms`);
   r = await ask('Count from 1 to 200, separated by spaces.', { stopAfterFirst: true });
   check('stop mid-stream', !r.timeout && r.txt.trim().length > 0 && !/\b200\b/.test(r.txt), `${r.txt.length} chars`);
-  ui.close();
 } catch (e) {
   check('harness', false, e.stack);
 } finally {
-  app.kill();
-  try { execSync('taskkill /IM qchat.exe /F', { stdio: 'ignore' }); } catch {}
+  ui?.close();
+  if (app.pid && app.exitCode === null) spawnSync('taskkill.exe', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  const resolved = path.resolve(profile);
+  if (path.dirname(resolved) === path.resolve(tmpdir()) && path.basename(resolved).startsWith('qchat-e2e-')) {
+    try { rmSync(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }
 }
 console.log(failed ? `${failed} FAILED` : 'ALL PASS');
 process.exit(failed ? 1 : 0);

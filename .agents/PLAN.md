@@ -1,5 +1,23 @@
 # QChat plan
 
+## Current milestone: consent-based browser session import
+
+The user authorized importing their own ChatGPT session after an explicit trust warning. Use an optional Edge/Chrome extension and the browser's cookies API, scoped to chatgpt.com. Do not decrypt browser cookie databases. Transfer only session cookies directly to QChat on a temporary, authenticated loopback connection. Keep the existing embedded sign-in and manual import fallbacks.
+
+| id | task | tier/model | owns | deps | status |
+|---|---|---|---|---|---|
+| H1 | Temporary authenticated import receiver, extension, cookie validation, isolated debug profiles | T2 codex/gpt-6.1-sol medium | src-tauri/** except bridge/, browser-helper/**, tools/browser-helper-test.mjs | none | done |
+| H2 | Consent, setup instructions, cancel/expiry/error states in existing native account UI | T4 codex/gpt-6-luna medium | ui/app.js, ui/index.html, ui/app.css | shared IPC contract | done |
+| H3 | Integrate, focused runtime/security checks, full build, cross-family review, local commit | T0 + review | tools/app-e2e.mjs, tools/signin-e2e.mjs, README.md, .agents/** | H1,H2 | done |
+
+IPC contract: begin_browser_signin { consent: true } -> { id, url, expiresAt } (Unix milliseconds); cancel_browser_signin; open_browser_helper; disconnect_chatgpt. begin returns without opening a browser; UI calls existing open_external only after consent. Event qchat://browser-signin: { id, state: "imported" | "error" | "expired" | "cancelled", message?: string }. Ignore events for other attempt ids. Imported means cookies installed, not verified account authentication; confirm with bridge ready + loggedIn. No tokens in IPC events, logs, screenshots, or test output. Disconnect deletes only QChat's saved browser session and cancels pending import.
+
+Testing must preserve the currently running release app. Debug-only QCHAT_TEST_MODE=1 + QCHAT_TEST_PROFILE=<temporary absolute path> isolates WebView data, disables single-instance forwarding and hotkeys, and never displays a window. Harnesses terminate only their own process tree. Do not import the user's real browser cookie during unattended checks.
+
+Verification: 19 runtime sign-in checks pass with synthetic cookies, including consent, bridge ACL, Origin/Host/secret checks, cancellation during an incomplete request, replay rejection, cookie attributes/expiry, and removal. Rust 4/4 tests and synthetic extension checks pass; guest chat 7/7 passes. Gemini cross-family review found missing resume/off-host navigation and preconnect delay; both fixed. Its user-gesture concern does not reproduce in code: permissions.request is called synchronously before the first await. Popup closure retains optional permissions until browser revocation, documented in README. Actual installed-extension permission prompt, live authenticated import, and Mica behind the native window remain interactive checks.
+
+Release built successfully with four compiler jobs at `src-tauri/target/session-import/release/qchat.exe`, using a separate target directory because the old release is still running. User must quit the old tray app before launching the new binary (same app identifier). Current release process was preserved throughout. Helper assets are embedded and extracted by Open helper folder, so the exe does not need a separate extension-resource directory.
+
 ## Goal
 A tiny always-resident Windows popup (hotkey Alt+Q) for chatting with ChatGPT models through the user's own chatgpt.com session (cookie-based sign-in). Distinct look, minimal resources. Later: Windows-native hooks (prompt from any text box / selection).
 

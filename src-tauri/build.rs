@@ -11,6 +11,10 @@ fn main() {
             "show_signin",
             "import_session_token",
             "get_theme",
+            "begin_browser_signin",
+            "cancel_browser_signin",
+            "open_browser_helper",
+            "disconnect_chatgpt",
         ]),
     ))
     .expect("build manifest");

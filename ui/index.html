@@ -100,7 +100,24 @@
                 <span class="icon" aria-hidden="true">&#xE774;</span>Sign in with your browser
               </button>
               <button type="button" class="hyperlink-btn" id="btn-sheet-signin">Sign in inside QChat instead</button>
+              <button type="button" class="hyperlink-btn" id="btn-disconnect">Remove QChat’s saved session</button>
             </div>
+
+            <section class="consent-panel" id="browser-consent" aria-labelledby="browser-consent-title" hidden>
+              <h3 id="browser-consent-title">Import your ChatGPT session</h3>
+              <p>QChat’s browser helper will copy your ChatGPT sign-in cookie into this app. Anyone with this cookie could access your account, so continue only if you trust this copy of QChat.</p>
+              <p>Saved locally and used to connect to ChatGPT. You can remove QChat’s copy below. The Edge/Chrome helper needs a one-time installation.</p>
+              <label class="consent-check"><input type="checkbox" id="browser-consent-check"> <span>I trust QChat and want to import my ChatGPT session</span></label>
+              <div class="consent-actions"><button type="button" class="btn btn-accent" id="btn-consent-continue" disabled>Continue</button><button type="button" class="btn" id="btn-consent-cancel">Cancel</button></div>
+            </section>
+
+            <section class="browser-import" id="browser-import" aria-live="polite" hidden>
+              <div class="browser-wait" id="browser-wait" role="status">Waiting for the browser helper…</div>
+              <ol class="browser-helper-steps"><li>Open the helper folder and choose <strong>Load unpacked</strong> in Edge or Chrome’s extensions page with Developer mode on.</li><li>Return to this connection tab and click the helper toolbar icon to confirm transfer.</li></ol>
+              <div class="consent-actions"><button type="button" class="btn" id="btn-open-helper">Open helper folder</button><button type="button" class="btn" id="btn-browser-cancel">Cancel</button></div>
+            </section>
+
+            <div class="signin-actions manual-action"><button type="button" class="hyperlink-btn" id="btn-manual-signin">Advanced: paste a session cookie</button></div>
 
             <ol class="signin-steps" id="signin-steps" hidden>
               <li class="step">

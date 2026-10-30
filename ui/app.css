@@ -826,6 +826,24 @@ html.settings-open .settings-page { opacity: 1; transform: none; }
   gap: 4px;
 }
 
+.consent-panel, .browser-import {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--divider-stroke);
+  border-radius: 4px;
+  background: var(--control-fill);
+  font: 400 12px/16px var(--font-small);
+}
+.consent-panel h3 { margin: 0 0 7px; font: 600 13px/18px var(--font-text); }
+.consent-panel p { margin: 0 0 7px; color: var(--text-secondary); }
+.consent-check { display: flex; align-items: flex-start; gap: 7px; margin: 10px 0; color: var(--text-primary); }
+.consent-check input { flex: none; margin: 2px 0 0; }
+.consent-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 9px; }
+.browser-wait { color: var(--text-primary); }
+.browser-helper-steps { margin: 9px 0 0; padding-left: 18px; color: var(--text-secondary); }
+.browser-helper-steps li + li { margin-top: 5px; }
+.manual-action { margin-top: 4px; }
+
 .signin-steps {
   list-style: none;
   margin: 12px 0 0;
@@ -864,6 +882,10 @@ html.settings-open .settings-page { opacity: 1; transform: none; }
 }
 
 #signin-result { margin-top: 12px; }
+
+@media (max-width: 380px) {
+  .card-content { padding-left: 16px; }
+}
 
 kbd {
   display: inline-block;
