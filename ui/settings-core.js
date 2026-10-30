@@ -81,7 +81,7 @@
 
     cornerWeight: range(85, 0, 100, 1, "%"),
     glassOpacity: range(72, 20, 100, 1, "%"),
-    nativeBlur: bool(true),
+    nativeBlur: bool(false),
     blur: range(18, 0, 40, 1, "px"),
     rim: range(60, 0, 100, 1, "%"),
     sheen: range(50, 0, 100, 1, "%"),

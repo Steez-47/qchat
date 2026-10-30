@@ -282,6 +282,19 @@ struct Msg {
     private: u32,
 }
 #[repr(C)]
+struct WndClass {
+    style: u32,
+    proc: Option<unsafe extern "system" fn(isize, u32, usize, isize) -> isize>,
+    cls_extra: i32,
+    wnd_extra: i32,
+    instance: isize,
+    icon: isize,
+    cursor: isize,
+    background: isize,
+    menu: *const u16,
+    class: *const u16,
+}
+#[repr(C)]
 struct Accent {
     state: i32,
     flags: i32,
@@ -296,6 +309,8 @@ struct Composition {
 }
 #[link(name = "user32")]
 extern "system" {
+    fn RegisterClassW(c: *const WndClass) -> u16;
+    fn DefWindowProcW(h: isize, m: u32, w: usize, l: isize) -> isize;
     fn GetWindow(h: isize, command: u32) -> isize;
     fn GetWindowLongPtrW(h: isize, index: i32) -> isize;
     fn IsWindow(h: isize) -> i32;
@@ -327,10 +342,10 @@ extern "system" {
         -> i32;
     fn ShowWindow(h: isize, cmd: i32) -> i32;
     fn SetWindowRgn(h: isize, r: isize, redraw: i32) -> i32;
-    fn SetLayeredWindowAttributes(h: isize, key: u32, alpha: u8, flags: u32) -> i32;
 }
 #[link(name = "gdi32")]
 extern "system" {
+    fn GetStockObject(i: i32) -> isize;
     fn CreateRectRgn(a: i32, b: i32, c: i32, d: i32) -> isize;
     fn CreateRoundRectRgn(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32) -> isize;
     fn CombineRgn(a: isize, b: isize, c: isize, mode: i32) -> i32;
@@ -376,9 +391,23 @@ pub fn start(app: &tauri::AppHandle) {
         };
         let Ok(hwnd) = w.hwnd() else { return };
         let main = hwnd.0 as isize;
+        let class = wide("QChatGlass");
+        let wc = WndClass {
+            style: 0,
+            proc: Some(DefWindowProcW),
+            cls_extra: 0,
+            wnd_extra: 0,
+            instance: GetModuleHandleW(std::ptr::null()),
+            icon: 0,
+            cursor: 0,
+            background: GetStockObject(4), // BLACK_BRUSH
+            menu: std::ptr::null(),
+            class: class.as_ptr(),
+        };
+        RegisterClassW(&wc);
         let glass = CreateWindowExW(
-            0x8 | 0x80 | 0x08000000 | 0x20 | 0x80000,
-            wide("STATIC").as_ptr(),
+            0x8 | 0x80 | 0x08000000 | 0x20,
+            class.as_ptr(),
             wide("").as_ptr(),
             0x80000000,
             0,
@@ -393,7 +422,6 @@ pub fn start(app: &tauri::AppHandle) {
         if glass == 0 {
             return;
         }
-        SetLayeredWindowAttributes(glass, 0, 255, 2);
         let proc = GetProcAddress(
             GetModuleHandleW(wide("user32.dll").as_ptr()),
             b"SetWindowCompositionAttribute\0".as_ptr(),
@@ -438,7 +466,7 @@ pub fn start(app: &tauri::AppHandle) {
                 moving = false;
             }
             // Hide before changing geometry; region and position are committed in this tick.
-            if bounds_changed || *rects != cached_rects || scale != oldscale {
+            if bounds_changed && moving {
                 if IsWindowVisible(glass) != 0 {
                     ShowWindow(glass, 0);
                 }
@@ -458,7 +486,7 @@ pub fn start(app: &tauri::AppHandle) {
                     CombineRgn(region, region, part, 2);
                     DeleteObject(part);
                 }
-                if SetWindowRgn(glass, region, 0) == 0 {
+                if SetWindowRgn(glass, region, 1) == 0 {
                     DeleteObject(region);
                 }
                 cached_rects = (*rects).clone();

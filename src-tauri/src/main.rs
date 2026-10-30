@@ -138,7 +138,7 @@ fn eval(app: &tauri::AppHandle, js: &str) -> Result<(), String> {
     chat_page(app)?.eval(js).map_err(|e| e.to_string())
 }
 fn show(app: &tauri::AppHandle) {
-    if test_profile().is_some() {
+    if test_profile().is_some() && std::env::var("QCHAT_TEST_SHOW_MAIN").as_deref() != Ok("1") {
         return;
     }
     resume(app);
@@ -203,7 +203,14 @@ fn fit_window(app: tauri::AppHandle, width: f64, height: f64) {
     if !width.is_finite() || !height.is_finite() { return }
     let Some(w)=app.get_webview_window("main") else { return };
     let (Ok(Some(m)),Ok(old),Ok(pos))=(w.current_monitor(),w.outer_size(),w.outer_position()) else { return };
-    let anchor=app.state::<Host>().0.lock().unwrap().anchor.unwrap_or(Anchor { cx:pos.x+old.width as i32/2,bottom:pos.y+old.height as i32 });
+    let saved=app.state::<Host>().0.lock().unwrap().anchor;
+    // Sizing before the first show must not turn the hidden window's default position into its home.
+    if saved.is_none() && !w.is_visible().unwrap_or(false) {
+        let (_,width,height)=fit_geometry(Anchor { cx:pos.x+old.width as i32/2,bottom:pos.y+old.height as i32 },rect(&m),width,height,w.scale_factor().unwrap_or(1.0));
+        let _=w.set_size(tauri::PhysicalSize::new(width as u32,height as u32));
+        return;
+    }
+    let anchor=saved.unwrap_or(Anchor { cx:pos.x+old.width as i32/2,bottom:pos.y+old.height as i32 });
     let (anchor,width,height)=fit_geometry(anchor,rect(&m),width,height,w.scale_factor().unwrap_or(1.0));
     app.state::<Host>().0.lock().unwrap().anchor=Some(anchor);
     if (width-old.width as i32).abs()<=1 && (height-old.height as i32).abs()<=1 { return }
@@ -566,16 +573,17 @@ fn main() {
    }
  });
  {let b=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat").inner_size(480.,110.).min_inner_size(120.,60.).decorations(false).shadow(false).transparent(true).always_on_top(true).skip_taskbar(true).resizable(false).disable_drag_drop_handler().visible(false).build()?;
- {let b=WebviewWindowBuilder::new(app,"chatgpt",WebviewUrl::External("https://chatgpt.com/".parse()?)); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat Ã¢â‚¬â€œ ChatGPT sign-in").inner_size(1000.,760.).skip_taskbar(true).decorations(false).visible(false)
+ {let b=WebviewWindowBuilder::new(app,"chatgpt",WebviewUrl::External("https://chatgpt.com/".parse()?)); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat - ChatGPT sign-in").inner_size(1000.,760.).skip_taskbar(true).decorations(false).visible(false)
  .initialization_script("if(location.hostname === 'chatgpt.com' || location.hostname.endsWith('.chatgpt.com')) window.__QCHAT_EMIT__ = (evt) => window.__TAURI_INTERNALS__.invoke('bridge_event', {event:evt});")
  .initialization_script(include_str!("../bridge/chatgpt-bridge.js"))
  .on_download(|webview,event|media::on_download(webview.app_handle(),event)).build()?;
  background(app.handle());
  surfaces::start(app.handle());
  use tauri::{menu::{Menu,MenuItem},tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState}};
- let items=[MenuItem::with_id(app,"show","Show QChat",true,None::<&str>)?,MenuItem::with_id(app,"new","New chat",true,None::<&str>)?,MenuItem::with_id(app,"settings","Settingsâ€¦",true,None::<&str>)?,MenuItem::with_id(app,"signin","Sign in to ChatGPTÃ¢â‚¬Â¦",true,None::<&str>)?,MenuItem::with_id(app,"quit","Quit",true,None::<&str>)?];
+ let items=[MenuItem::with_id(app,"show","Show QChat",true,None::<&str>)?,MenuItem::with_id(app,"new","New chat",true,None::<&str>)?,MenuItem::with_id(app,"settings","Settings\u{2026}",true,None::<&str>)?,MenuItem::with_id(app,"signin","Sign in to ChatGPT\u{2026}",true,None::<&str>)?,MenuItem::with_id(app,"quit","Quit",true,None::<&str>)?];
  let menu=Menu::with_items(app,&items.iter().map(|x|x as &dyn tauri::menu::IsMenuItem<_>).collect::<Vec<_>>())?;
  TrayIconBuilder::new().icon(app.default_window_icon().ok_or("Window icon unavailable")?.clone()).tooltip("QChat").menu(&menu).show_menu_on_left_click(false).on_tray_icon_event(|tray,e|{if matches!(e,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){toggle(tray.app_handle());}}).on_menu_event(|app,e|match e.id().as_ref(){"show"=>show(app),"new"=>{let _=app.emit_to("main","qchat://new-chat",());show(app)},"settings"=>{let app=app.clone();tauri::async_runtime::spawn(async move {if let Err(e)=open_settings(app).await {eprintln!("Open settings: {e}");}});},"signin"=>show_signin(app.clone()),"quit"=>quit_app(app.clone()),_=>()}).build(app)?;
+ if test_profile().is_some() { show(app.handle()); }
  let handle=app.handle().clone();std::thread::spawn(move||loop{
  std::thread::sleep(Duration::from_secs(10));
  let hidden=handle.get_webview_window("main").and_then(|w| w.is_visible().ok()).map(|v| !v).unwrap_or(false);
