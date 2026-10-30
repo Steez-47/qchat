@@ -109,6 +109,13 @@
     window.marked.setOptions({ gfm: true, breaks: true, renderer });
   }
 
+  // QMath swaps formulas for private-use tokens before Markdown sees them, so
+  // emphasis and lists cannot touch the TeX. Put the inert spans back after.
+  function expandMath(html, formulas) {
+    if (!formulas?.length) return html;
+    return html.replace(/\uE000(\d+)\uE001/g, (token, index) => formulas[Number(index)]?.html ?? "");
+  }
+
   function renderMarkdownSafe(markdownText, sources = []) {
     const citation = refs => refs.split(/[,;\s]+/).map(ref => {
       const source = sources.find(item => item.id === ref);
@@ -118,7 +125,9 @@
       .replace(/<Cite\b[^>]*\bref=["']([^"']+)["'][^>]*\/?\s*>(?:<\/Cite>)?/gi, (_, refs) => citation(refs))
       .replace(/\uE200cite\uE202([^\uE201]*)\uE201/g, (_, refs) => citation(refs.replace(/\uE202/g, " ")));
     if (!src) return "";
-    return window.marked ? window.marked.parse(src) : `<p>${escapeHtml(src)}</p>`;
+    const prepared = window.QMath?.prepare(src);
+    const html = window.marked ? window.marked.parse(prepared ? prepared.text : src) : `<p>${escapeHtml(src)}</p>`;
+    return prepared ? expandMath(html, prepared.formulas) : html;
   }
 
   // Parse through the same safe renderer, but keep unchanged blocks and update
@@ -134,6 +143,12 @@
       const current = parent.childNodes[i];
       if (!current) { parent.append(incoming); continue; }
       if (current.isEqualNode(incoming)) continue;
+      // Rendered maths is filled in after sync; keep the node and its output
+      // instead of parsing over it on every stream frame.
+      if (current.nodeType === Node.ELEMENT_NODE && incoming.nodeType === Node.ELEMENT_NODE &&
+          current.hasAttribute("data-qmath") && incoming.hasAttribute("data-qmath") &&
+          current.getAttribute("aria-label") === incoming.getAttribute("aria-label") &&
+          current.getAttribute("data-display") === incoming.getAttribute("data-display")) continue;
       if (current.nodeType !== incoming.nodeType || current.nodeName !== incoming.nodeName) {
         current.replaceWith(incoming);
       } else if (current.nodeType === Node.TEXT_NODE) {
@@ -423,6 +438,7 @@
       else template.innerHTML = renderMarkdownSafe(item.text, item.sources);
       highlightCode(template.content);
       syncMarkdownNodes(content, template.content);
+      window.QMath?.renderInto(content);
       const media = row.querySelector(".turn-media");
       if (item.hasMedia && !media.childElementCount) {
         const view = make("button", "hyperlink-btn", "View attachments in ChatGPT");
@@ -1472,6 +1488,7 @@
       template.innerHTML = renderMarkdownSafe(visibleText, turn.sources);
       highlightCode(template.content);
       syncMarkdownNodes(entry.contentEl, template.content);
+      window.QMath?.renderInto(entry.contentEl);
       entry.renderedText = visibleText;
     }
     if (turn.status === "error") {
