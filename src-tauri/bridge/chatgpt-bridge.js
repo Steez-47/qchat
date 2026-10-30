@@ -1096,7 +1096,24 @@
       if (location.pathname !== path || !find('composer')) { location.assign(path); return; }
       await sleep(300); await status();
     },
-    async newChat() {
+    async listModels(chooseId) {
+      let switcher, opened = false;
+      try {
+        switcher = document.querySelector('[data-testid*="model-switcher"]') || Array.from(document.querySelectorAll('header [aria-haspopup], main [aria-haspopup], form [aria-haspopup]')).find(node => /model|chatgpt|gpt/i.test((node.textContent || '') + (node.getAttribute('aria-label') || '')));
+        if (!switcher) { emit({ type: 'models', models: [], error: 'unavailable' }); return; }
+        switcher.click(); opened = true; await sleep(150);
+        const nodes = Array.from(document.querySelectorAll('[role="menuitem"],[role="menuitemradio"],[role="option"]'));
+        const models = nodes.map((node, i) => ({ id: String(i), label: node.textContent.trim(), selected: node.getAttribute('aria-checked') === 'true' }));
+        if (chooseId !== undefined) {
+          const index = models.findIndex(model => model.id === chooseId);
+          if (index >= 0) { nodes[index].click(); emit({ type: 'model-chosen', model: models[index] }); }
+        } else emit({ type: 'models', models });
+      } catch (_) { emit({ type: 'models', models: [], error: 'unavailable' }); }
+      finally { if (opened) (document.activeElement || switcher).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true })); }
+    },
+    async chooseModel(id) { return window.__qchat.listModels(id); },
+    async newChat(options = {}) {
+      if (options.temporary) { await window.__qchat.stop(); media.clear(); location.assign('https://chatgpt.com/?temporary-chat=true'); return; }
       await window.__qchat.stop();
       media.clear(); cancelledAttachments = null; downloadActivation = null;
       const button = find('fresh');

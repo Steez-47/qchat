@@ -5,3 +5,4 @@ dist/
 .bridge-profile/
 *.log
 .tmp/
+src-tauri/target-*/

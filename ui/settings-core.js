@@ -440,6 +440,7 @@
 
     for (const [name, value] of Object.entries(css)) root.style.setProperty(name, value);
     root.style.colorScheme = p.dark ? "dark" : "light";
+    root.dataset.mode = p.dark ? "dark" : "light";
 
     const data = root.dataset;
     data.motion = motionOn ? "on" : "off";

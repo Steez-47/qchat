@@ -36,3 +36,7 @@ The runtime harnesses use an isolated profile, terminate only their own process 
 An optional `node tools/live-media-smoke.mjs --run-with-saved-profile` checks the saved account with synthetic emoji prompts, text/image uploads and a generated CSV download. Quit all QChat instances first. This test sends messages to your account and preserves the saved profile.
 
 `node tools/image-live-e2e.mjs --run-with-saved-profile` generates a test image, verifies its preview/progress and native copying, then uploads it to check the sent-image preview. It writes test screenshots under `dist/qa` and copies the test image to the clipboard. Quit QChat first.
+
+Chat tools: click the orb or press Ctrl+K for commands. Ctrl+P opens searchable recent chats; up to 50 chats are kept locally, with full transcripts for the newest eight. Tabs show three recent chats. ArrowUp in an empty composer recalls session prompts; ArrowDown moves forward. Finished replies offer Copy, Retry and Open in ChatGPT. Fenced code is highlighted locally. /model reads the ChatGPT model menu; /temp starts a temporary chat. /keys lists shortcuts. Model selectors still need verification against a signed-in ChatGPT page.
+
+Feature checks: `node tools/feature-ui-test.mjs`.

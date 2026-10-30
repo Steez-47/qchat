@@ -52,9 +52,9 @@
 
       <nav class="tabs" id="tabs" aria-label="Recent chats" hidden></nav>
 
-      <footer class="bar glass" id="bar" data-tauri-drag-region>
+      <footer class="bar glass" id="bar">
         <input id="attachment-input" type="file" multiple hidden>
-        <div class="orb" id="orb" data-tauri-drag-region title="Drag QChat">
+        <div class="orb" id="orb" role="button" tabindex="0" aria-label="QChat menu" title="QChat menu">
           <span class="status-dot" id="status-dot" data-state="connecting"></span>
         </div>
         <span class="sr-only" id="status-label" role="status">Connecting…</span>
@@ -66,6 +66,7 @@
   </div>
 
   <script src="vendor/marked.min.js"></script>
+  <script src="highlight.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

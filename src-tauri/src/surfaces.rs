@@ -1,4 +1,4 @@
-use std::{sync::Mutex, time::Duration};
+use std::sync::Mutex;
 use tauri::Manager;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -19,6 +19,16 @@ impl Surface {
         let cx = x.clamp(self.x + r, self.x + self.w - r);
         let cy = y.clamp(self.y + r, self.y + self.h - r);
         (x - cx).powi(2) + (y - cy).powi(2) <= r * r
+    }
+    fn physical_inset(&self, scale: f64) -> Option<Self> {
+        let r = self.inset()?;
+        Some(Self {
+            x: r.x * scale,
+            y: r.y * scale,
+            w: r.w * scale,
+            h: r.h * scale,
+            r: r.r.min(r.w / 2.).min(r.h / 2.) * scale,
+        })
     }
     fn inset(&self) -> Option<Self> {
         if self.w <= 3. || self.h <= 3. {
@@ -66,6 +76,9 @@ pub struct DebugState {
     rect_count: usize,
     ignoring: bool,
     glass_is_below_main: bool,
+    composition_error: Option<String>,
+    composition_scale: f64,
+    composition_revision: u64,
 }
 // No state mutation or native window operations are exposed by this test hook.
 #[tauri::command]
@@ -294,19 +307,6 @@ struct WndClass {
     menu: *const u16,
     class: *const u16,
 }
-#[repr(C)]
-struct Accent {
-    state: i32,
-    flags: i32,
-    color: u32,
-    animation: i32,
-}
-#[repr(C)]
-struct Composition {
-    attribute: i32,
-    data: *mut Accent,
-    size: usize,
-}
 #[link(name = "user32")]
 extern "system" {
     fn RegisterClassW(c: *const WndClass) -> u16;
@@ -341,20 +341,17 @@ extern "system" {
     fn SetWindowPos(h: isize, after: isize, x: i32, y: i32, w: i32, height: i32, flags: u32)
         -> i32;
     fn ShowWindow(h: isize, cmd: i32) -> i32;
-    fn SetWindowRgn(h: isize, r: isize, redraw: i32) -> i32;
-}
-#[link(name = "gdi32")]
-extern "system" {
-    fn GetStockObject(i: i32) -> isize;
-    fn CreateRectRgn(a: i32, b: i32, c: i32, d: i32) -> isize;
-    fn CreateRoundRectRgn(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32) -> isize;
-    fn CombineRgn(a: isize, b: isize, c: isize, mode: i32) -> i32;
-    fn DeleteObject(h: isize) -> i32;
+    fn MsgWaitForMultipleObjectsEx(
+        count: u32,
+        handles: *const isize,
+        ms: u32,
+        mask: u32,
+        flags: u32,
+    ) -> u32;
 }
 #[link(name = "kernel32")]
 extern "system" {
     fn GetModuleHandleW(s: *const u16) -> isize;
-    fn GetProcAddress(h: isize, s: *const u8) -> *const ();
 }
 #[link(name = "advapi32")]
 extern "system" {
@@ -370,6 +367,78 @@ extern "system" {
         d: *mut u8,
         l: *mut u32,
     ) -> i32;
+}
+// All WinRT objects live on the companion thread and are released there.
+struct GlassComposition {
+    compositor: windows::UI::Composition::Compositor,
+    target: windows::UI::Composition::Desktop::DesktopWindowTarget,
+    _queue: windows::System::DispatcherQueueController,
+}
+impl GlassComposition {
+    unsafe fn new(hwnd: isize) -> windows::core::Result<Self> {
+        use windows::{
+            core::Interface,
+            Win32::{
+                Foundation::HWND,
+                Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_HOSTBACKDROPBRUSH},
+                System::WinRT::{
+                    Composition::ICompositorDesktopInterop, CreateDispatcherQueueController,
+                    DispatcherQueueOptions, DQTAT_COM_STA, DQTYPE_THREAD_CURRENT,
+                },
+            },
+        };
+        let queue = CreateDispatcherQueueController(DispatcherQueueOptions {
+            dwSize: std::mem::size_of::<DispatcherQueueOptions>() as u32,
+            threadType: DQTYPE_THREAD_CURRENT,
+            apartmentType: DQTAT_COM_STA,
+        })?;
+        let enabled = 1i32;
+        DwmSetWindowAttribute(
+            HWND(hwnd as _),
+            DWMWA_USE_HOSTBACKDROPBRUSH,
+            &enabled as *const _ as _,
+            4,
+        )?;
+        let compositor = windows::UI::Composition::Compositor::new()?;
+        let interop: ICompositorDesktopInterop = compositor.cast()?;
+        let target = interop.CreateDesktopWindowTarget(HWND(hwnd as _), false)?;
+        Ok(Self {
+            compositor,
+            target,
+            _queue: queue,
+        })
+    }
+    fn update(&self, rects: &[Surface], scale: f64) -> windows::core::Result<()> {
+        let c = &self.compositor;
+        // Construct a detached tree, then replace the root once. No intermediate
+        // empty/partially rebuilt tree can be presented while a reply streams.
+        let root = c.CreateContainerVisual()?;
+        let children = root.Children()?;
+        let brush = c.CreateHostBackdropBrush()?;
+        for r in rects.iter().filter_map(|r| r.physical_inset(scale)) {
+            let sprite = c.CreateSpriteVisual()?;
+            let mut size = sprite.Size()?;
+            size.X = r.w as f32;
+            size.Y = r.h as f32;
+            sprite.SetSize(size)?;
+            let mut offset = sprite.Offset()?;
+            offset.X = r.x as f32;
+            offset.Y = r.y as f32;
+            sprite.SetOffset(offset)?;
+            let geometry = c.CreateRoundedRectangleGeometry()?;
+            geometry.SetSize(size)?;
+            let mut radius = geometry.CornerRadius()?;
+            radius.X = r.r as f32;
+            radius.Y = radius.X;
+            geometry.SetCornerRadius(radius)?;
+            sprite.SetClip(&c.CreateGeometricClipWithGeometry(&geometry)?)?;
+            sprite.SetBrush(&brush)?;
+            children.InsertAtTop(&sprite)?;
+        }
+        self.target.SetRoot(&root)?;
+        let _ = c.RequestCommitAsync()?;
+        Ok(())
+    }
 }
 pub fn start(app: &tauri::AppHandle) {
     let saved = config(app)
@@ -400,13 +469,15 @@ pub fn start(app: &tauri::AppHandle) {
             instance: GetModuleHandleW(std::ptr::null()),
             icon: 0,
             cursor: 0,
-            background: GetStockObject(4), // BLACK_BRUSH
+            background: 0, // The composition tree is the only content.
             menu: std::ptr::null(),
             class: class.as_ptr(),
         };
         RegisterClassW(&wc);
         let glass = CreateWindowExW(
-            0x8 | 0x80 | 0x08000000 | 0x20,
+            // NOREDIRECTIONBITMAP hosts the alpha composition tree; LAYERED +
+            // TRANSPARENT makes the entire companion click-through across threads.
+            0x8 | 0x80 | 0x08000000 | 0x20 | 0x00200000 | 0x00080000,
             class.as_ptr(),
             wide("").as_ptr(),
             0x80000000,
@@ -422,15 +493,15 @@ pub fn start(app: &tauri::AppHandle) {
         if glass == 0 {
             return;
         }
-        let proc = GetProcAddress(
-            GetModuleHandleW(wide("user32.dll").as_ptr()),
-            b"SetWindowCompositionAttribute\0".as_ptr(),
-        );
+        let (composition, mut composition_error) = match GlassComposition::new(glass) {
+            Ok(c) => (Some(c), None),
+            Err(e) => (None, Some(e.to_string())),
+        };
         let mut previous = None;
         let mut ignored = false;
         let mut revision = u64::MAX;
         let mut oldscale = 0.;
-        let mut blur_ok = false;
+        let mut blur_ok = composition.is_some();
         let mut cached_rects = None;
         let mut reported_rects = None;
         let mut moving = false;
@@ -471,44 +542,29 @@ pub fn start(app: &tauri::AppHandle) {
                     ShowWindow(glass, 0);
                 }
             }
-            if *rects != cached_rects || scale != oldscale {
-                let region = CreateRectRgn(0, 0, 0, 0);
-                for r in rects.iter().flatten().filter_map(Surface::inset) {
-                    let n = |v: f64| (v * scale).round() as i32;
-                    let part = CreateRoundRectRgn(
-                        n(r.x),
-                        n(r.y),
-                        n(r.x + r.w),
-                        n(r.y + r.h),
-                        n(r.r * 2.),
-                        n(r.r * 2.),
-                    );
-                    CombineRgn(region, region, part, 2);
-                    DeleteObject(part);
-                }
-                if SetWindowRgn(glass, region, 1) == 0 {
-                    DeleteObject(region);
-                }
+            if *rects != cached_rects || scale != oldscale || applied_blur != Some((blur, tint)) {
+                // Tint is supplied by the existing web glass fill above this window.
+                blur_ok = composition.as_ref().is_some_and(|c| {
+                    match c.update(
+                        if blur {
+                            rects.as_deref().unwrap_or(&[])
+                        } else {
+                            &[]
+                        },
+                        scale,
+                    ) {
+                        Ok(()) => {
+                            composition_error = None;
+                            true
+                        }
+                        Err(e) => {
+                            composition_error = Some(e.to_string());
+                            false
+                        }
+                    }
+                });
                 cached_rects = (*rects).clone();
                 oldscale = scale;
-            }
-            if applied_blur != Some((blur, tint)) {
-                if !proc.is_null() {
-                    let f: unsafe extern "system" fn(isize, *mut Composition) -> i32 =
-                        std::mem::transmute(proc);
-                    let mut accent = Accent {
-                        state: if blur { 3 } else { 0 },
-                        flags: 0,
-                        color: (tint & 0xff00ff00) | ((tint & 255) << 16) | ((tint >> 16) & 255),
-                        animation: 0,
-                    };
-                    let mut data = Composition {
-                        attribute: 19,
-                        data: &mut accent,
-                        size: std::mem::size_of::<Accent>(),
-                    };
-                    blur_ok = f(glass, &mut data) != 0;
-                }
                 applied_blur = Some((blur, tint));
             }
             revision = rev;
@@ -571,11 +627,21 @@ pub fn start(app: &tauri::AppHandle) {
                 let state = app.state::<State>();
                 let mut s = state.0.lock().unwrap();
                 s.debug.blur_ok = blur_ok;
+                s.debug.composition_error = composition_error.clone();
+                s.debug.composition_scale = scale;
+                s.debug.composition_revision = revision;
                 s.debug.glass_hwnd = glass;
                 s.debug.main_hwnd = main;
                 s.debug.ignoring = ignored;
             }
-            std::thread::sleep(Duration::from_millis(if visible { 16 } else { 250 }));
+            // Pump dispatcher work promptly, but block between pointer/position samples.
+            MsgWaitForMultipleObjectsEx(
+                0,
+                std::ptr::null(),
+                if visible { 16 } else { 250 },
+                0x04ff,
+                0x0004,
+            );
         }
     });
 }
@@ -599,6 +665,28 @@ mod tests {
         assert_eq!(i.x, 11.5);
         assert_eq!(i.r, 18.5);
         assert_eq!(i.w, 97.);
+    }
+    #[test]
+    fn physical_geometry_preserves_css_inset_at_100_and_150_percent() {
+        let r = Surface {
+            x: 28.,
+            y: 28.,
+            w: 460.,
+            h: 74.,
+            r: 24.,
+        };
+        for scale in [1., 1.5] {
+            let p = r.physical_inset(scale).unwrap();
+            assert_eq!(p.x, 29.5 * scale);
+            assert_eq!(p.y, 29.5 * scale);
+            assert_eq!(p.w, 457. * scale);
+            assert_eq!(p.h, 71. * scale);
+            assert_eq!(p.r, 22.5 * scale);
+            assert!(p.hit(p.x + p.r, p.y, 1.));
+        }
+        assert!(Surface { w: 3., ..r.clone() }.physical_inset(1.5).is_none());
+        let square = Surface { r: 0., ..r };
+        assert_eq!(square.physical_inset(1.5).unwrap().r, 0.);
     }
     #[test]
     fn shortcuts() {

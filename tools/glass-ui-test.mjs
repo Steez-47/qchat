@@ -239,7 +239,7 @@ try {
   check('slash entrance stays inside the resized native viewport', entranceBounds.length > 2 && entranceBounds.every(r => r.top >= 0 && r.bottom <= r.height), JSON.stringify(entranceBounds));
   await settle();
   const slashBounds = await evalJS(`(()=>{const menu=document.getElementById('slash-menu').getBoundingClientRect();return {top:menu.top,bottom:menu.bottom,height:innerHeight,items:[...document.querySelectorAll('#slash-menu [role=option]')].map(n=>{const r=n.getBoundingClientRect();return {command:n.dataset.command,top:r.top,bottom:r.bottom};})};})()`);
-  check('all slash commands fit inside the native fitted viewport', slashBounds.items.length === 5 && slashBounds.top >= 27 && slashBounds.bottom <= slashBounds.height - 27 && slashBounds.items.every(r => r.top >= slashBounds.top && r.bottom <= slashBounds.bottom), JSON.stringify(slashBounds));
+  check('all slash commands fit inside the native fitted viewport', slashBounds.items.length === 9 && slashBounds.top >= 27 && slashBounds.bottom <= slashBounds.height - 27 && slashBounds.items.every(r => r.top >= slashBounds.top && r.bottom <= slashBounds.bottom), JSON.stringify(slashBounds));
   await type('/se');
   const filtered = await evalJS(`[...document.querySelectorAll('#slash-menu [role=option]')].map(n=>n.dataset.command)`);
   check('slash menu filters as you type', filtered.length === 1 && filtered[0] === 'settings', filtered.join());
@@ -470,7 +470,7 @@ try {
     await sleep(40);
   }
   const stored = await evalJS(`JSON.parse(localStorage.getItem('qchat.chats'))`);
-  check('recent list caps at 3, newest first', stored.recent.length === 3 && stored.recent[0].title === 'chat number 4' && stored.v === 1, JSON.stringify(stored.recent.map((c) => c.title)));
+  check('recent list retains five chats, newest first', stored.recent.length === 5 && stored.recent[0].title === 'chat number 4' && stored.v === 1, JSON.stringify(stored.recent.map((c) => c.title)));
   check('stored chats have the agreed shape', ['key', 'conversationId', 'title', 'lastActive', 'lastPrompt', 'lastResponse', 'createdAt'].every((k) => k in stored.recent[0]));
   await evalJS(`__mock.reply=null`);
   await open('/', { chats: { v: 1, current: chat('c', 'conv-c', MIN), recent: [{ ...chat('big', 'conv-big', MIN), lastResponse: 'x'.repeat(200000) }] } });
@@ -680,6 +680,13 @@ try {
     };
 
     await scene({ name: 'idle', chats: threeTabs() }); await settle(); await fitViewport(); await shot('01-idle-3-tabs');
+
+    for (const command of ['chats', 'model', 'keys']) {
+      await type('/' + command); await key('Enter'); await sleep(120); await fitViewport(); await shot('feature-' + command); await key('Escape');
+    }
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 516, height: 900, deviceScaleFactor: 3, mobile: false });
+    await scene({ name: 'tabs-zoom', chats: threeTabs() }); await settle(); await fitViewport();
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 516, height: 250, deviceScaleFactor: 3, mobile: false }); await shot('feature-tabs-3x');
 
     await scene({ name: 'rise', chats: threeTabs(), settings: { speed: 0.4 } });
     await evalJS(`__mock.hold=true`);

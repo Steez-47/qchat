@@ -310,3 +310,15 @@ html[data-motion="on"][data-tabpop="true"] .tab.pop {
 .tab-label::before, .tab-label::after { content: ""; position: absolute; bottom: 0; width: 8px; height: 8px; background: rgb(var(--tint-a) / var(--glass-a)); pointer-events: none; }
 .tab-label::before { left: -8px; mask: radial-gradient(circle at 0 0, transparent 7.8px, black 8px); }
 .tab-label::after { right: -8px; mask: radial-gradient(circle at 100% 0, transparent 7.8px, black 8px); }
+
+.tabs { justify-content: flex-start; }
+.tab { flex: 0 1 auto; min-width: 0; }
+.tab-label::before, .tab-label::after { display: none; }
+.tok-keyword, .tok-builtin { color: #d4baff; }
+.tok-string { color: #a9dfb4; }
+.tok-number, .tok-literal { color: #f4c794; }
+.tok-comment { color: #b7bdc9; }
+html[data-mode="light"] .tok-keyword { color: #593298; }
+html[data-mode="light"] .tok-string { color: #246437; }
+html[data-mode="light"] .tok-number { color: #834414; }
+html[data-mode="light"] .tok-comment { color: #515968; }

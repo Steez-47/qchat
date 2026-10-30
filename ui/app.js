@@ -7,7 +7,7 @@
   const GUTTER = 28;
   const CHATS_KEY = "qchat.chats";
   const CHATS_VERSION = 1;
-  const MAX_RECENT = 3;
+  const MAX_RECENT = 49;
   const OPEN_TIMEOUT = 12000;
   const FRESH_TIMEOUT = 2500;
   const MAX_STORED_TEXT = 40000;
@@ -123,6 +123,10 @@
 
   // Parse through the same safe renderer, but keep unchanged blocks and update
   // text nodes in place. Streaming must not reset selection or code scrollbars.
+  function highlightCode(root) {
+    for (const code of root.querySelectorAll("pre code")) window.QHighlight?.highlightInto(code, code.textContent, code.className.replace("language-", ""));
+  }
+
   function syncMarkdownNodes(parent, next) {
     const children = Array.from(next.childNodes);
     for (let i = 0; i < children.length; i++) {
@@ -206,6 +210,8 @@
     attachments: $("attachments")
   };
 
+  const prompts = [];
+  let recallIndex = -1;
   const turns = [];
   const turnNodes = new Map();
   const renderSchedule = new Map();
@@ -217,6 +223,7 @@
   let userScrolledUp = false;
   let guestDismissed = false;
   let sentThisSession = false;
+  let firstRunHint = false;
   let autoDismissTimer = null;
   let historyOpen = false;
   let historyChatKey = null;
@@ -414,6 +421,7 @@
       const template = document.createElement("template");
       if (item.role === "user") template.content.append(document.createTextNode(item.text));
       else template.innerHTML = renderMarkdownSafe(item.text, item.sources);
+      highlightCode(template.content);
       syncMarkdownNodes(content, template.content);
       const media = row.querySelector(".turn-media");
       if (item.hasMedia && !media.childElementCount) {
@@ -789,17 +797,18 @@
   }
 
   function saveChats() {
+    if (chats.current.temporary) return;
     if (!QSettings.settings.keepHistory) {
       try { localStorage.removeItem(CHATS_KEY); } catch (_) {}
       return;
     }
     let current = storedChat(chats.current);
-    let recent = chats.recent.map(chat => storedChat(chat));
+    let recent = chats.recent.map((chat, i) => i < 7 ? storedChat(chat) : { ...storedChat(chat, true), transcript: [], draft: "" });
     const write = () => localStorage.setItem(CHATS_KEY, JSON.stringify({ v: CHATS_VERSION, current, recent }));
     try { write(); return; } catch (_) {}
     // Under quota pressure, cap each message before dropping older transcripts.
     current = storedChat(chats.current, true);
-    recent = chats.recent.map(chat => storedChat(chat, true));
+    recent = chats.recent.map((chat, i) => i < 7 ? storedChat(chat, true) : { ...storedChat(chat, true), transcript: [], draft: "" });
     try { write(); return; } catch (_) {}
     for (let i = recent.length - 1; i >= 0; i--) {
       if (!recent[i].transcript.length) continue;
@@ -812,7 +821,7 @@
   }
 
   function pushRecent(chat) {
-    if (!QSettings.settings.keepHistory) return;
+    if (!QSettings.settings.keepHistory || chat.temporary) return;
     chats.recent = [chat, ...chats.recent.filter((c) => c.key !== chat.key)].slice(0, MAX_RECENT);
   }
 
@@ -831,6 +840,7 @@
     chats.recent = [];
     dismissExchange();
     chats.current = freshChat();
+    setModeLabel("");
     el.promptInput.value = "";
     autoResizePrompt();
     saveChats();
@@ -890,7 +900,7 @@
   async function freshInPage(chat) {
     page = { key: null, conv: null, pristine: false };
     const ready = waitForReady(null, FRESH_TIMEOUT);
-    await invoke("chat_new", { preserveUploads: true });
+    await invoke("chat_new", { preserveUploads: true, temporary: Boolean(chat.temporary) });
     // The page normally confirms quickly; a slow confirmation is not a reason to fail the send.
     await ready.catch(() => {});
     page = { key: chat.key, conv: null, pristine: false };
@@ -1361,7 +1371,13 @@
     closeBtn.title = "Dismiss (Esc)";
     closeBtn.setAttribute("aria-label", "Dismiss reply");
     closeBtn.append(makeIcon(GLYPH.close));
-    tools.append(copyBtn, closeBtn);
+    const retryBtn = make("button", "tool-btn", "↻");
+    retryBtn.type = "button"; retryBtn.dataset.action = "retry-reply"; retryBtn.dataset.id = turn.id;
+    retryBtn.title = "Retry"; retryBtn.setAttribute("aria-label", "Retry");
+    const openBtn = make("button", "tool-btn", "↗");
+    openBtn.type = "button"; openBtn.title = "Open in ChatGPT"; openBtn.setAttribute("aria-label", openBtn.title);
+    openBtn.addEventListener("click", () => { if (chats.current.conversationId) invoke("open_external", { url: `https://chatgpt.com/c/${chats.current.conversationId}` }).catch(() => {}); });
+    tools.append(copyBtn, retryBtn, openBtn, closeBtn);
 
     const jump = make("button", "jump-chip glass glass-tiny");
     jump.type = "button";
@@ -1433,6 +1449,10 @@
     if (!turn || !entry || turn.role !== "assistant") return;
 
     entry.row.dataset.status = turn.status;
+    const retryTool = entry.row.querySelector('[data-action="retry-reply"]');
+    if (retryTool) retryTool.hidden = turn.status !== "done";
+    const openTool = entry.row.querySelector('[aria-label="Open in ChatGPT"]');
+    if (openTool) openTool.hidden = !chats.current.conversationId;
     const activity = entry.activity;
     activity.hidden = turn.status !== "streaming" || turn.backendDone || turn.activity?.state !== "running";
     activity.dataset.kind = turn.activity?.kind || "tool";
@@ -1450,6 +1470,7 @@
     if (entry.renderedText !== visibleText) {
       const template = document.createElement("template");
       template.innerHTML = renderMarkdownSafe(visibleText, turn.sources);
+      highlightCode(template.content);
       syncMarkdownNodes(entry.contentEl, template.content);
       entry.renderedText = visibleText;
     }
@@ -1683,7 +1704,7 @@
   function updateComposerMode() {
     const active = isStreaming();
     const sendKey = QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter";
-    el.promptInput.placeholder = bridge.ready ? "Ask anything" : "Connecting…";
+    el.promptInput.placeholder = bridge.ready ? (firstRunHint ? "Ask anything, or type / for commands" : "Ask anything") : "Connecting…";
     el.btnSend.dataset.mode = active ? "stop" : "send";
     el.btnSend.firstElementChild.textContent = active ? GLYPH.stop : GLYPH.send;
     el.btnSend.title = active ? "Stop generating (Ctrl+.)" : `Send (${sendKey})`;
@@ -1724,6 +1745,9 @@
     const prompt = String(rawPrompt ?? "").trim();
     const files = pendingFiles.filter((f) => f.state === "ready");
     if (isBusy() || pendingFiles.some((f) => f.state === "staging") || (!prompt && !files.length)) return;
+    prompts.push(prompt); recallIndex = -1; firstRunHint = false;
+    try { localStorage.setItem("qchat.introduced", "1"); } catch (_) {}
+    el.promptInput.placeholder = "Ask anything";
     sending = true;
     const generation = chatGeneration;
     const chat = chats.current;
@@ -1852,6 +1876,7 @@
 
     if (hasContent(chats.current)) { chats.current.lastActive = Date.now(); pushRecent(chats.current); }
     chats.current = freshChat();
+    setModeLabel("");
     setHistoryOpen(false);
     renderHistory();
     saveChats();
@@ -1896,7 +1921,7 @@
 
     const existing = new Map([...el.tabs.children].map((node) => [node.dataset.key, node]));
     let fresh = 0;
-    const nodes = chats.recent.map((chat) => {
+    const nodes = chats.recent.slice(0, 3).map((chat) => {
       let tab = existing.get(chat.key);
       if (!tab) {
         tab = make("button", "tab glass glass-tiny pop");
@@ -1939,7 +1964,7 @@
     const previous = chats.current;
     previous.draft = el.promptInput.value;
     chats.recent.splice(index, 1);
-    if (hasContent(previous)) { previous.lastActive = now; chats.recent.unshift(previous); }
+    if (hasContent(previous) && !previous.temporary) { previous.lastActive = now; chats.recent.unshift(previous); }
     chats.recent = chats.recent.slice(0, MAX_RECENT);
     target.lastActive = now;
     chats.current = target;
@@ -1964,6 +1989,8 @@
   // ---------------------------------------------------------------------------
   // 11. Slash commands
   // ---------------------------------------------------------------------------
+  const modeChip = make("div", "mode-chip glass glass-tiny"); modeChip.id = "mode-chip"; modeChip.hidden = true; el.tabs.before(modeChip);
+  function setModeLabel(label) { modeChip.textContent = label; modeChip.hidden = !label; queueSizes(); }
   const COMMANDS = [
     { name: "settings", icon: GLYPH.settings, desc: () => "Open settings", run: () => invoke("open_settings").catch(() => showGlobalError(null, "Couldn't open settings. Try again.")) },
     { name: "new", icon: GLYPH.newChat, desc: () => "Start a new chat", run: () => startNewChat(true) },
@@ -1971,6 +1998,59 @@
     { name: "clear", icon: GLYPH.trash, desc: () => "Clear recent chats", run: () => showClearConfirm() },
     { name: "hide", icon: GLYPH.hide, desc: () => "Hide QChat", run: () => invoke("hide_main").catch(() => {}) }
   ];
+  COMMANDS.push(
+    { name: "model", icon: GLYPH.settings, desc: () => "Model", run: () => { showFeatureList("Loading models…", []); invoke("chat_models").catch(() => showModels({ error: "unavailable" })); } },
+    { name: "temp", icon: GLYPH.newChat, desc: () => "Temporary chat", run: () => { startNewChat(false); chats.current.temporary = true; setModeLabel("Temporary"); pageSync = freshInPage(chats.current); } },
+    { name: "chats", icon: GLYPH.clock, desc: () => "Chats", run: showChatList },
+    { name: "keys", icon: GLYPH.settings, desc: () => "Keyboard shortcuts", run: async () => {
+      let hotkey = "Alt+Q"; try { hotkey = await invoke("get_hotkey") || hotkey; } catch (_) {}
+      const shortcuts = [[hotkey, "Show QChat"], [QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter", "Send"], ["Shift+Enter", "New line"], ["Esc", "Close"], ["Ctrl+N", "New chat"], ["Ctrl+K", "Menu"], ["Ctrl+P", "Chats"], ["Ctrl+.", "Stop"], ["ArrowUp / ArrowDown", "Recall prompts"], ["Paste / drop", "Attach files"]];
+      showFeatureList("Keyboard shortcuts", shortcuts.map(([key, action]) => ({ title: `${key}    ${action}`, run: () => {} })));
+      featureList.classList.add("feature-keys");
+
+    } }
+  );
+  const featureList = make("section", "feature-list glass");
+  featureList.hidden = true; el.slashMenu.before(featureList);
+  function closeFeatureList() { featureList.hidden = true; queueSizes(); el.promptInput.focus(); }
+  function showFeatureList(title, rows, searchable = false) {
+    closeSlashMenu(); featureList.classList.remove("feature-keys"); featureList.replaceChildren(); featureList.hidden = false;
+    featureList.append(make("div", "feature-heading", title));
+    const input = make("input", "feature-search"); input.placeholder = "Search chats"; input.setAttribute("aria-label", "Search chats");
+    if (searchable) featureList.append(input);
+    const results = make("div", "feature-results"); featureList.append(results);
+    let selected = -1, buttons = [];
+    const paint = () => {
+      results.replaceChildren(); buttons = []; selected = -1;
+      for (const row of rows.filter(row => `${row.title} ${row.prompt || ""}`.toLowerCase().includes(input.value.toLowerCase()))) {
+        const line = make("div", "feature-row"); const button = make("button", "feature-choice", row.title); button.type = "button";
+        button.onclick = () => { closeFeatureList(); row.run(); }; buttons.push(button); line.append(button);
+        if (row.remove) { const remove = make("button", "tool-btn", "×"); remove.setAttribute("aria-label", "Remove chat"); remove.onclick = row.remove; line.append(remove); }
+        results.append(line);
+      }
+      if (!buttons.length) results.append(make("p", "feature-heading", "No chats yet"));
+    };
+    input.oninput = paint;
+    featureList.onkeydown = e => {
+      if (e.key === "Escape") { e.stopPropagation(); closeFeatureList(); }
+      else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); selected = (selected + (e.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length; buttons[selected]?.focus(); }
+      else if (e.key === "Enter" && e.target === input) { e.preventDefault(); buttons[Math.max(0, selected)]?.click(); }
+    };
+    paint(); queueSizes(); (searchable ? input : buttons[0])?.focus();
+  }
+  function showModels(event) {
+    const models = event.models || [];
+    showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? models.map(model => ({ title: `${model.selected ? "✓ " : ""}${model.label}`, run: () => invoke("chat_model_choose", { id: model.id }).catch(() => {}) })) : [{ title: event.error ? "Open ChatGPT" : "Sign in", run: openSignin }]);
+  }
+  listen("bridge", ({ payload }) => { if (payload.type === "models") showModels(payload); else if (payload.type === "model-chosen") setModeLabel(payload.model.label); });
+  function showChatList() {
+    showFeatureList("Chats", chats.recent.map(chat => ({ title: `${chat.title || "Untitled chat"}  ${elapsedLabel(chat.lastActive)}`, prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { chats.recent = chats.recent.filter(c => c.key !== chat.key); saveChats(); renderTabs(); showChatList(); } })), true);
+  }
+  document.addEventListener("pointerdown", e => { if (!featureList.hidden && !featureList.contains(e.target)) closeFeatureList(); });
+  window.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !featureList.hidden) { e.stopImmediatePropagation(); e.preventDefault(); closeFeatureList(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); showChatList(); }
+  }, true);
   let slashMatches = [];
   let slashIndex = 0;
 
@@ -1982,6 +2062,7 @@
   }
 
   function closeSlashMenu() {
+    commandMenu = false;
     el.slashMenu.hidden = true;
     el.slashMenu.replaceChildren();
     slashMatches = [];
@@ -1998,10 +2079,12 @@
     });
   }
 
+  let commandMenu = false;
   function updateSlashMenu() {
     const value = el.promptInput.value;
-    const query = /^\/\S*$/.test(value) ? value.slice(1).toLowerCase() : null;
-    const matches = query === null ? [] : COMMANDS.filter((c) => c.name.startsWith(query));
+    const query = commandMenu ? "" : /^\/\S*$/.test(value) ? value.slice(1).toLowerCase() : null;
+    let matches = query === null ? [] : COMMANDS.filter((c) => c.name.startsWith(query));
+    if (commandMenu) { const order = ["new", "chats", "model", "temp", "settings", "signin", "clear", "keys", "hide"]; matches = order.map(name => COMMANDS.find(c => c.name === name)); }
     if (!matches.length) { if (slashOpen()) closeSlashMenu(); return; }
     const wasOpen = slashOpen();
     const previous = slashMatches.map((c) => c.name).join(",");
@@ -2013,7 +2096,7 @@
       item.id = `slash-${cmd.name}`;
       item.setAttribute("role", "option");
       item.dataset.command = cmd.name;
-      item.append(makeIcon(cmd.icon), make("span", "slash-name", `/${cmd.name}`), make("span", "slash-desc", cmd.desc()));
+      item.append(makeIcon(cmd.icon), make("span", "slash-name", (commandMenu ? cmd.name : `/${cmd.name}`)), make("span", "slash-desc", cmd.desc()));
       item.addEventListener("mousedown", (e) => { e.preventDefault(); runCommand(cmd); });
       return item;
     }));
@@ -2067,13 +2150,13 @@
 
     el.statusDot.dataset.state = state;
     el.statusLabel.textContent = label;
-    el.orb.title = `Drag QChat · ${label}`;
+    el.orb.title = "QChat menu";
   }
 
   function setStatusError() {
     el.statusDot.dataset.state = "error";
     el.statusLabel.textContent = "Error";
-    el.orb.title = "Drag QChat · Error";
+    el.orb.title = "QChat menu";
   }
 
   function updateStatusHeader({ ready, loggedIn, signedOut }) {
@@ -2265,7 +2348,7 @@
     } else if (action === "dismiss-turn") {
       dismissExchange();
       el.promptInput.focus();
-    } else if (action === "retry-turn") {
+    } else if (action === "retry-turn" || action === "retry-reply") {
       const turn = turns.find((t) => t.id === actionBtn.dataset.id);
       if (turn && typeof turn.prompt === "string" && !isStreaming()) {
         sendPrompt(turn.prompt);
@@ -2305,11 +2388,20 @@
   });
 
   el.promptInput.addEventListener("input", () => {
+    recallIndex = -1;
     autoResizePrompt();
     updateSlashMenu();
     updateIdleChips();
   });
 
+  function openCommandMenu() { commandMenu = true; updateSlashMenu(); el.promptInput.focus(); }
+  el.orb.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCommandMenu(); } });
+  let orbDown = null, orbDragged = false;
+  el.orb.addEventListener("pointerdown", e => { if (e.button !== 0) return; orbDown = [e.clientX, e.clientY]; orbDragged = false; el.orb.setPointerCapture?.(e.pointerId); });
+  el.orb.addEventListener("pointermove", e => { if (orbDown && !orbDragged && Math.hypot(e.clientX-orbDown[0], e.clientY-orbDown[1]) >= 4) { orbDragged = true; window.__TAURI__.window?.getCurrentWindow().startDragging().catch(() => {}); } });
+  el.orb.addEventListener("pointerup", () => { if (orbDown && !orbDragged) openCommandMenu(); orbDown = null; });
+  document.addEventListener("pointerdown", e => { if (!el.slashMenu.contains(e.target) && !el.orb.contains(e.target) && e.target !== el.promptInput) closeSlashMenu(); });
+  window.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCommandMenu(); } });
   let filePickerOpen = false;
   el.btnAttach.addEventListener("click", () => { filePickerOpen = true; el.attachmentInput.click(); });
   el.attachmentInput.addEventListener("cancel", () => { filePickerOpen = false; });
@@ -2327,6 +2419,12 @@
 
   el.promptInput.addEventListener("keydown", (e) => {
     if (e.isComposing) return;
+    if (!slashOpen() && (e.key === "ArrowUp" || e.key === "ArrowDown") && (!el.promptInput.value || recallIndex >= 0)) {
+      e.preventDefault();
+      recallIndex = e.key === "ArrowUp" ? Math.min(prompts.length - 1, recallIndex + 1) : Math.max(-1, recallIndex - 1);
+      el.promptInput.value = recallIndex < 0 ? "" : prompts[prompts.length - 1 - recallIndex] || "";
+      autoResizePrompt(); return;
+    }
     if (slashOpen()) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -2559,6 +2657,7 @@
 
   listen("qchat://shown", () => {
     el.promptInput.focus();
+    try { if (!localStorage.getItem("qchat.introduced")) { firstRunHint = true; updateComposerMode(); } } catch (_) {}
     refreshTheme();
     renderTabs();
     if (connectErrorShown) hideGlobalError();
@@ -2570,7 +2669,7 @@
   listen("qchat://new-chat", () => startNewChat(true));
   listen("qchat://settings-closed", () => el.promptInput.focus());
   listen("qchat://settings-focus", () => { settingsFocusAt = Date.now(); clearTimeout(blurTimer); });
-  listen("qchat://settings-changed", ({ payload }) => receiveSettings(payload));
+  listen("qchat://settings-changed", ({ payload }) => { receiveSettings(payload); refreshTheme(); });
   listen("qchat://clear-chats", () => clearRecentChats());
 
   window.addEventListener("storage", (e) => {

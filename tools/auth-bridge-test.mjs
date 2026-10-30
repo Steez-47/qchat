@@ -64,6 +64,7 @@ function browser({ ready = false, focused = true, composer = 'legacy', hidden = 
   const context = vm.createContext({
     history: { pushState: (_, __, path) => navigate(path) }, PopStateEvent: class {},
     window, document, location, URL, AbortController, console, TextDecoder,
+    KeyboardEvent: class { constructor(type, options) { this.type = type; Object.assign(this, options); } },
     MutationObserver: class { observe() {} disconnect() {} },
     Date: class extends Date { static now() { return now; } },
     setTimeout: (fn, delay) => schedule(fn, delay), clearTimeout: id => timers.delete(id),
@@ -72,6 +73,8 @@ function browser({ ready = false, focused = true, composer = 'legacy', hidden = 
   vm.runInContext(source, context);
   return {
     requests, events, document, navigations,
+    listModels: () => window.__qchat.listModels(),
+    chooseModel: id => window.__qchat.chooseModel(id),
     openConversation: id => window.__qchat.openConversation(id),
     reply(body, ok = true) { replies.push(async () => response(body, ok)); },
     fail() { replies.push(async () => { throw new Error('Offline'); }); },
@@ -220,6 +223,22 @@ test('openConversation rejects invalid ids without navigation', async () => {
 test('openConversation on the same route only refreshes status', async () => {
   const b = browser({ ready: true }); b.navigate('/c/abcdefgh'); b.reply({ user: {} }); await b.status();
   await b.openConversation('abcdefgh'); assert.deepEqual(b.navigations, []); assert.equal(b.last().ready, true);
+});
+
+test('model list and choice close the synthetic menu without sending', async () => {
+  const b = browser(); let opened = false, chosen = false;
+  const switcher = { click() { opened = true; }, dispatchEvent(e) { if (e.key === 'Escape') opened = false; } };
+  const option = { textContent: 'Synthetic model', getAttribute: () => 'true', click() { chosen = true; } };
+  b.document.querySelector = selector => selector.includes('model-switcher') ? switcher : null;
+  b.document.querySelectorAll = selector => selector.includes('menuitem') && opened ? [option] : [];
+  let pending = b.listModels(); await b.tick(200); await pending;
+  assert.equal(opened, false); assert.equal(b.events.at(-1).models[0].label, 'Synthetic model');
+  pending = b.chooseModel('0'); await b.tick(200); await pending;
+  assert.equal(chosen, true); assert.equal(opened, false); assert.equal(b.sendClicks(), 0);
+});
+test('missing model switcher reports unavailable and sends nothing', async () => {
+  const b = browser(); await b.listModels();
+  assert.equal(b.events.at(-1).error, 'unavailable'); assert.equal(b.sendClicks(), 0);
 });
 
 let failed = 0;

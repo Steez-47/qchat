@@ -464,11 +464,15 @@ fn chat_stop(app: tauri::AppHandle) -> Result<(), String> {
     eval(&app, "window.__qchat && window.__qchat.stop()")
 }
 #[tauri::command]
-fn chat_new(app: tauri::AppHandle, preserve_uploads: Option<bool>) -> Result<(), String> {
+fn chat_models(app: tauri::AppHandle) -> Result<(), String> { eval(&app, "window.__qchat && window.__qchat.listModels()") }
+#[tauri::command]
+fn chat_model_choose(app: tauri::AppHandle, id: String) -> Result<(), String> { eval(&app, &format!("window.__qchat && window.__qchat.chooseModel({})", serde_json::to_string(&id).map_err(|e|e.to_string())?)) }
+#[tauri::command]
+fn chat_new(app: tauri::AppHandle, preserve_uploads: Option<bool>, temporary: Option<bool>) -> Result<(), String> {
     if preserve_uploads.unwrap_or(false) { media::clear_reply_media(&app); }
     else { media::clear_all(&app); }
     app.state::<Host>().0.lock().unwrap().flight_id = None;
-    eval(&app, "window.__qchat && window.__qchat.newChat()")
+    eval(&app, if temporary.unwrap_or(false) { "window.__qchat && window.__qchat.newChat({temporary:true})" } else { "window.__qchat && window.__qchat.newChat()" })
 }
 #[tauri::command]
 fn chat_open(app: tauri::AppHandle, conversation_id: String, preserve_uploads: Option<bool>) -> Result<(), String> {
@@ -549,7 +553,7 @@ fn main() {
  .manage(Host(Mutex::new(Activity{hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0,logged_in:false,signin_was_logged_in:false,anchor:None,remember_position:true,always_on_top:true,positioned:Instant::now(),save_due:None,save_generation:0})))
 
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,_,event|{if event.state()==ShortcutState::Pressed{toggle(app);}}).build())
- .invoke_handler(tauri::generate_handler![surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,surfaces::get_hotkey,surfaces::set_hotkey,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy])
+ .invoke_handler(tauri::generate_handler![surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,surfaces::get_hotkey,surfaces::set_hotkey,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_models,chat_model_choose,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy])
  .setup(|app|{
  if let Ok(dir)=app.path().app_data_dir() {
    if let Ok(data)=std::fs::read(dir.join("window-state.json")) { app.state::<Host>().0.lock().unwrap().anchor=serde_json::from_slice(&data).ok(); }
