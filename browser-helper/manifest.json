@@ -1,1 +1,0 @@
-{"manifest_version":3,"name":"QChat session helper","version":"1.0.0","permissions":["activeTab"],"optional_permissions":["cookies"],"optional_host_permissions":["https://chatgpt.com/*","http://127.0.0.1/*"],"action":{"default_popup":"popup.html"}}

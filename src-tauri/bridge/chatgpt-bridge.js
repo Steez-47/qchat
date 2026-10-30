@@ -218,9 +218,11 @@
   }
 
   async function status() {
-    if (Date.now() - loginAt > 30000) {
-      loginAt = Date.now(); loginCache = false;
-      try { const session = await Promise.race([originalFetch('/api/auth/session').then(r => r.json()), sleep(2500).then(() => ({}))]); loginCache = !!(session.user || session.accessToken); } catch (_) {}
+    if (!loginCache || Date.now() - loginAt > 30000) {
+      loginAt = Date.now();
+      let next = false;
+      try { const session = await Promise.race([originalFetch('/api/auth/session').then(r => r.json()), sleep(2500).then(() => ({}))]); next = !!(session.user || session.accessToken); } catch (_) {}
+      loginCache = next;
     }
     emit({ type: 'status', ready: !!find('composer'), loggedIn: !!loginCache, url: location.href });
   }

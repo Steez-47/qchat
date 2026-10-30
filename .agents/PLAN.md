@@ -24,14 +24,14 @@ A tiny always-resident Windows popup (hotkey Alt+Q) for chatting with ChatGPT mo
 ## Stack and key decisions
 - **Tauri 2 (Rust) + WebView2**, vanilla HTML/CSS/JS UI in `ui/` (no bundler, `withGlobalTauri`). Smallest practical footprint.
 - **Transport = hidden chatgpt.com webview ("bridge")**: we don't reimplement ChatGPT's private API (Cloudflare, sentinel, proof-of-work and Turnstile break that constantly). A hidden WebView2 window loads chatgpt.com with a persistent profile. An injected script types into the real composer, clicks send, and **tees the page's own `fetch` SSE stream** to get structured deltas. ChatGPT's frontend handles all the anti-bot work.
-- **Sign-in**: the "Sign in" action shows the chatgpt.com window so the user logs in once, and the cookies persist in the WebView2 profile. Alternative: paste a session cookie (raw `__Secure-next-auth.session-token` value or a full `Cookie:` header), which is set through the WebView2 CookieManager. Logged-out guest chat also works, which we use for automated testing.
+- **Sign-in**: the "Sign in" action shows the chatgpt.com window at /auth/login, the user logs in normally, and the window returns to the background on login. The login persists in the WebView2 profile across restarts.
 - **Resources**: the chatgpt webview is suspended (`TrySuspend` + low memory target) after 3 min idle with the UI hidden, and resumed on hotkey.
 - UI window: frameless, `shadow: true` (native Win11 rounded corners and shadow), not transparent, always-on-top, skip taskbar, appears bottom-right of the cursor's monitor work area.
 
 ## Contract (all tasks code to this)
 UI → Rust commands (`window.__TAURI__.core.invoke`):
 - `chat_send {id: string, prompt: string}`, `chat_stop`, `chat_new`, `chat_status`
-- `show_signin`, `import_session_token {cookie: string}`, `hide_main`, `open_external {url: string}`
+- `show_signin`, `hide_main`, `open_external {url: string}`, `get_theme`, `quit_app`
 
 Rust → chatgpt webview: `eval("window.__qchat.send({...})")` etc. Bridge API:
 - `window.__qchat.send({id, prompt})`, `.stop()`, `.newChat()`, `.status()`
@@ -61,7 +61,7 @@ Other Rust → UI events: `qchat://shown` (focus the input), `qchat://new-chat` 
 
 | F | Fix review findings (11) | T2 codex/gpt-6.1-sol medium | main.rs, tauri.conf.json, bridge | E | done |
 
-Status (M1+M2 done): `node tools/app-e2e.mjs` 7/7 PASS (guest). Unverified live: logged-in SSE path, cookie import persistence, sign-in window flow, hotkey focus over other apps.
+Status (M1+M2 done): `node tools/app-e2e.mjs` 7/7 PASS (guest). Removed 2026-10-30: all cookie import and browser helper code (user decision). Unverified live: real login in the sign-in window, logged-in chat path, hotkey focus over other apps.
 Testing rule: the user may be gaming. Use only the headless tools/app-e2e.mjs; never send keys or show windows.
 
 ## Design direction (UI)

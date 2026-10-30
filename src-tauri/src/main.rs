@@ -1,8 +1,4 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-mod browser_signin;
-use browser_signin::{
-    begin_browser_signin, cancel_browser_signin, disconnect_chatgpt, open_browser_helper,
-};
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
@@ -72,6 +68,11 @@ struct Activity {
     suspend_pending: bool,
     resume_generation: u64,
     suspended: bool,
+    logged_in: bool,
+    signin_was_logged_in: bool,
+}
+fn should_auto_return(foreground: bool, was_logged_in: bool, logged_in: bool) -> bool {
+    foreground && !was_logged_in && logged_in
 }
 struct Host(Mutex<Activity>);
 fn resume(app: &tauri::AppHandle) {
@@ -101,6 +102,9 @@ fn chat_page(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
         .get_webview_window("chatgpt")
         .ok_or("ChatGPT window unavailable")?;
     if w.url().map_err(|e| e.to_string())?.host_str() != Some("chatgpt.com") {
+        if !app.state::<Host>().0.lock().unwrap().background {
+            return Err("not_ready: Finish signing in first".into());
+        }
         w.navigate(tauri::Url::parse("https://chatgpt.com/").map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
         return Err("not_ready: ChatGPT page is reloading".into());
@@ -181,9 +185,22 @@ fn show_signin(app: tauri::AppHandle) {
         return;
     }
     resume(&app);
+    hide_main(app.clone());
     let Some(w) = app.get_webview_window("chatgpt") else {
         return;
     };
+    let logged_in = {
+        let state = app.state::<Host>();
+        let mut a = state.0.lock().unwrap();
+        a.background = false;
+        a.signin_was_logged_in = a.logged_in;
+        a.logged_in
+    };
+    if !logged_in {
+        if let Ok(url) = tauri::Url::parse("https://chatgpt.com/auth/login") {
+            let _ = w.navigate(url);
+        }
+    }
     let _ = w.set_decorations(true);
     let _ = w.set_skip_taskbar(false);
     tool_window(&w, false);
@@ -202,11 +219,10 @@ fn show_signin(app: tauri::AppHandle) {
     }
     let _ = w.show();
     let _ = w.set_focus();
-    app.state::<Host>().0.lock().unwrap().background = false;
 }
 #[tauri::command]
 fn bridge_event(app: tauri::AppHandle, event: serde_json::Value) -> Result<(), String> {
-    {
+    let auto_return = {
         let state = app.state::<Host>();
         let mut a = state.0.lock().unwrap();
         if event["id"]
@@ -219,9 +235,25 @@ fn bridge_event(app: tauri::AppHandle, event: serde_json::Value) -> Result<(), S
                 _ => (),
             }
         }
+        if event["type"].as_str() == Some("status") {
+            let logged_in = event["loggedIn"].as_bool() == Some(true);
+            let back = should_auto_return(!a.background, a.signin_was_logged_in, logged_in);
+            a.logged_in = logged_in;
+            back
+        } else {
+            false
+        }
+    };
+    if auto_return {
+        background(&app);
+        show(&app);
     }
     app.emit_to("main", "bridge", event)
         .map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
 }
 #[tauri::command]
 fn chat_send(app: tauri::AppHandle, id: String, prompt: String) -> Result<(), String> {
@@ -284,76 +316,6 @@ fn open_external(url: String) -> Result<(), String> {
         Ok(())
     }
 }
-#[tauri::command]
-async fn import_session_token(app: tauri::AppHandle, cookie: String) -> Result<(), String> {
-    let raw = cookie
-        .trim()
-        .strip_prefix("Cookie:")
-        .unwrap_or(cookie.trim())
-        .trim();
-    if raw.is_empty() {
-        return Err("Cookie is empty".into());
-    }
-    let pairs: Vec<(String, String)> = if raw.contains('=') {
-        raw.split(';')
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .map(|p| {
-                let (n, v) = p.trim().split_once('=').ok_or("Invalid cookie pair")?;
-                let (n, v) = (n.trim(), v.trim());
-                if n.is_empty() || v.is_empty() {
-                    return Err("Empty cookie name or value");
-                }
-                Ok((n.to_string(), v.to_string()))
-            })
-            .collect::<Result<_, _>>()?
-    } else {
-        vec![("__Secure-next-auth.session-token".into(), raw.into())]
-    };
-    resume(&app);
-    let (tx, rx) = std::sync::mpsc::channel();
-    app.get_webview_window("chatgpt")
-        .ok_or("ChatGPT window unavailable")?
-        .with_webview(move |w| {
-            let result = (|| -> windows::core::Result<()> {
-                unsafe {
-                    let core = w.controller().CoreWebView2()?;
-                    let manager = core.cast::<ICoreWebView2_2>()?.CookieManager()?;
-                    for (name, value) in pairs {
-                        let domain = if name.starts_with("__Host-") {
-                            "chatgpt.com"
-                        } else {
-                            ".chatgpt.com"
-                        };
-                        let c = manager.CreateCookie(
-                            &HSTRING::from(name),
-                            &HSTRING::from(value),
-                            &HSTRING::from(domain),
-                            &HSTRING::from("/"),
-                        )?;
-                        c.SetExpires(
-                            std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs_f64()
-                                + 30.0 * 86400.0,
-                        )?;
-                        c.SetIsSecure(true)?;
-                        c.SetIsHttpOnly(true)?;
-                        manager.AddOrUpdateCookie(&c)?;
-                    }
-                    core.Reload()?;
-                    Ok(())
-                }
-            })()
-            .map_err(|e| format!("WebView2 cookie import: {e}"));
-            let _ = tx.send(result);
-        })
-        .map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || rx.recv().map_err(|e| e.to_string())?)
-        .await
-        .map_err(|e| e.to_string())?
-}
 fn test_profile() -> Option<std::path::PathBuf> {
     if cfg!(debug_assertions) && std::env::var("QCHAT_TEST_MODE").as_deref() == Ok("1") {
         let p = std::path::PathBuf::from(
@@ -375,17 +337,17 @@ fn main() {
             );
         }
     }
-    let builder = tauri::Builder::default().manage(browser_signin::Receiver::default());
+    let builder = tauri::Builder::default();
     let builder = if test_profile().is_none() {
         builder.plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
     } else {
         builder
     };
     builder
- .manage(Host(Mutex::new(Activity{hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0})))
+ .manage(Host(Mutex::new(Activity{hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0,logged_in:false,signin_was_logged_in:false})))
 
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,_,event|{if event.state()==ShortcutState::Pressed{toggle(app);}}).build())
- .invoke_handler(tauri::generate_handler![begin_browser_signin,cancel_browser_signin,open_browser_helper,disconnect_chatgpt,bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,open_external,show_signin,import_session_token,get_theme])
+ .invoke_handler(tauri::generate_handler![bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,open_external,show_signin,quit_app,get_theme])
  .setup(|app|{
  {let b=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat").inner_size(420.,620.).min_inner_size(340.,420.).decorations(false).shadow(true).transparent(true).effects(EffectsBuilder::new().effect(Effect::Mica).build()).always_on_top(true).skip_taskbar(true).resizable(true).visible(false).build()?;
  {let b=WebviewWindowBuilder::new(app,"chatgpt",WebviewUrl::External("https://chatgpt.com/".parse()?)); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat – ChatGPT sign-in").inner_size(1000.,760.).skip_taskbar(true).decorations(false).visible(false)
@@ -396,7 +358,7 @@ fn main() {
  use tauri::{menu::{Menu,MenuItem},tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState}};
  let items=[MenuItem::with_id(app,"show","Show QChat",true,None::<&str>)?,MenuItem::with_id(app,"new","New chat",true,None::<&str>)?,MenuItem::with_id(app,"signin","Sign in to ChatGPT…",true,None::<&str>)?,MenuItem::with_id(app,"quit","Quit",true,None::<&str>)?];
  let menu=Menu::with_items(app,&items.iter().map(|x|x as &dyn tauri::menu::IsMenuItem<_>).collect::<Vec<_>>())?;
- TrayIconBuilder::new().icon(app.default_window_icon().ok_or("Window icon unavailable")?.clone()).tooltip("QChat").menu(&menu).show_menu_on_left_click(false).on_tray_icon_event(|tray,e|{if matches!(e,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){toggle(tray.app_handle());}}).on_menu_event(|app,e|match e.id().as_ref(){"show"=>show(app),"new"=>{let _=app.emit_to("main","qchat://new-chat",());show(app)},"signin"=>{show(app);let _=app.emit_to("main","qchat://open-settings",serde_json::json!({"section":"account"}));},"quit"=>app.exit(0),_=>()}).build(app)?;
+ TrayIconBuilder::new().icon(app.default_window_icon().ok_or("Window icon unavailable")?.clone()).tooltip("QChat").menu(&menu).show_menu_on_left_click(false).on_tray_icon_event(|tray,e|{if matches!(e,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){toggle(tray.app_handle());}}).on_menu_event(|app,e|match e.id().as_ref(){"show"=>show(app),"new"=>{let _=app.emit_to("main","qchat://new-chat",());show(app)},"signin"=>show_signin(app.clone()),"quit"=>quit_app(app.clone()),_=>()}).build(app)?;
  let handle=app.handle().clone();std::thread::spawn(move||loop{
  std::thread::sleep(Duration::from_secs(10));
  let hidden=handle.get_webview_window("main").and_then(|w| w.is_visible().ok()).map(|v| !v).unwrap_or(false);
@@ -447,4 +409,15 @@ fn main() {
  })
  .on_window_event(|w,e|{if let tauri::WindowEvent::CloseRequested{api,..}=e{api.prevent_close();if w.label()=="main"{hide_main(w.app_handle().clone());}else{background(w.app_handle());let _=chat_status(w.app_handle().clone());}}})
  .run(tauri::generate_context!()).expect("QChat runtime failed");
+}
+#[cfg(test)]
+mod tests {
+    use super::should_auto_return;
+    #[test]
+    fn auto_return_only_after_a_new_login_in_the_foreground() {
+        assert!(should_auto_return(true, false, true));
+        assert!(!should_auto_return(false, false, true));
+        assert!(!should_auto_return(true, true, true));
+        assert!(!should_auto_return(true, false, false));
+    }
 }

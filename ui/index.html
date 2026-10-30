@@ -96,63 +96,7 @@
           </div>
           <div class="card-content">
             <div class="signin-actions">
-              <button type="button" class="btn btn-accent" id="btn-browser-signin">
-                <span class="icon" aria-hidden="true">&#xE774;</span>Sign in with your browser
-              </button>
-              <button type="button" class="hyperlink-btn" id="btn-sheet-signin">Sign in inside QChat instead</button>
-              <button type="button" class="hyperlink-btn" id="btn-disconnect">Remove QChat’s saved session</button>
-            </div>
-
-            <section class="consent-panel" id="browser-consent" aria-labelledby="browser-consent-title" hidden>
-              <h3 id="browser-consent-title">Import your ChatGPT session</h3>
-              <p>QChat’s browser helper will copy your ChatGPT sign-in cookie into this app. Anyone with this cookie could access your account, so continue only if you trust this copy of QChat.</p>
-              <p>Saved locally and used to connect to ChatGPT. You can remove QChat’s copy below. The Edge/Chrome helper needs a one-time installation.</p>
-              <label class="consent-check"><input type="checkbox" id="browser-consent-check"> <span>I trust QChat and want to import my ChatGPT session</span></label>
-              <div class="consent-actions"><button type="button" class="btn btn-accent" id="btn-consent-continue" disabled>Continue</button><button type="button" class="btn" id="btn-consent-cancel">Cancel</button></div>
-            </section>
-
-            <section class="browser-import" id="browser-import" aria-live="polite" hidden>
-              <div class="browser-wait" id="browser-wait" role="status">Waiting for the browser helper…</div>
-              <ol class="browser-helper-steps"><li>Open the helper folder and choose <strong>Load unpacked</strong> in Edge or Chrome’s extensions page with Developer mode on.</li><li>Return to this connection tab and click the helper toolbar icon to confirm transfer.</li></ol>
-              <div class="consent-actions"><button type="button" class="btn" id="btn-open-helper">Open helper folder</button><button type="button" class="btn" id="btn-browser-cancel">Cancel</button></div>
-            </section>
-
-            <div class="signin-actions manual-action"><button type="button" class="hyperlink-btn" id="btn-manual-signin">Advanced: paste a session cookie</button></div>
-
-            <ol class="signin-steps" id="signin-steps" hidden>
-              <li class="step">
-                <span class="step-num" aria-hidden="true">1</span>
-                <div class="step-body"><p>Sign in to ChatGPT in your browser.</p></div>
-              </li>
-              <li class="step">
-                <span class="step-num" aria-hidden="true">2</span>
-                <div class="step-body">
-                  <p>Press <kbd>F12</kbd> → <strong>Application</strong> → <strong>Cookies</strong> → <strong>https://chatgpt.com</strong> and copy the value of <code>__Secure-next-auth.session-token</code>.</p>
-                  <p class="step-note">If it's split into <code>.0</code> and <code>.1</code>, paste both as <code>name=value; name=value</code>.</p>
-                </div>
-              </li>
-              <li class="step">
-                <span class="step-num" aria-hidden="true">3</span>
-                <div class="step-body">
-                  <label class="field-label" for="cookie-input">Paste it here</label>
-                  <div class="connect-row">
-                    <div class="textbox textbox-single">
-                      <input type="password" id="cookie-input" placeholder="Session token" autocomplete="off" autocapitalize="off" spellcheck="false">
-                    </div>
-                    <button type="button" class="btn btn-accent" id="btn-import-cookie">Connect</button>
-                  </div>
-                  <div class="connect-progress" id="connect-progress" role="status" hidden>
-                    <svg class="progress-ring" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" pathLength="100"></circle></svg>
-                    <span>Connecting to your account…</span>
-                  </div>
-                </div>
-              </li>
-            </ol>
-
-            <div class="infobar" id="signin-result" data-severity="success" role="status" hidden>
-              <span class="infobar-icon" aria-hidden="true"><span class="icon ib-bg">&#xF136;</span><span class="icon ib-fg" id="signin-result-glyph">&#xF13E;</span></span>
-              <p class="infobar-text"><strong class="infobar-title" id="signin-result-title"></strong> <span id="signin-result-message"></span></p>
-              <button type="button" class="icon-btn infobar-close" id="btn-signin-result-dismiss" title="Close" aria-label="Close notice"><span class="icon" aria-hidden="true">&#xE8BB;</span></button>
+              <button type="button" class="btn btn-accent" id="btn-sheet-signin">Sign in</button>
             </div>
           </div>
         </div>
