@@ -2022,46 +2022,62 @@
     { name: "keys", icon: GLYPH.settings, desc: () => "Keyboard shortcuts", run: async () => {
       let hotkey = "Alt+Q"; try { hotkey = await invoke("get_hotkey") || hotkey; } catch (_) {}
       const shortcuts = [[hotkey, "Show QChat"], [QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter", "Send"], ["Shift+Enter", "New line"], ["Esc", "Close"], ["Ctrl+N", "New chat"], ["Ctrl+K", "Menu"], ["Ctrl+P", "Chats"], ["Ctrl+.", "Stop"], ["ArrowUp / ArrowDown", "Recall prompts"], ["Paste / drop", "Attach files"]];
-      showFeatureList("Keyboard shortcuts", shortcuts.map(([key, action]) => ({ title: `${key}    ${action}`, run: () => {} })));
-      featureList.classList.add("feature-keys");
-
+      showFeatureList("Keyboard shortcuts", shortcuts.map(([key, action]) => ({ keys: key, title: action })));
     } }
   );
   const featureList = make("section", "feature-list glass");
-  featureList.hidden = true; el.slashMenu.before(featureList);
+  featureList.hidden = true; featureList.tabIndex = -1; el.slashMenu.before(featureList);
   function closeFeatureList() { featureList.hidden = true; queueSizes(); el.promptInput.focus(); }
   function showFeatureList(title, rows, searchable = false) {
-    closeSlashMenu(); featureList.classList.remove("feature-keys"); featureList.replaceChildren(); featureList.hidden = false;
-    featureList.append(make("div", "feature-heading", title));
-    const input = make("input", "feature-search"); input.placeholder = "Search chats"; input.setAttribute("aria-label", "Search chats");
-    if (searchable) featureList.append(input);
+    closeSlashMenu();
+    const keysCard = rows.some(row => row.keys);
+    featureList.classList.toggle("feature-keys", keysCard);
+    featureList.replaceChildren(); featureList.hidden = false;
+    const field = make("input", "feature-search"); field.placeholder = "Search chats"; field.setAttribute("aria-label", "Search chats");
+    if (searchable) featureList.append(field); else featureList.append(make("div", "feature-heading", title));
     const results = make("div", "feature-results"); featureList.append(results);
-    let selected = -1, buttons = [];
+    let lines = [], selected = 0;
+    const mark = () => lines.forEach((entry, i) => { if (i === selected) entry.line.dataset.selected = ""; else delete entry.line.dataset.selected; });
     const paint = () => {
-      results.replaceChildren(); buttons = []; selected = -1;
-      for (const row of rows.filter(row => `${row.title} ${row.prompt || ""}`.toLowerCase().includes(input.value.toLowerCase()))) {
-        const line = make("div", "feature-row"); const button = make("button", "feature-choice", row.title); button.type = "button";
-        button.onclick = () => { closeFeatureList(); row.run(); }; buttons.push(button); line.append(button);
-        if (row.remove) { const remove = make("button", "tool-btn", "×"); remove.setAttribute("aria-label", "Remove chat"); remove.onclick = row.remove; line.append(remove); }
+      results.replaceChildren(); lines = []; selected = 0;
+      const query = `${field.value}`.toLowerCase();
+      for (const row of rows.filter(row => `${row.title} ${row.prompt || ""}`.toLowerCase().includes(query))) {
+        const line = make("div", "feature-row");
+        if (row.selected !== undefined) {
+          const check = makeIcon(GLYPH.check, "icon feature-check");
+          check.style.visibility = row.selected ? "visible" : "hidden";
+          line.append(check);
+        }
+        if (row.run) {
+          const button = make("button", "feature-choice"); button.type = "button";
+          button.append(make("span", "feature-title", row.title), make("span", "feature-meta", row.meta || ""));
+          button.onclick = () => { closeFeatureList(); row.run(); };
+          line.append(button); lines.push({ line, row });
+        } else {
+          line.append(make("kbd", "key", row.keys), make("span", "feature-title", row.title));
+        }
+        if (row.remove) { const remove = make("button", "tool-btn"); remove.type = "button"; remove.setAttribute("aria-label", "Remove chat"); remove.append(makeIcon(GLYPH.close)); remove.onclick = row.remove; line.append(remove); }
         results.append(line);
       }
-      if (!buttons.length) results.append(make("p", "feature-heading", "No chats yet"));
+      mark();
+      if (searchable && !lines.length) results.append(make("p", "feature-heading", "No chats yet"));
     };
-    input.oninput = paint;
+    field.oninput = paint;
     featureList.onkeydown = e => {
       if (e.key === "Escape") { e.stopPropagation(); closeFeatureList(); }
-      else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); selected = (selected + (e.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length; buttons[selected]?.focus(); }
-      else if (e.key === "Enter" && e.target === input) { e.preventDefault(); buttons[Math.max(0, selected)]?.click(); }
+      else if (keysCard) { if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key !== "Shift" && e.key !== "Control" && e.key !== "Alt" && e.key !== "Meta") { e.preventDefault(); closeFeatureList(); } }
+      else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); selected = (selected + (e.key === "ArrowDown" ? 1 : -1) + lines.length) % lines.length; mark(); }
+      else if (e.key === "Enter") { e.preventDefault(); const entry = lines[selected] || lines[0]; if (entry) { closeFeatureList(); entry.row.run(); } }
     };
-    paint(); queueSizes(); (searchable ? input : buttons[0])?.focus();
+    paint(); queueSizes(); (searchable ? field : featureList).focus();
   }
   function showModels(event) {
     const models = event.models || [];
-    showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? models.map(model => ({ title: `${model.selected ? "✓ " : ""}${model.label}`, run: () => invoke("chat_model_choose", { id: model.id }).catch(() => {}) })) : [{ title: event.error ? "Open ChatGPT" : "Sign in", run: openSignin }]);
+    showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? models.map(model => ({ title: model.label, selected: Boolean(model.selected), run: () => invoke("chat_model_choose", { id: model.id }).catch(() => {}) })) : [{ title: event.error ? "Open ChatGPT" : "Sign in", run: openSignin }]);
   }
   listen("bridge", ({ payload }) => { if (payload.type === "models") showModels(payload); else if (payload.type === "model-chosen") setModeLabel(payload.model.label); });
   function showChatList() {
-    showFeatureList("Chats", chats.recent.map(chat => ({ title: `${chat.title || "Untitled chat"}  ${elapsedLabel(chat.lastActive)}`, prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { chats.recent = chats.recent.filter(c => c.key !== chat.key); saveChats(); renderTabs(); showChatList(); } })), true);
+    showFeatureList("Chats", chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { chats.recent = chats.recent.filter(c => c.key !== chat.key); saveChats(); renderTabs(); showChatList(); } })), true);
   }
   document.addEventListener("pointerdown", e => { if (!featureList.hidden && !featureList.contains(e.target)) closeFeatureList(); });
   window.addEventListener("keydown", e => {
