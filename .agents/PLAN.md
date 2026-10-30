@@ -1,3 +1,18 @@
+## Overnight polish (2026-10-31, branch overnight-polish)
+
+Owner asleep, asked for a full refinement: "janky, doesn't look like the app I want, hard to use". Authority: DESIGN.md. Orchestrator playbook recovered from git (37b5396:.agents/ORCHESTRATOR.md); deleted from the tree earlier, not restored.
+
+| id | task | model | status |
+|---|---|---|---|
+| N1 | Audits: app UX, settings, design critique | DeepSeek, GLM, Argon | done (.tmp/audit-*.md, critique-a.md) |
+| N2 | Native: click-through, blur companion, hotkey, autostart | Sol | done, blur unverified |
+| N3 | Blur stacking fix + surfaces_debug | Sol | running |
+| N4 | Visual rebuild per DESIGN.md + settings | Sol | running |
+| N5 | 20 UX bug fixes + tools/ux-regress-test.mjs (worktree) | DeepSeek max | running |
+| N6 | ui/highlight.js code highlighter | GLM | running |
+| N7 | Features: orb menu, /chats switcher, /model, /temp, reply actions, prompt recall, /help + first-run | next | todo |
+| N8 | Real-window visual check of blur/click-through; release; cross-family review; README | T0 | todo |
+
 ## Settings window fix (2026-10-31)
 
 Follow-up: user was still running the original consolidated executable, so the separately named fix never loaded. Found a second native bug: `fit_geometry` truncated height to the space above a saved bar position. It now preserves content height and shifts the bar down when required. Settings command errors show inline feedback. Native test now exercises show (offscreen by default); `--visible` checks normal on-screen placement, document visibility and focus. Rust 9/9, full glass UI suite and native settings 10 checks PASS, including all five menu rows inside the real fitted window. Desktop computer-use helper unavailable; direct application runtime checks verify focus and bounds. Release built and copied to smooth/consolidated/settings-fix paths; originals backed up in `dist/backup-settings-20261031-010400`. Running app had switched to smooth during work; restarted that exact path and verified its binary hash matches the final build (current PID31188; initial replacement process exited, subsequent launch is responsive with no stderr). Saved profile preserved.

@@ -2,9 +2,9 @@
 (function () {
   "use strict";
 
-  const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
-  const listen = (event, cb) => window.__TAURI__.event.listen(event, cb);
-  const emit = (event, payload) => window.__TAURI__.event.emit(event, payload);
+  const invoke = (cmd, args) => (window.__TAURI__?.core?.invoke ? window.__TAURI__.core.invoke(cmd, args) : Promise.reject(new Error("Available in the desktop app")));
+  const listen = (event, cb) => window.__TAURI__?.event?.listen(event, cb);
+  const emit = (event, payload) => window.__TAURI__?.event?.emit(event, payload);
   const { SCHEMA, DEFAULTS, LOOKS } = QSettings;
   const root = document.documentElement;
   const $ = (id) => document.getElementById(id);
@@ -103,6 +103,7 @@
       input.value = settings[key];
       input.style.setProperty("--pct", `${((settings[key] - spec.min) / (spec.max - spec.min)) * 100}%`);
       value.textContent = formatValue(spec, settings[key], format);
+      input.setAttribute("aria-valuetext", value.textContent);
       row.toggleAttribute("data-changed", settings[key] !== DEFAULTS[key]);
     });
     return row;
@@ -184,7 +185,8 @@
       else if (e.key === "End") next = buttons.length - 1;
       if (next < 0) return;
       e.preventDefault();
-      select(buttons[next]);
+      for (const button of buttons) button.tabIndex = -1;
+      buttons[next].tabIndex = 0;
       buttons[next].focus();
     });
   }
@@ -384,6 +386,37 @@
     }
   ];
 
+  const appearance = SECTIONS.find(s => s.id === "appearance");
+  appearance.groups.push(...SECTIONS.splice(SECTIONS.findIndex(s => s.id === "shape"), 1)[0].groups);
+  const layout = SECTIONS.splice(SECTIONS.findIndex(s => s.id === "layout"), 1)[0];
+  const textSection = SECTIONS.find(s => s.id === "text");
+  textSection.title = "Text & size"; textSection.groups.push(...layout.groups);
+  SECTIONS.find(s => s.id === "chats").title = "Chats";
+  SECTIONS.find(s => s.id === "account").title = "Account";
+  function desktopControl(kind) {
+    const button = make("button", "pill-btn", "Loading...");
+    const hint = make("small", "", "");
+    const row = actionRow(kind === "hotkey" ? "Global shortcut" : "Launch at login", hint, button);
+    let current = kind === "hotkey" ? "Record shortcut" : false;
+    const sync = () => { button.textContent = kind === "hotkey" ? current : current ? "On" : "Off"; if (kind !== "hotkey") button.setAttribute("aria-checked", String(current)); };
+    if (kind !== "hotkey") { button.setAttribute("role", "switch"); button.setAttribute("aria-label", "Launch at login"); }
+    invoke(kind === "hotkey" ? "get_hotkey" : "get_autostart").then(v => { if (kind === "hotkey" ? typeof v === "string" : typeof v === "boolean") current = v; sync(); }).catch(() => { sync(); hint.textContent = "Available in the desktop app"; });
+    button.addEventListener("click", async () => {
+      if (kind === "hotkey") { button.dataset.recording = "true"; button.textContent = "Press a key combination"; return; }
+      try { await invoke("set_autostart", {enabled: !current}); current = !current; sync(); hint.textContent = ""; } catch (e) { hint.textContent = String(e.message || e); }
+    });
+    button.addEventListener("keydown", async e => {
+      if (!button.dataset.recording) return;
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === "Escape") { delete button.dataset.recording; sync(); return; }
+      if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return;
+      if (!e.ctrlKey && !e.altKey && !e.metaKey) { hint.textContent = "Include Ctrl, Alt or Windows"; return; }
+      const accelerator = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super", e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join("+");
+      try { await invoke("set_hotkey", {accelerator}); current = accelerator; sync(); hint.textContent = ""; delete button.dataset.recording; } catch (err) { hint.textContent = String(err.message || err); }
+    });
+    return row;
+  }
+  SECTIONS.find(s => s.id === "behavior").groups.unshift([() => desktopControl("hotkey"), () => desktopControl("autostart"), () => switchRow({key: "nativeBlur", label: "Desktop blur"})]);
   const scrollEl = $("section-scroll");
   const nav = $("section-nav");
   const preview = $("preview");
@@ -408,6 +441,9 @@
       }
       if (group.childElementCount) node.append(group);
     });
+    const advanced = new Set(["rim", "sheen", "shadow", "border", "saturation", "bubbleTint", "riseDistance", "lineHeight"]);
+    const rows = [...node.querySelectorAll(".row[data-key]")].filter(r => advanced.has(r.dataset.key));
+    if (rows.length) { const detail = make("details", "fine-tune"); detail.append(make("summary", "", "Fine-tune"), ...rows); node.append(detail); }
     scrollEl.append(node);
     sectionNodes.push({ node, section });
 
@@ -437,7 +473,7 @@
       if (id === section.id) link.setAttribute("aria-current", "true");
       else link.removeAttribute("aria-current");
     }
-    preview.toggleAttribute("data-collapsed", !section.preview);
+
   }
 
   let spyQueued = false;
@@ -457,14 +493,6 @@
     spyQueued = true;
     requestAnimationFrame(spy);
   });
-
-  function replayPreview() {
-    const bubble = $("preview-bubble");
-    bubble.classList.remove("replay");
-    void bubble.offsetWidth;
-    bubble.classList.add("replay");
-  }
-  $("btn-replay").addEventListener("click", replayPreview);
 
   // Controls that only matter with another setting on read as such.
   function syncDependents() {
@@ -545,5 +573,5 @@
   syncDependents();
   setActive(SECTIONS[0]);
   invoke("chat_status").catch(() => {});
-  $("btn-close").focus({ preventScroll: true });
+  $("sheet").focus({ preventScroll: true });
 })();

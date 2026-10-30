@@ -14,53 +14,53 @@
   const LOOKS = {
     system: { label: "System", scheme: "auto" },
     aurora: {
-      label: "Aurora", scheme: "dark", tint: ["#0F122E", "#24103E"], ink: "#F5F8FF",
+      label: "Aurora", scheme: "dark", tint: ["#12141C", "#191B27"], ink: "#F5F8FF",
       accent: ["#22D3EE", "#38BDF8", "#818CF8"], edge: "#D946EF", accentText: "#67E8F9",
       orb: ["#22D3EE", "#6366F1", "#D946EF"], critical: "#F43F5E", criticalText: "#FDA4AF"
     },
     frost: {
-      label: "Frost", scheme: "light", tint: ["#F4F9FF", "#E1EEFF"], ink: "#0B1528",
+      label: "Frost", scheme: "light", tint: ["#F5F7FA", "#E8EDF3"], ink: "#0B1528",
       accent: ["#0EA5E9", "#0284C7", "#2563EB"], edge: "#38BDF8", accentText: "#0369A1",
       orb: ["#38BDF8", "#0284C7", "#2563EB"], critical: "#DC2626", criticalText: "#B91C1C"
     },
     sunset: {
-      label: "Sunset", scheme: "dark", tint: ["#2A0F23", "#3A1612"], ink: "#FFF5F2",
+      label: "Sunset", scheme: "dark", tint: ["#211B1D", "#292120"], ink: "#FFF5F2",
       accent: ["#FB923C", "#FB7185", "#E11D48"], edge: "#FB923C", accentText: "#FDA4AF",
       orb: ["#FBBF24", "#FB7185", "#BE185D"], critical: "#EF4444", criticalText: "#FCA5A5"
     },
     sakura: {
-      label: "Sakura", scheme: "light", tint: ["#FFF5F9", "#FBE6F0"], ink: "#260C1A",
+      label: "Sakura", scheme: "light", tint: ["#FAF6F7", "#F0E9EC"], ink: "#260C1A",
       accent: ["#F43F5E", "#E11D48", "#BE185D"], edge: "#F472B6", accentText: "#BE123C",
       orb: ["#F472B6", "#E11D48", "#9D174D"], critical: "#DC2626", criticalText: "#B91C1C"
     },
     forest: {
-      label: "Forest", scheme: "dark", tint: ["#0A221C", "#0C2C2C"], ink: "#F0FDF8",
+      label: "Forest", scheme: "dark", tint: ["#161E1B", "#1E2826"], ink: "#F0FDF8",
       accent: ["#34D399", "#10B981", "#0D9488"], edge: "#2DD4BF", accentText: "#6EE7B7",
       orb: ["#34D399", "#10B981", "#0284C7"], critical: "#F43F5E", criticalText: "#FDA4AF"
     },
     graphite: {
-      label: "Graphite", scheme: "dark", tint: ["#14161A", "#1E2127"], ink: "#F8FAFC",
+      label: "Graphite", scheme: "dark", tint: ["#14161A", "#202227"], ink: "#F8FAFC",
       accent: ["#F8FAFC", "#E2E8F0", "#CBD5E1"], edge: "#94A3B8", accentText: "#F1F5F9",
       orb: ["#F8FAFC", "#CBD5E1", "#64748B"], critical: "#F43F5E", criticalText: "#FDA4AF"
     },
     ink: {
-      label: "Mono ink", scheme: "light", tint: ["#F7F6F3", "#ECEAE4"], ink: "#111111",
+      label: "Mono ink", scheme: "light", tint: ["#F7F6F3", "#ECEBE7"], ink: "#111111",
       accent: ["#2B2B2B", "#161616", "#000000"], edge: "#6B6B6B", accentText: "#111111",
       orb: ["#6B6B6B", "#2B2B2B", "#000000"], critical: "#C81E1E", criticalText: "#A61B1B"
     },
     candy: {
-      label: "Candy", scheme: "light", tint: ["#FFF7FD", "#EFF3FF"], ink: "#23123A",
+      label: "Candy", scheme: "light", tint: ["#FAF7FA", "#ECEEF4"], ink: "#23123A",
       accent: ["#FF5FA2", "#B14CFF", "#4C7DFF"], edge: "#46D5FF", accentText: "#8A1FD6",
       orb: ["#FFB14C", "#FF5FA2", "#7A5CFF"], critical: "#E11D48", criticalText: "#BE123C"
     }
   };
 
   const SYSTEM_DARK = {
-    scheme: "dark", tint: ["#181B22", "#222630"], ink: "#F8FAFC", edge: "#429CE3",
+    scheme: "dark", tint: ["#181B22", "#23262D"], ink: "#F8FAFC", edge: "#429CE3",
     critical: "#F43F5E", criticalText: "#FDA4AF"
   };
   const SYSTEM_LIGHT = {
-    scheme: "light", tint: ["#F8FAFC", "#EBF0F7"], ink: "#0F172A", edge: "#429CE3",
+    scheme: "light", tint: ["#F8FAFC", "#ECEFF3"], ink: "#0F172A", edge: "#429CE3",
     critical: "#DC2626", criticalText: "#B91C1C"
   };
   const DEFAULT_THEME = { accent: "#0078D4", accentLight1: "#429CE3", accentLight2: "#8AC8F0", accentDark1: "#005A9E" };
@@ -81,6 +81,7 @@
 
     cornerWeight: range(85, 0, 100, 1, "%"),
     glassOpacity: range(72, 20, 100, 1, "%"),
+    nativeBlur: bool(true),
     blur: range(18, 0, 40, 1, "px"),
     rim: range(60, 0, 100, 1, "%"),
     sheen: range(50, 0, 100, 1, "%"),
@@ -92,11 +93,11 @@
     feel: choice("springy", ["smooth", "springy", "snappy"]),
     riseDistance: range(30, 0, 60, 1, "px"),
     tabPop: bool(true),
-    shimmer: bool(true),
+    shimmer: bool(false),
 
     textSize: range(14, 12, 20, 0.5, "px"),
     fontFamily: choice("segoe", ["segoe", "system", "serif", "rounded", "mono"]),
-    lineHeight: range(1.5, 1.2, 2, 0.05),
+    lineHeight: range(1.6, 1.2, 2, 0.05),
     justify: bool(false),
 
     barWidth: range(460, 340, 720, 10, "px"),
@@ -156,7 +157,8 @@
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw === null) return sanitize(legacyLook());
-      return sanitize(JSON.parse(raw));
+      const parsed = JSON.parse(raw);
+      return sanitize(parsed.v === undefined || parsed.v === VERSION ? parsed : {});
     } catch (_) {
       return sanitize({});
     }
@@ -237,7 +239,7 @@
     }
     return 0.98;
   }
-  const TEXT_2 = 0.8;
+  const TEXT_2 = 0.86;
 
   // ---------------------------------------------------------------------------
   // Motion
@@ -265,7 +267,7 @@
     rounded: 'ui-rounded, "Nunito", "Varela Round", Bahnschrift, "Segoe UI Variable Text", sans-serif',
     mono: '"Cascadia Mono", "Cascadia Code", Consolas, monospace'
   };
-  const BAR_HEIGHT = { compact: 44, cozy: 52, roomy: 60 };
+  const BAR_HEIGHT = { compact: 38, cozy: 44, roomy: 50 };
 
   // ---------------------------------------------------------------------------
   // Environment
@@ -332,21 +334,27 @@
 
     // --- Material -----------------------------------------------------------
     const floor = legibleFloor(p.tint, p.ink);
-    const alpha = lessGlass ? Math.max(s.glassOpacity / 100, 0.96) : s.glassOpacity / 100;
-    // Below the floor the rim stays clear and a soft inner scrim carries the text.
-    const scrim = alpha >= floor ? 0 : 1 - (1 - floor) / (1 - alpha);
-    const textAlpha = Math.max(alpha, floor);
-    const backdrops = p.tint.flatMap((t) => [over(t, textAlpha, [255, 255, 255]), over(t, textAlpha, [0, 0, 0])]);
+    const alpha = Math.max(s.glassOpacity / 100, lessGlass ? 0.96 : floor);
+    const textAlpha = alpha;
+    const backdrops = p.tint.flatMap((t) => [over(t, alpha, [255,255,255]), over(t, alpha, [0,0,0])]);
+    root.dataset.nativeblur = s.nativeBlur ? "on" : "off";
+    const tintArgb = (((p.dark ? 0x55 : 0x66) << 24) | (Math.round(p.tint[0][0]) << 16) | (Math.round(p.tint[0][1]) << 8) | Math.round(p.tint[0][2])) >>> 0;
+    window.QSurfaces?.setBlur(s.nativeBlur, tintArgb)?.catch(() => {});
 
     css["--tint-a"] = triple(p.tint[0]);
     css["--tint-b"] = triple(p.tint[1]);
     css["--glass-a"] = alpha.toFixed(3);
-    css["--glass-scrim"] = scrim.toFixed(3);
+    css["--glass-scrim"] = "0";
     css["--glass-solid"] = textAlpha.toFixed(3);
     css["--blur"] = `${lessGlass ? 0 : s.blur}px`;
     css["--bw"] = `${s.border}px`;
 
     const rim = s.rim / 100, sheen = s.sheen / 100, shadow = s.shadow / 100;
+    css["--rim-ink"] = p.dark ? "255 255 255" : "15 23 42";
+    css["--rim-alpha"] = (0.13 * rim / 0.6).toFixed(3);
+    css["--specular"] = ((p.dark ? 0.16 : 0.8) * sheen / 0.5).toFixed(3);
+    css["--shadow-ink"] = p.dark ? "0 0 0" : "15 23 42";
+    css["--material-shadow"] = `0 10px 26px -8px rgb(var(--shadow-ink) / ${Math.min(.65, (p.dark ? .42 : .21) * shadow / .55)}), 0 1px 2px rgb(var(--shadow-ink) / ${Math.min(.35, (p.dark ? .22 : .11) * shadow / .55)})`;
     css["--rim-top"] = ((p.dark ? 0.5 : 0.95) * rim).toFixed(3);
     css["--rim-bottom"] = ((p.dark ? 0.14 : 0.36) * rim).toFixed(3);
     css["--edge-hi"] = ((p.dark ? 0.62 : 0.95) * rim).toFixed(3);
@@ -380,7 +388,7 @@
     // User and error bubbles: as much tint as the text can bear.
     const tintAlpha = Math.max(textAlpha, 0.86);
     css["--tinted-alpha"] = tintAlpha.toFixed(3);
-    const strength = (s.bubbleTint / 100) * (p.dark ? 0.8 : 0.5);
+    const strength = (s.bubbleTint / 100) * 0.28;
     const tinted = (color, wanted) => {
       for (let x = wanted; x > 0; x -= 0.02) {
         const pair = [mix(p.tint[0], color[0], x), mix(p.tint[1], color[1], x)];
@@ -395,7 +403,7 @@
     const user = tinted([p.accent[0], p.accent[2]], strength);
     css["--user-a"] = triple(user[0]);
     css["--user-b"] = triple(user[1]);
-    const error = tinted([p.critical, p.critical], p.dark ? 0.5 : 0.26);
+    const error = p.tint;
     css["--error-a"] = triple(error[0]);
     css["--error-b"] = triple(error[1]);
     css["--glow"] = ((0.04 + 0.12 * (s.bubbleTint / 100))).toFixed(3);
@@ -404,11 +412,11 @@
     const t = s.cornerWeight / 100;
     const round = Math.min(1, t / 0.75);
     const barHeight = BAR_HEIGHT[s.density];
-    const control = barHeight - 16;
+    const control = barHeight - 14;
     css["--r-bar"] = `${(6 + round * (barHeight / 2 - 6)).toFixed(1)}px`;
-    css["--r-bubble"] = `${(6 + t * 26).toFixed(1)}px`;
-    css["--r-chip"] = `${(6 + round * 12).toFixed(1)}px`;
-    css["--r-tab"] = `${(5 + t * 9).toFixed(1)}px`;
+    css["--r-bubble"] = `${(t <= .85 ? 6 + t * (14 / .85) : 20 + (t - .85) * 80).toFixed(1)}px`;
+    css["--r-chip"] = `${(6 + round * 6).toFixed(1)}px`;
+    css["--r-tab"] = `${(5 + t * (4 / .85)).toFixed(1)}px`;
     css["--r-inner"] = `${(4 + t * 10).toFixed(1)}px`;
     css["--r-control"] = `${(4 + round * (control / 2 - 4)).toFixed(1)}px`;
     css["--bar-h"] = `${barHeight}px`;
@@ -434,10 +442,7 @@
     root.style.colorScheme = p.dark ? "dark" : "light";
 
     const data = root.dataset;
-    data.look = s.look;
-    data.theme = p.dark ? "dark" : "light";
     data.motion = motionOn ? "on" : "off";
-    data.density = s.density;
     data.tabpop = String(s.tabPop);
     data.shimmer = String(s.shimmer);
     data.tabclock = String(s.showTabClock);

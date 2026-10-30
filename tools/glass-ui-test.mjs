@@ -106,12 +106,12 @@ try {
   await open('/');
   await settle();
   const idle = await evalJS(`({bar:document.getElementById('bar').offsetHeight, stack:document.getElementById('stack').offsetHeight, fit:__mock.fit, zoneHidden:document.getElementById('bubble-zone').hidden, tabsHidden:document.getElementById('tabs').hidden, bodyBg:getComputedStyle(document.body).backgroundColor})`);
-  check('compact idle is just the bar', idle.bar === 52 && idle.zoneHidden && idle.tabsHidden, JSON.stringify(idle));
+  check('compact idle is just the bar', idle.bar === 44 && idle.zoneHidden && idle.tabsHidden, JSON.stringify(idle));
   const guestChip = await evalJS(`!document.getElementById('guest-notice').hidden`);
   if (guestChip) await evalJS(`document.getElementById('btn-guest-dismiss').click()`);
   await settle();
   const idleFit = await evalJS(`__mock.fit`);
-  check('idle fit_window is bar plus gutters', idleFit.width === 460 + 56 && idleFit.height === 52 + 56, JSON.stringify(idleFit));
+  check('idle fit_window is bar plus gutters', idleFit.width === 460 + 56 && idleFit.height === 44 + 56, JSON.stringify(idleFit));
   check('no set_layout call or layout attribute', await count('set_layout') === 0 && await evalJS(`!document.documentElement.dataset.layout`));
   check('guest chip appears before first message', guestChip);
   check('window prefs sent on startup', await evalJS(`__mock.last('set_window_prefs')?.args.alwaysOnTop===true && __mock.last('set_window_prefs')?.args.rememberPosition===true`));
@@ -351,6 +351,10 @@ try {
   await settle();
   check('long recent titles are capped and keep the full accessible name', await evalJS(`(()=>{const tabs=[...document.querySelectorAll('#tabs .tab')];return tabs.every(t=>Array.from(t.querySelector('.tab-title').textContent).length<=24 && t.querySelector('.tab-title').textContent.endsWith('…')) && tabs[0].getAttribute('aria-label').includes('A long conversation title for testing');})()`));
   check('recent chats fit the narrow composer and contribute to window height', await evalJS(`(()=>{const s=document.getElementById('stack').getBoundingClientRect(),bar=document.getElementById('bar').getBoundingClientRect(),nav=document.getElementById('tabs').getBoundingClientRect();return [...document.querySelectorAll('#tabs .tab')].every(t=>{const r=t.getBoundingClientRect();return r.left>=s.left && r.right<=s.right+1 && r.top>=s.top && Math.abs(r.bottom-bar.top)<4;}) && nav.height>20 && __mock.fit.height>=document.getElementById('stack').offsetHeight+56;})()`));
+  for (const zoom of [1, 1.5]) {
+    check(`tabs touch bar at ${zoom * 100}% zoom`, await evalJS(`(()=>{document.body.style.zoom=${zoom};const b=document.getElementById('bar').getBoundingClientRect(),t=document.getElementById('tabs').getBoundingClientRect();document.body.style.zoom='';return Math.abs(b.top-t.bottom)<.6;})()`));
+  }
+
 
   const restoredImageChat = { ...chat('image', 'conv-image', MIN), lastResponse: 'Previous image reply.\n\n![Generated image](qchat-media:qchat-media-old)', lastHasMedia: true };
   await open('/', { chats: seeded(restoredImageChat) });
@@ -503,7 +507,7 @@ try {
   await evalJS(`__mock.emit('qchat://settings-changed', {...QSettings.DEFAULTS, cornerWeight:0, glassOpacity:40, animations:'off', barWidth:600, alwaysOnTop:false})`);
   await settle();
   check('live apply: corner weight changes radii', r0 !== await cssVar('--r-bubble') && await cssVar('--r-bubble') === '6.0px' && await cssVar('--r-bar') === '6.0px');
-  check('live apply: opacity changes glass variable', await cssVar('--glass-a') === '0.400');
+  check('live apply: opacity respects the legibility floor', await evalJS(`QSettings.settings.glassOpacity===40 && +document.documentElement.style.getPropertyValue('--glass-a')>=.4 && +document.documentElement.style.getPropertyValue('--glass-a')<1`));
   check('live apply: animations off zero the durations', await cssVar('--t4') === '1ms' && await evalJS(`document.documentElement.dataset.motion`) === 'off');
   check('live apply: bar width reaches fit_window', await evalJS(`__mock.fit.width`) === 656);
   check('live apply: window prefs follow', await evalJS(`__mock.last('set_window_prefs').args.alwaysOnTop`) === false);
@@ -530,7 +534,7 @@ try {
       const a=+st.getPropertyValue('--glass-solid'); const tintedA=+st.getPropertyValue('--tinted-alpha');
       for(const pair of [['--tint-a','--tint-b'],['--user-a','--user-b'],['--error-a','--error-b']]) for(const name of pair) for(const back of [[255,255,255],[0,0,0]]) {
         const fill=over(parse(st.getPropertyValue(name)),name.startsWith('--tint')?a:tintedA,back);
-        const main=ratio(ink,fill), second=ratio(over(ink,.8,fill),fill);
+        const main=ratio(ink,fill), second=ratio(over(ink,.86,fill),fill);
         if(main<4.5||second<4.5) out.push([look,glassOpacity,name,back[0],main.toFixed(2),second.toFixed(2)].join(' '));
       }
       for(const name of ['--accent-text','--critical-text']) { const hex=st.getPropertyValue(name).trim(); const c=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));
@@ -541,31 +545,35 @@ try {
   })()`);
   check('text reaches 4.5:1 on white and black at any opacity, in every look', contrastReport.length === 0, contrastReport.slice(0, 6).join(' | '));
   check('all looks present', await evalJS(`['system','aurora','frost','sunset','sakura','forest','graphite','ink','candy'].every(k=>QSettings.LOOKS[k])`));
-  check('low opacity keeps a text scrim', await evalJS(`(QSettings.apply(document.documentElement,{...QSettings.DEFAULTS,glassOpacity:20}), +document.documentElement.style.getPropertyValue('--glass-scrim')>0.3)`));
+  check('glass has no inner scrim', await evalJS(`getComputedStyle(document.querySelector('.glass'),'::before').content==='none'`));
   await evalJS(`QSettings.apply(document.documentElement,QSettings.DEFAULTS)`);
 
   // Shadows inside the gutter at full strength
   const shadowFits = await evalJS(`(()=>{QSettings.apply(document.documentElement,{...QSettings.DEFAULTS,shadow:100});const s=document.documentElement.style;const y=parseFloat(s.getPropertyValue('--shadow-y')),r=parseFloat(s.getPropertyValue('--shadow-r'));QSettings.apply(document.documentElement,QSettings.DEFAULTS);return y+r-4<=28;})()`);
   check('strongest shadow fits in the 28px gutter', shadowFits);
 
+  await open('/');
+  check('send hidden when empty', await evalJS(`getComputedStyle(document.getElementById('btn-send')).opacity==='0'`));
+  await type('Hello'); await sleep(200);
+  check('send visible with text', await evalJS(`!document.getElementById('btn-send').disabled && getComputedStyle(document.getElementById('btn-send')).opacity==='1'`));
   // Settings window
   await open('/settings.html');
   await settle();
-  check('settings window loads in mock mode', await evalJS(`document.querySelectorAll('.section').length===9 && !!document.getElementById('sheet')`));
-  check('settings has the required sections', await evalJS(`['Appearance','Shape & glass','Motion','Text','Layout','Behavior','Chats & privacy','Account & shortcuts','About'].every(t=>[...document.querySelectorAll('.section-title')].some(n=>n.textContent===t))`));
+  check('settings window loads in mock mode', await evalJS(`document.querySelectorAll('.section').length===7 && !!document.getElementById('sheet')`));
+  check('settings has the required sections', await evalJS(`['Appearance','Motion','Text & size','Behavior','Chats','Account','About'].every(t=>[...document.querySelectorAll('.section-title')].some(n=>n.textContent===t))`));
   const allKeys = await evalJS(`Object.keys(QSettings.SCHEMA).filter(k=>k!=='look'&&!document.querySelector('.row[data-key="'+k+'"]'))`);
   check('every setting has a control', allKeys.length === 0, allKeys.join());
   await evalJS(`document.getElementById('control-cornerWeight').value=10; document.getElementById('control-cornerWeight').dispatchEvent(new Event('input',{bubbles:true}))`);
   await sleep(160);
   check('a control change persists', await evalJS(`JSON.parse(localStorage.getItem('qchat.settings')).cornerWeight`) === 10);
-  check('a control change applies live here', await cssVar('--r-bubble') === '8.6px', await cssVar('--r-bubble'));
+  check('a control change applies live here', await cssVar('--r-bubble') === '7.6px', await cssVar('--r-bubble'));
   check('a control change is relayed to the chat window', await evalJS(`__mock.calls.filter(c=>c.cmd==='emit:qchat://settings-changed').at(-1)?.args.cornerWeight`) === 10);
   check('changed control offers a reset', await evalJS(`document.querySelector('.row[data-key=cornerWeight]').hasAttribute('data-changed')`));
   await evalJS(`document.querySelector('.row[data-key=cornerWeight] .row-reset').click()`);
   check('per-control reset restores the default', await evalJS(`JSON.parse(localStorage.getItem('qchat.settings')).cornerWeight`) === 85);
   await evalJS(`document.querySelector('[data-look=frost]').click(); document.querySelector('.row[data-key=shimmer] .switch').click(); document.querySelector('.row[data-key=feel] [data-value=snappy]').click()`);
   const toggled = await evalJS(`JSON.parse(localStorage.getItem('qchat.settings'))`);
-  check('look, switch and segmented controls work', toggled.look === 'frost' && toggled.shimmer === false && toggled.feel === 'snappy');
+  check('look, switch and segmented controls work', toggled.look === 'frost' && toggled.shimmer === true && toggled.feel === 'snappy');
   await evalJS(`document.getElementById('btn-reset-all').click()`);
   check('reset all asks first', await evalJS(`!document.getElementById('btn-reset-confirm').hidden && JSON.parse(localStorage.getItem('qchat.settings')).look==='frost'`));
   await evalJS(`document.getElementById('btn-reset-confirm').click()`);
@@ -582,7 +590,7 @@ try {
   check('clear chats relays to the chat window', await evalJS(`__mock.calls.some(c=>c.cmd==='emit:qchat://clear-chats')`));
   await evalJS(`document.querySelector('[data-section=about]').click()`);
   await sleep(100);
-  check('non-visual sections hide the preview', await evalJS(`document.getElementById('preview').hasAttribute('data-collapsed')`));
+  check('settings has no preview', await evalJS(`!document.querySelector('.preview,#btn-replay')`));
   await evalJS(`document.getElementById('btn-close').click()`);
   check('close button calls close_settings', await count('close_settings') === 1);
   await key('Escape');
@@ -737,7 +745,7 @@ try {
 
     await viewport(620, 720);
     await open('/settings.html'); await settle(); await shot('40-settings-top');
-    for (const section of ['shape', 'motion', 'layout', 'behavior', 'chats', 'account']) {
+    for (const section of ['appearance', 'motion', 'text', 'behavior', 'chats', 'account', 'about']) {
       await evalJS(`document.querySelector('[data-section=${section}]').click()`); await sleep(120); await shot(`41-settings-${section}`);
     }
     await open('/settings.html', { settings: { look: 'frost' } }); await evalJS(`document.documentElement.classList.add('wall-light')`); await settle(); await shot('42-settings-frost');

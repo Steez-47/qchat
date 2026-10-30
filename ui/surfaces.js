@@ -8,11 +8,12 @@
       if (now-lastFrame < 1000/60) {scheduled=false;refresh();return;}
       lastFrame=now;
       scheduled = false;
-      const nodes = [...document.querySelectorAll('[data-surface], .glass')];
+      const nodes = [...document.querySelectorAll('[data-surface], .glass, .thinking, button, textarea')];
       for (const n of observed) if (!nodes.includes(n)) { resize.unobserve(n); observed.delete(n); }
       const rects = [];
       for (const n of nodes) {
         if (!observed.has(n)) { resize.observe(n); observed.add(n); }
+        if (n.closest('.preview') || n.id === 'btn-send') continue;
         const s = getComputedStyle(n), b = n.getBoundingClientRect();
         if (!n.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) || s.pointerEvents === 'none' || !b.width || !b.height) continue;
         const raw = s.borderTopLeftRadius.split(' ')[0];
@@ -32,5 +33,12 @@
     for (const e of ['animationstart','animationend','animationcancel','transitionrun','transitionend','transitioncancel','scroll','resize']) window.addEventListener(e,refresh,true);
     refresh();
   }
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!document.getElementById('bar')) return;
+    for (const n of document.querySelectorAll('button, textarea, [tabindex]')) {
+      if (!n.closest('.glass') && n.id !== 'btn-send') n.dataset.surface = '';
+    }
+    start();
+  });
   window.QSurfaces = {start,refresh,setBlur(enabled,tintArgb) {return Promise.resolve(invoke('surfaces_set_blur',{enabled:!!enabled,tintArgb:tintArgb >>> 0}));}};
 })();

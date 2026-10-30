@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <title>QChat</title>
   <script src="mock.js"></script>
+  <script src="surfaces.js"></script>
   <script src="settings-core.js"></script>
   <link rel="stylesheet" href="glass.css">
   <link rel="stylesheet" href="app.css">
@@ -51,7 +52,7 @@
 
       <nav class="tabs" id="tabs" aria-label="Recent chats" hidden></nav>
 
-      <footer class="bar glass" id="bar">
+      <footer class="bar glass" id="bar" data-tauri-drag-region>
         <input id="attachment-input" type="file" multiple hidden>
         <div class="orb" id="orb" data-tauri-drag-region title="Drag QChat">
           <span class="status-dot" id="status-dot" data-state="connecting"></span>

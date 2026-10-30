@@ -417,7 +417,7 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
    Response content
    --------------------------------------------------------------------------- */
 .turn-content { overflow-wrap: anywhere; }
-.bubble-response .turn-content { font-size: calc(var(--text-size) + 1px); line-height: max(var(--line-h), 1.65); }
+.bubble-response .turn-content { font-size: calc(var(--text-size) + .5px); line-height: var(--line-h); }
 html[data-justify="true"] .bubble-response .turn-content p { text-align: justify; }
 .turn-content > :first-child { margin-top: 0; }
 .turn-content > :last-child { margin-bottom: 0; }
@@ -439,9 +439,9 @@ html[data-justify="true"] .bubble-response .turn-content p { text-align: justify
   letter-spacing: -0.015em;
   text-wrap: pretty;
 }
-.turn-content h1 { font-size: 1.8em; }
-.turn-content h2 { font-size: 1.5em; padding-bottom: 0.35em; border-bottom: 1px solid var(--stroke-2); }
-.turn-content h3 { font-size: 1.25em; color: var(--accent-text); }
+.turn-content h1 { font-size: 1.4em; }
+.turn-content h2 { font-size: 1.22em; padding-bottom: 0.35em; border-bottom: 1px solid var(--stroke-2); }
+.turn-content h3 { font-size: 1.05em; color: var(--text-1); }
 .turn-content h4 { font-size: 1.1em; }
 .turn-content h5, .turn-content h6 { font-size: 1em; color: var(--text-2); }
 .turn-content strong { font-weight: 750; }
@@ -455,7 +455,7 @@ html[data-justify="true"] .bubble-response .turn-content p { text-align: justify
   cursor: pointer;
 }
 .turn-content a:hover { text-decoration-thickness: 2px; }
-.turn-content blockquote { padding: 10px 14px; border-left: 3px solid var(--accent-text); border-radius: 0 8px 8px 0; background: var(--fill-1); color: var(--text-2); }
+.turn-content blockquote { padding: 10px 14px; border-left: 0; border-radius: 0 8px 8px 0; background: var(--fill-1); color: var(--text-2); }
 .turn-content blockquote > :last-child { margin-bottom: 0; }
 .turn-content hr { border: 0; border-top: 1px solid var(--stroke-2); margin: 1.5em 0; }
 .turn-content :not(pre) > code {
@@ -517,7 +517,7 @@ html[data-justify="true"] .bubble-response .turn-content p { text-align: justify
   font-variant-numeric: tabular-nums;
 }
 .turn-content th, .turn-content td { padding: 9px 12px; text-align: left; vertical-align: top; box-shadow: inset 0 -1px 0 var(--stroke-1); }
-.turn-content th { font-weight: 700; background: rgb(var(--accent-rgb) / 0.13); }
+.turn-content th { font-weight: 700; background: var(--fill-2); }
 .turn-content tbody tr:nth-child(even) { background: var(--fill-1); }
 .turn-content tr:last-child td { box-shadow: none; }
 
@@ -664,3 +664,10 @@ html[data-motion="off"] .history-panel { transition: none; }
 .history-row[data-wide] .bubble-inner,
 .history-row:has(.code-block, table) .bubble-inner { width: var(--bar-w); max-width: 100%; }
 .history-row .bubble-user .turn-content { display: block; overflow: visible; }
+
+.slash-menu { border-radius: 16px; }
+.thinking span { background: var(--text-2); }
+.turn-row[data-status="error"] .bubble-response::after, .notice-error::after { border-color: rgb(var(--critical-rgb) / .65); }
+.error-text { color: var(--critical-text); }
+.stack[data-history] > .history-controls { position: relative; top: auto; }
+.bubble-scroll:has(~ .jump-chip:not([hidden])) .bubble-inner { padding-bottom: 52px; }
