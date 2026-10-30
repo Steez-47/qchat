@@ -249,7 +249,7 @@ Fast`,getAttribute:()=> 'true',dispatchEvent(){}};
   b.document.querySelectorAll = selector => selector.includes('Select ChatGPT model') ? [switcher] : selector==='[role="menu"]' && opened ? [menu] : [];
   b.document.getElementById = id => id==='model-menu' && opened ? menu : null;
   const pending = b.listModels(); await b.tick(400); await pending;
-  assert.equal(escaped, true); assert.deepEqual(b.events.at(-1).models.map(m=>m.label), ['GPT-6']);
+  assert.equal(escaped, true); assert.equal(JSON.stringify(b.events.at(-1).models.map(m=>m.label)), '["GPT-6"]');
 });
 
 test('missing model switcher reports unavailable and sends nothing', async () => {
