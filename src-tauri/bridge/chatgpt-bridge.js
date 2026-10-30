@@ -1098,18 +1098,34 @@
     },
     async listModels(chooseId) {
       let switcher, opened = false;
+      const unavailable = () => { if (chooseId === undefined) emit({type:'models',models:[],error:'unavailable'}); };
+      const click = node => { for(const type of ['pointerdown','mousedown','pointerup','mouseup','click']) node.dispatchEvent(new (type.startsWith('pointer') ? PointerEvent : MouseEvent)(type,{bubbles:true,cancelable:true,button:0})); };
       try {
-        switcher = document.querySelector('[data-testid*="model-switcher"]') || Array.from(document.querySelectorAll('header [aria-haspopup], main [aria-haspopup], form [aria-haspopup]')).find(node => /model|chatgpt|gpt/i.test((node.textContent || '') + (node.getAttribute('aria-label') || '')));
-        if (!switcher) { emit({ type: 'models', models: [], error: 'unavailable' }); return; }
-        switcher.click(); opened = true; await sleep(150);
-        const nodes = Array.from(document.querySelectorAll('[role="menuitem"],[role="menuitemradio"],[role="option"]'));
-        const models = nodes.map((node, i) => ({ id: String(i), label: node.textContent.trim(), selected: node.getAttribute('aria-checked') === 'true' }));
-        if (chooseId !== undefined) {
-          const index = models.findIndex(model => model.id === chooseId);
-          if (index >= 0) { nodes[index].click(); emit({ type: 'model-chosen', model: models[index] }); }
-        } else emit({ type: 'models', models });
-      } catch (_) { emit({ type: 'models', models: [], error: 'unavailable' }); }
-      finally { if (opened) (document.activeElement || switcher).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true })); }
+        if(active) { unavailable(); return; }
+        let candidates = [...document.querySelectorAll('[data-testid*="model-switcher"]')];
+        if(!candidates.length) candidates = [...document.querySelectorAll('header [aria-haspopup]')].filter(node => /model|chatgpt|gpt/i.test((node.textContent||'')+(node.getAttribute('aria-label')||'')));
+        if(candidates.length !== 1) { unavailable(); return; }
+        switcher=candidates[0];
+        const previous = new Set(document.querySelectorAll('[role="menu"]'));
+        if(switcher.getAttribute('aria-expanded') !== 'true') click(switcher);
+        opened=true;
+        let nodes=[];
+        for(let i=0;i<30;i++) {
+          const controlled=document.getElementById(switcher.getAttribute('aria-controls'));
+          const menus=[...document.querySelectorAll('[role="menu"]')].filter(n=>!previous.has(n));
+          const menu=controlled || (menus.length===1 ? menus[0] : null);
+          nodes=menu ? [...menu.querySelectorAll('[role="menuitem"],[role="menuitemradio"],[role="option"]')] : [];
+          if(nodes.length) break;
+          await sleep(50);
+        }
+        if(!nodes.length) { unavailable(); return; }
+        const models=nodes.map(node=>({id:node.textContent.trim(),label:node.textContent.trim(),selected:node.getAttribute('aria-checked')==='true'}));
+        if(chooseId !== undefined) {
+          const matches=models.map((m,i)=>m.id===chooseId ? i : -1).filter(i=>i>=0);
+          if(matches.length===1) {click(nodes[matches[0]]);emit({type:'model-chosen',model:models[matches[0]]});}
+        } else emit({type:'models',models});
+      } catch(_) { unavailable(); }
+      finally {if(opened) (document.activeElement || switcher).dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true}));}
     },
     async chooseModel(id) { return window.__qchat.listModels(id); },
     async newChat(options = {}) {

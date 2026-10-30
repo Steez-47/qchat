@@ -130,7 +130,7 @@ try {
   await writeFile(path.join(root,'.tmp/features/feature-models-reviewed.png'),Buffer.from(modelShot.data,'base64'));
   check('model rows mark the selection with an accent check glyph', await evalJS(`(()=>{const rows=[...document.querySelectorAll('.feature-list .feature-row')];if(rows.length!==2)return false;const a=rows[0],b=rows[1];return a.querySelector('.feature-check')&&a.querySelector('.feature-check').style.visibility==='visible'&&a.querySelector('.feature-title').textContent==='Mock model'&&b.querySelector('.feature-check')&&b.querySelector('.feature-check').style.visibility==='hidden'&&b.querySelector('.feature-title').textContent==='Mock alternate';})()`));
   await evalJS(`[...document.querySelectorAll('.feature-choice')].find(n=>n.textContent==='Mock alternate').click()`);
-  check('model choice label', await evalJS(`document.getElementById('mode-chip').textContent==='Mock alternate'`));
+  check('model choice label', await evalJS(`document.getElementById('model-chip').textContent==='Mock alternate'`));
   await type('/keys'); await key('Enter');
   await mkdir(path.join(root,'.tmp/features'),{recursive:true});
   const keysShot = await cdp('Page.captureScreenshot',{format:'png'});
@@ -195,6 +195,26 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride', {width:516,height:300,deviceScaleFactor:3,mobile:false});
   const tabShot = await cdp('Page.captureScreenshot',{format:'png'});
   await writeFile(path.join(root,'.tmp/features/feature-tabs-reviewed-3x.png'),Buffer.from(tabShot.data,'base64'));
+  const appSource = await readFile(path.join(root,'ui/app.js'),'utf8');
+  const surfacesSource = await readFile(path.join(root,'ui/surfaces.js'),'utf8');
+  const nativeSource = await readFile(path.join(root,'src-tauri/src/surfaces.rs'),'utf8');
+  const bridgeSource = await readFile(path.join(root,'src-tauri/bridge/chatgpt-bridge.js'),'utf8');
+  const settingsAcl = JSON.parse(await readFile(path.join(root,'src-tauri/capabilities/settings.json'),'utf8'));
+  check('finding 1 settings selection and desktop command ACL', ['get-hotkey','set-hotkey','get-autostart','set-autostart','get-selection-hotkey','set-selection-hotkey','set-selection-clipboard'].every(c=>settingsAcl.permissions.includes('allow-'+c)));
+  check('finding 2 startup registration tracked and fallback attempted', nativeSource.includes('s.registered=registered') && nativeSource.includes('chosen = "Alt+Q"'));
+  check('finding 3 temporary command awaits new chat before marking it', appSource.includes('await startNewChat(false); chats.current.temporary = true'));
+  check('finding 4 held buttons only prevent ignoring',nativeSource.includes('!desired || [1,2,4,5,6]'));
+  check('finding 5 model selection refuses active jobs and ambiguous triggers',bridgeSource.includes('if(active)') && bridgeSource.includes('candidates.length !== 1') && bridgeSource.includes("['pointerdown','mousedown','pointerup','mouseup','click']"));
+  check('finding 6 temporary chat saves a fresh current with recents',appSource.includes('chats.current.temporary ? freshChat() : chats.current'));
+  check('finding 7 model menu polls and empty menu reports unavailable',bridgeSource.includes('i<30') && bridgeSource.includes('if(!nodes.length) { unavailable(); return; }'));
+  check('finding 8 separate model chip has a first-line 28 character label',appSource.includes('modeChips.append(modeChip, modelChip)') && appSource.includes(".split('\\n')[0].slice(0,28)"));
+  check('finding 9 retry guards attachments and persists actual prompt',appSource.includes('chat.lastPrompt = prompt;') && appSource.includes('!turn.prompt || turn.hadAttachments'));
+  check('finding 10 surface limit and stale fail-open guard',nativeSource.includes('rects.len() > 2048') && nativeSource.includes('!rs.is_empty()') && nativeSource.includes('reported.elapsed()'));
+  check('finding 11 surface geometry intersects viewport and clipping ancestors',surfacesSource.includes('Math.min(innerWidth,b.right)') && surfacesSource.includes('parent=parent.parentElement'));
+  check('finding 12 surfaces use Set membership and finite animation loops',surfacesSource.includes('new Set(nodes)') && surfacesSource.includes('iterations !== Infinity') && nativeSource.includes('Result<(), String>'));
+  check('finding 13 autostart compares stored executable path',nativeSource.includes("trim_end_matches('\\0') == expected"));
+  check('finding 14 reconnect navigates signed-in unready page',appSource.includes('bridge.loggedIn && !bridge.ready ? "chat_new" : "chat_status"'));
+  check('finding 15 quota trims oldest entries without erasing all recents',appSource.includes('while (recent.length > 1)') && !appSource.includes('current.transcript.slice(-2) }, recent: []'));
   check('no runtime errors', problems.length === 0, problems.slice(0, 3).join(' | '));
 } catch (e) {
   console.error(e);

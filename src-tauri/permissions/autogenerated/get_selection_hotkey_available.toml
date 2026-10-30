@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-selection-hotkey-available"
+description = "Enables the get_selection_hotkey_available command without any pre-configured scope."
+commands.allow = ["get_selection_hotkey_available"]
+
+[[permission]]
+identifier = "deny-get-selection-hotkey-available"
+description = "Denies the get_selection_hotkey_available command without any pre-configured scope."
+commands.deny = ["get_selection_hotkey_available"]

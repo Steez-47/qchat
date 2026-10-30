@@ -64,6 +64,8 @@ function browser({ ready = false, focused = true, composer = 'legacy', hidden = 
   const context = vm.createContext({
     history: { pushState: (_, __, path) => navigate(path) }, PopStateEvent: class {},
     window, document, location, URL, AbortController, console, TextDecoder,
+    MouseEvent: class { constructor(type, options) {this.type=type;Object.assign(this,options);} },
+    PointerEvent: class { constructor(type, options) {this.type=type;Object.assign(this,options);} },
     KeyboardEvent: class { constructor(type, options) { this.type = type; Object.assign(this, options); } },
     MutationObserver: class { observe() {} disconnect() {} },
     Date: class extends Date { static now() { return now; } },
@@ -227,13 +229,14 @@ test('openConversation on the same route only refreshes status', async () => {
 
 test('model list and choice close the synthetic menu without sending', async () => {
   const b = browser(); let opened = false, chosen = false;
-  const switcher = { click() { opened = true; }, dispatchEvent(e) { if (e.key === 'Escape') opened = false; } };
-  const option = { textContent: 'Synthetic model', getAttribute: () => 'true', click() { chosen = true; } };
-  b.document.querySelector = selector => selector.includes('model-switcher') ? switcher : null;
-  b.document.querySelectorAll = selector => selector.includes('menuitem') && opened ? [option] : [];
+  const switcher = { getAttribute: name => name === 'aria-controls' ? 'model-menu' : String(opened), dispatchEvent(e) { if(e.type==='pointerdown') opened=true; if(e.key==='Escape') opened=false; } };
+  const option = {textContent:'Synthetic model',getAttribute:()=> 'true',dispatchEvent(e){if(e.type==='click')chosen=true;}};
+  const menu = {querySelectorAll:()=>opened ? [option] : []};
+  b.document.querySelectorAll = selector => selector.includes('model-switcher') ? [switcher] : selector==='[role="menu"]' && opened ? [menu] : [];
+  b.document.getElementById = id => id==='model-menu' && opened ? menu : null;
   let pending = b.listModels(); await b.tick(200); await pending;
   assert.equal(opened, false); assert.equal(b.events.at(-1).models[0].label, 'Synthetic model');
-  pending = b.chooseModel('0'); await b.tick(200); await pending;
+  pending = b.chooseModel('Synthetic model'); await b.tick(200); await pending;
   assert.equal(chosen, true); assert.equal(opened, false); assert.equal(b.sendClicks(), 0);
 });
 test('missing model switcher reports unavailable and sends nothing', async () => {

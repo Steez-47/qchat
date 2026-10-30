@@ -5,10 +5,10 @@ use windows::{
     core::Interface,
     Win32::{System::Com::*, UI::Accessibility::*},
 };
-pub struct State(pub Mutex<String>, pub Mutex<bool>);
+pub struct State(pub Mutex<String>, pub Mutex<bool>, pub Mutex<bool>);
 impl Default for State {
     fn default() -> Self {
-        Self(Mutex::new("Ctrl+Alt+Q".into()), Mutex::new(true))
+        Self(Mutex::new("Ctrl+Alt+Q".into()), Mutex::new(true), Mutex::new(false))
     }
 }
 fn parse(s: &str) -> Result<Option<Shortcut>, String> {
@@ -32,6 +32,8 @@ pub fn get_selection_hotkey(state: tauri::State<State>) -> String {
     state.0.lock().unwrap().clone()
 }
 #[tauri::command]
+pub fn get_selection_hotkey_available(state: tauri::State<State>) -> bool { state.0.lock().unwrap().is_empty() || *state.2.lock().unwrap() }
+#[tauri::command]
 pub fn set_selection_clipboard(state: tauri::State<State>, enabled: bool) {
     *state.1.lock().unwrap() = enabled;
 }
@@ -50,14 +52,12 @@ pub fn set_selection_hotkey(
     let real = crate::test_profile().is_none();
     if real {
         if let Some(v) = old {
-            app.global_shortcut()
-                .unregister(v)
-                .map_err(|e| e.to_string())?;
+            if *state.2.lock().unwrap() { let _ = app.global_shortcut().unregister(v); }
         }
         if let Some(v) = new {
             if let Err(e) = app.global_shortcut().register(v) {
                 if let Some(v) = old {
-                    let _ = app.global_shortcut().register(v);
+                    *state.2.lock().unwrap() = app.global_shortcut().register(v).is_ok();
                 }
                 return Err(e.to_string());
             }
@@ -68,14 +68,15 @@ pub fn set_selection_hotkey(
     }) {
         if real {
             if let Some(v) = new {
-                let _ = app.global_shortcut().unregister(v);
+                if *state.2.lock().unwrap() { let _ = app.global_shortcut().unregister(v); }
             }
             if let Some(v) = old {
-                let _ = app.global_shortcut().register(v);
+                *state.2.lock().unwrap() = app.global_shortcut().register(v).is_ok();
             }
         }
         return Err(e);
     }
+    *state.2.lock().unwrap() = new.is_some();
     *saved = accelerator.clone();
     Ok(accelerator)
 }
@@ -85,7 +86,7 @@ pub fn start(app: &tauri::AppHandle) {
         .and_then(|p| std::fs::read(p).ok())
         .and_then(|b| serde_json::from_slice::<String>(&b).ok())
         .unwrap_or("Ctrl+Alt+Q".into());
-    let _ = set_selection_hotkey(app.clone(), app.state(), saved);
+    if set_selection_hotkey(app.clone(), app.state(), saved).is_err() { let _ = set_selection_hotkey(app.clone(), app.state(), "Alt+Q".into()); }
 }
 pub fn matches(app: &tauri::AppHandle, shortcut: &Shortcut) -> bool {
     parse(&app.state::<State>().0.lock().unwrap())

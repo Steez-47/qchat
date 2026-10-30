@@ -46,10 +46,12 @@ impl Surface {
 struct Data {
     debug: DebugState,
     rects: Option<Vec<Surface>>,
+    reported: std::time::Instant,
     blur: bool,
     tint: u32,
     revision: u64,
     hotkey: String,
+    registered: bool,
     autostart: bool,
 }
 pub struct State(Mutex<Data>);
@@ -58,10 +60,12 @@ impl Default for State {
         Self(Mutex::new(Data {
             debug: DebugState::default(),
             rects: None,
+            reported: std::time::Instant::now(),
             blur: false,
             tint: 0x99202020,
             revision: 0,
             hotkey: "Alt+Q".into(),
+            registered: false,
             autostart: false,
         }))
     }
@@ -117,11 +121,11 @@ pub fn surfaces_set(
     window: tauri::WebviewWindow,
     state: tauri::State<State>,
     rects: Vec<Surface>,
-) -> Result<Vec<Surface>, String> {
+) -> Result<(), String> {
     if window.label() != "main" {
         return Err("Main window only".into());
     }
-    if rects.len() > 512
+    if rects.len() > 2048
         || rects.iter().any(|r| {
             ![r.x, r.y, r.w, r.h, r.r]
                 .iter()
@@ -134,9 +138,10 @@ pub fn surfaces_set(
         return Err("Invalid surface geometry".into());
     }
     let mut s = state.0.lock().unwrap();
-    s.rects = Some(rects.clone());
+    s.rects = Some(rects);
+    s.reported = std::time::Instant::now();
     s.revision += 1;
-    Ok(rects)
+    Ok(())
 }
 #[tauri::command]
 pub fn surfaces_set_blur(state: tauri::State<State>, enabled: bool, tint_argb: u32) {
@@ -160,6 +165,8 @@ pub fn get_hotkey(state: tauri::State<State>) -> String {
     state.0.lock().unwrap().hotkey.clone()
 }
 #[tauri::command]
+pub fn get_hotkey_available(state: tauri::State<State>) -> bool { state.0.lock().unwrap().registered }
+#[tauri::command]
 pub fn set_hotkey(
     app: tauri::AppHandle,
     state: tauri::State<State>,
@@ -170,11 +177,10 @@ pub fn set_hotkey(
     let mut s = state.0.lock().unwrap();
     let old = parse(&s.hotkey)?;
     if crate::test_profile().is_none() {
-        app.global_shortcut()
-            .unregister(old)
-            .map_err(|e| e.to_string())?;
+        if s.registered { let _ = app.global_shortcut().unregister(old); }
         if let Err(e) = app.global_shortcut().register(new) {
             let rollback = app.global_shortcut().register(old);
+            s.registered = rollback.is_ok();
             return Err(format!(
                 "Shortcut unavailable: {e}; restored previous shortcut: {}",
                 rollback.is_ok()
@@ -187,10 +193,11 @@ pub fn set_hotkey(
     if let Err(e) = persist {
         if crate::test_profile().is_none() {
             let _ = app.global_shortcut().unregister(new);
-            let _ = app.global_shortcut().register(old);
+            s.registered = app.global_shortcut().register(old).is_ok();
         }
         return Err(e);
     }
+    s.registered = true;
     s.hotkey = accelerator.clone();
     Ok(accelerator)
 }
@@ -213,6 +220,8 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
 fn registry(set: Option<bool>) -> Result<bool, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let expected = format!("\"{}\"", exe.display());
     unsafe {
         let mut key = 0isize;
         let path = wide("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
@@ -229,8 +238,7 @@ fn registry(set: Option<bool>) -> Result<bool, String> {
         }
         let code = match set {
             Some(true) => {
-                let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-                let value = wide(&format!("\"{}\"", exe.display()));
+                let value = wide(&expected);
                 RegSetValueExW(
                     key,
                     name.as_ptr(),
@@ -249,17 +257,12 @@ fn registry(set: Option<bool>) -> Result<bool, String> {
                 }
             }
             None => {
-                let mut size = 0;
-                let c = RegQueryValueExW(
-                    key,
-                    name.as_ptr(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    &mut size,
-                );
+                let mut size = 32768u32;
+                let mut value = vec![0u16; 16384];
+                let c = RegQueryValueExW(key,name.as_ptr(),std::ptr::null_mut(),std::ptr::null_mut(),value.as_mut_ptr() as _,&mut size);
                 RegCloseKey(key);
-                return Ok(c == 0);
+                return Ok(c == 0 && String::from_utf16_lossy(&value[..(size as usize / 2).min(value.len())]).trim_end_matches('\0') == expected);
+
             }
         };
         RegCloseKey(key);
@@ -448,12 +451,10 @@ pub fn start(app: &tauri::AppHandle) {
         .and_then(|b| serde_json::from_slice::<String>(&b).ok())
         .filter(|s| parse(s).is_ok())
         .unwrap_or("Alt+Q".into());
-    app.state::<State>().0.lock().unwrap().hotkey = saved.clone();
-    if crate::test_profile().is_none() {
-        if let Err(e) = app.global_shortcut().register(saved.as_str()) {
-            eprintln!("Shortcut unavailable: {e}")
-        }
-    }
+    let mut chosen = saved.clone();
+    let registered = crate::test_profile().is_some() || app.global_shortcut().register(saved.as_str()).is_ok();
+    let registered = if !registered { chosen = "Alt+Q".into(); app.global_shortcut().register(chosen.as_str()).is_ok() } else { true };
+    { let state=app.state::<State>(); let mut s=state.0.lock().unwrap(); s.hotkey=chosen; s.registered=registered; }
     let app = app.clone();
     std::thread::spawn(move || unsafe {
         let Some(w) = app.get_webview_window("main") else {
@@ -613,14 +614,13 @@ pub fn start(app: &tauri::AppHandle) {
             let mut p = Point::default();
             if visible
                 && GetCursorPos(&mut p) != 0
-                && [1, 2, 4, 5, 6].iter().all(|k| GetAsyncKeyState(*k) >= 0)
             {
                 let desired = rects.as_ref().is_some_and(|rs| {
-                    !rs.iter().any(|r| {
+                    !rs.is_empty() && app.state::<State>().0.lock().unwrap().reported.elapsed().as_secs_f64() < 2. && !rs.iter().any(|r| {
                         r.hit((p.x - bounds.left) as f64, (p.y - bounds.top) as f64, scale)
                     })
                 });
-                if desired != ignored && w.set_ignore_cursor_events(desired).is_ok() {
+                if desired != ignored && (!desired || [1,2,4,5,6].iter().all(|k| GetAsyncKeyState(*k) >= 0)) && w.set_ignore_cursor_events(desired).is_ok() {
                     ignored = desired
                 }
             }

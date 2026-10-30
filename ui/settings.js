@@ -403,6 +403,7 @@
     const sync = () => { button.textContent = isHotkey ? (current || "Disabled") : current ? "On" : "Off"; if (!isHotkey) button.setAttribute("aria-checked", String(current)); };
     if (!isHotkey) { button.setAttribute("role", "switch"); button.setAttribute("aria-label", "Launch at login"); }
     invoke(isHotkey ? "get_" + command : "get_autostart").then(v => { if (isHotkey ? typeof v === "string" : typeof v === "boolean") current = v; sync(); }).catch(() => { sync(); hint.textContent = "Available in the desktop app"; });
+    if (isHotkey) invoke("get_" + command + "_available").then(available => { if (!available) hint.textContent = "Shortcut unavailable"; }).catch(() => {});
     button.addEventListener("click", async () => {
       if (isHotkey) { button.dataset.recording = "true"; button.textContent = "Press a key combination"; return; }
       try { await invoke("set_autostart", {enabled: !current}); current = !current; sync(); hint.textContent = ""; } catch (e) { hint.textContent = String(e.message || e); }

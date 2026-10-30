@@ -322,7 +322,7 @@
       typeof item.id === "string" && (item.role === "user" || item.role === "assistant") && typeof item.text === "string")
       .map(item => {
         const snapshot = item.role === "user" ? { text: item.text, hasMedia: Boolean(item.hasMedia) } : completedSnapshot(item.text, item.hasMedia);
-        return { id: item.id, role: item.role, text: snapshot.text, hasMedia: snapshot.hasMedia, stopped: item.role === "assistant" && Boolean(item.stopped), sources: cleanSources(item.sources) };
+        return { id: item.id, role: item.role, text: snapshot.text, hasMedia: snapshot.hasMedia, hadAttachments: Boolean(item.hadAttachments), stopped: item.role === "assistant" && Boolean(item.stopped), sources: cleanSources(item.sources) };
       });
     // Older versions saved only the latest exchange; earlier turns are unavailable.
     const transcript = [];
@@ -339,6 +339,7 @@
       role: turn.role,
       text: snapshot.text,
       hasMedia: snapshot.hasMedia,
+      hadAttachments: Boolean(turn.hadAttachments),
       sources: cleanSources(turn.sources),
       stopped: turn.role === "assistant" && Boolean(turn.stopped)
     };
@@ -768,6 +769,7 @@
       title: text(raw.title, 40),
       lastActive: time(raw.lastActive),
       lastPrompt: text(raw.lastPrompt, Infinity),
+      lastHadAttachments: raw.lastHadAttachments === true,
       lastResponse: snapshot.text,
       lastHasMedia: snapshot.hasMedia,
       lastSources: cleanSources(raw.lastSources),
@@ -813,27 +815,30 @@
   }
 
   function saveChats() {
-    if (chats.current.temporary) return;
     if (!QSettings.settings.keepHistory) {
       try { localStorage.removeItem(CHATS_KEY); } catch (_) {}
       return;
     }
-    let current = storedChat(chats.current);
-    let recent = chats.recent.map((chat, i) => i < 7 ? storedChat(chat) : { ...storedChat(chat, true), transcript: [], draft: "" });
+    const source = chats.current.temporary ? freshChat() : chats.current;
+    let current = storedChat(source);
+    let recent = chats.recent.map((chat, i) => i < 7 ? storedChat(chat) : { ...storedChat(chat), transcript: [], draft: "" });
     const write = () => localStorage.setItem(CHATS_KEY, JSON.stringify({ v: CHATS_VERSION, current, recent }));
     try { write(); return; } catch (_) {}
-    // Under quota pressure, cap each message before dropping older transcripts.
-    current = storedChat(chats.current, true);
-    recent = chats.recent.map((chat, i) => i < 7 ? storedChat(chat, true) : { ...storedChat(chat, true), transcript: [], draft: "" });
-    try { write(); return; } catch (_) {}
-    for (let i = recent.length - 1; i >= 0; i--) {
-      if (!recent[i].transcript.length) continue;
-      recent[i] = { ...recent[i], transcript: [] };
+    // Drop oldest transcripts before trimming metadata; preserve full current text.
+    for (let i=recent.length-1;i>=0;i--) {
+      recent[i] = {...recent[i], transcript:[], lastResponse:""};
       try { write(); return; } catch (_) {}
     }
+    while (recent.length > 1) {
+      recent.pop();
+      try { write(); return; } catch (_) {}
+    }
+    current = storedChat(source, true);
+    recent = recent.map(chat => storedChat(chat, true));
     try { write(); return; } catch (_) {}
-    // Keep the latest exchange of the current chat if the quota is still tight.
-    try { localStorage.setItem(CHATS_KEY, JSON.stringify({ v: CHATS_VERSION, current: { ...current, draft: "", transcript: current.transcript.slice(-2) }, recent: [] })); } catch (_) {}
+    current = {...current, draft:"", transcript:current.transcript.slice(-2)};
+    try { write(); } catch (_) {}
+
   }
 
   function pushRecent(chat) {
@@ -1466,7 +1471,7 @@
 
     entry.row.dataset.status = turn.status;
     const retryTool = entry.row.querySelector('[data-action="retry-reply"]');
-    if (retryTool) retryTool.hidden = turn.status !== "done";
+    if (retryTool) retryTool.hidden = turn.status !== "done" || !turn.prompt || turn.hadAttachments;
     const openTool = entry.row.querySelector('[aria-label="Open in ChatGPT"]');
     if (openTool) openTool.hidden = !chats.current.conversationId;
     const activity = entry.activity;
@@ -1695,7 +1700,7 @@
     const snapshot = completedSnapshot(cachedTurn ? cachedTurn.text : chat.lastResponse, cachedTurn ? cachedTurn.hasMedia : chat.lastHasMedia);
     const fallback = snapshot.hasMedia || (!snapshot.text && chat.conversationId && chat.lastPrompt);
     if (!snapshot.text && !fallback) return;
-    const turn = { id: cachedTurn?.id || crypto.randomUUID(), role: "assistant", text: snapshot.text, sources: cleanSources(cachedTurn ? cachedTurn.sources : chat.lastSources), status: "done", cachedMedia: Boolean(fallback), chatKey: chat.key, prompt: chat.lastPrompt, stopped: Boolean(cachedTurn?.stopped) };
+    const turn = { id: cachedTurn?.id || crypto.randomUUID(), role: "assistant", text: snapshot.text, sources: cleanSources(cachedTurn ? cachedTurn.sources : chat.lastSources), status: "done", cachedMedia: Boolean(fallback), chatKey: chat.key, prompt: chat.lastPrompt, hadAttachments: cachedTurn?.hadAttachments || chat.lastHadAttachments, stopped: Boolean(cachedTurn?.stopped) };
     turns.push(turn);
     el.zone.append(createResponseRow(turn));
     const entry = turnNodes.get(turn.id);
@@ -1798,7 +1803,8 @@
 
     const label = prompt || files[0]?.file.name || "Attachment";
     chat.title = chat.title || label.slice(0, 40);
-    chat.lastPrompt = label;
+    chat.lastPrompt = prompt;
+    chat.lastHadAttachments = files.length > 0;
     rememberTurn(userTurn);
     rememberTurn(assistantTurn);
     chat.lastActive = Date.now();
@@ -2007,6 +2013,11 @@
   // 11. Slash commands
   // ---------------------------------------------------------------------------
   const modeChip = make("div", "mode-chip glass glass-tiny"); modeChip.id = "mode-chip"; modeChip.hidden = true; el.tabs.before(modeChip);
+  const modelChip = modeChip.cloneNode(false);
+  modelChip.id = 'model-chip';
+  const modeChips = make("div", "mode-chips");
+  modeChip.before(modeChips); modeChips.append(modeChip, modelChip);
+  function setModelLabel(label) { modelChip.textContent = String(label || '').split('\n')[0].slice(0,28); modelChip.hidden = !modelChip.textContent; queueSizes(); }
   function setModeLabel(label) { modeChip.textContent = label; modeChip.hidden = !label; queueSizes(); }
   const COMMANDS = [
     { name: "settings", icon: GLYPH.settings, desc: () => "Open settings", run: () => invoke("open_settings").catch(() => showGlobalError(null, "Couldn't open settings. Try again.")) },
@@ -2017,7 +2028,7 @@
   ];
   COMMANDS.push(
     { name: "model", icon: GLYPH.settings, desc: () => "Model", run: () => { showFeatureList("Loading models…", []); invoke("chat_models").catch(() => showModels({ error: "unavailable" })); } },
-    { name: "temp", icon: GLYPH.newChat, desc: () => "Temporary chat", run: () => { startNewChat(false); chats.current.temporary = true; setModeLabel("Temporary"); pageSync = freshInPage(chats.current); } },
+    { name: "temp", icon: GLYPH.newChat, desc: () => "Temporary chat", run: async () => { await startNewChat(false); chats.current.temporary = true; setModeLabel("Temporary"); pageSync = freshInPage(chats.current); } },
     { name: "chats", icon: GLYPH.clock, desc: () => "Chats", run: showChatList },
     { name: "keys", icon: GLYPH.settings, desc: () => "Keyboard shortcuts", run: async () => {
       let hotkey = "Alt+Q"; try { hotkey = await invoke("get_hotkey") || hotkey; } catch (_) {}
@@ -2060,7 +2071,7 @@
         results.append(line);
       }
       mark();
-      if (searchable && !lines.length) results.append(make("p", "feature-heading", "No chats yet"));
+      if (title === "Chats" && !lines.length) results.append(make("p", "feature-heading", "No chats yet"));
     };
     field.oninput = paint;
     featureList.onkeydown = e => {
@@ -2075,7 +2086,7 @@
     const models = event.models || [];
     showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? models.map(model => ({ title: model.label, selected: Boolean(model.selected), run: () => invoke("chat_model_choose", { id: model.id }).catch(() => {}) })) : [{ title: event.error ? "Open ChatGPT" : "Sign in", run: openSignin }]);
   }
-  listen("bridge", ({ payload }) => { if (payload.type === "models") showModels(payload); else if (payload.type === "model-chosen") setModeLabel(payload.model.label); });
+  listen("bridge", ({ payload }) => { if (payload.type === "models") showModels(payload); else if (payload.type === "model-chosen") setModelLabel(payload.model.label); });
   function showChatList() {
     showFeatureList("Chats", chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { chats.recent = chats.recent.filter(c => c.key !== chat.key); saveChats(); renderTabs(); showChatList(); } })), true);
   }
@@ -2384,7 +2395,7 @@
       el.promptInput.focus();
     } else if (action === "retry-turn" || action === "retry-reply") {
       const turn = turns.find((t) => t.id === actionBtn.dataset.id);
-      if (turn && typeof turn.prompt === "string" && !isStreaming()) {
+      if (turn && turn.prompt && !turn.hadAttachments && !isStreaming()) {
         sendPrompt(turn.prompt);
         el.promptInput.focus();
       }
@@ -2500,7 +2511,7 @@
   el.btnErrorSignin.addEventListener("click", () => {
     if (el.btnErrorSignin.dataset.action === "retry-connect") {
       hideGlobalError();
-      invoke("chat_status").catch(() => {});
+      invoke(bridge.loggedIn && !bridge.ready ? "chat_new" : "chat_status").catch(() => {});
       armConnectDeadline();
       el.promptInput.focus();
       return;
