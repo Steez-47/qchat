@@ -34,6 +34,7 @@ impl Surface {
     }
 }
 struct Data {
+    debug: DebugState,
     rects: Option<Vec<Surface>>,
     blur: bool,
     tint: u32,
@@ -45,6 +46,7 @@ pub struct State(Mutex<Data>);
 impl Default for State {
     fn default() -> Self {
         Self(Mutex::new(Data {
+            debug: DebugState::default(),
             rects: None,
             blur: false,
             tint: 0x99202020,
@@ -53,6 +55,49 @@ impl Default for State {
             autostart: false,
         }))
     }
+}
+#[derive(Default, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugState {
+    blur_ok: bool,
+    glass_hwnd: isize,
+    main_hwnd: isize,
+    glass_visible: bool,
+    rect_count: usize,
+    ignoring: bool,
+    glass_is_below_main: bool,
+}
+// No state mutation or native window operations are exposed by this test hook.
+#[tauri::command]
+pub fn surfaces_debug(state: tauri::State<State>) -> Result<DebugState, String> {
+    if crate::test_profile().is_none() {
+        return Err("Test profile required".into());
+    }
+    let s = state.0.lock().unwrap();
+    let mut debug = s.debug.clone();
+    debug.rect_count = s.rects.as_ref().map_or(0, Vec::len);
+    unsafe {
+        debug.glass_visible = IsWindowVisible(debug.glass_hwnd) != 0;
+        debug.glass_is_below_main = below_main(debug.main_hwnd, debug.glass_hwnd, false);
+    }
+    Ok(debug)
+}
+// Hidden helper windows can intervene without painting between the two surfaces.
+unsafe fn below_main(main: isize, glass: isize, adjacent_visible: bool) -> bool {
+    if main == 0 || glass == 0 {
+        return false;
+    }
+    let mut next = GetWindow(main, 2); // GW_HWNDNEXT walks down the z-order.
+    for _ in 0..10000 {
+        if next == glass {
+            return true;
+        }
+        if next == 0 || (adjacent_visible && IsWindowVisible(next) != 0) {
+            return false;
+        }
+        next = GetWindow(next, 2);
+    }
+    false
 }
 #[tauri::command]
 pub fn surfaces_set(
@@ -251,6 +296,10 @@ struct Composition {
 }
 #[link(name = "user32")]
 extern "system" {
+    fn GetWindow(h: isize, command: u32) -> isize;
+    fn GetWindowLongPtrW(h: isize, index: i32) -> isize;
+    fn IsWindow(h: isize) -> i32;
+    fn DestroyWindow(h: isize) -> i32;
     fn PeekMessageW(m: *mut Msg, h: isize, min: u32, max: u32, remove: u32) -> i32;
     fn TranslateMessage(m: *const Msg) -> i32;
     fn DispatchMessageW(m: *const Msg) -> isize;
@@ -328,7 +377,7 @@ pub fn start(app: &tauri::AppHandle) {
         let Ok(hwnd) = w.hwnd() else { return };
         let main = hwnd.0 as isize;
         let glass = CreateWindowExW(
-            0x80 | 0x08000000 | 0x20 | 0x80000,
+            0x8 | 0x80 | 0x08000000 | 0x20 | 0x80000,
             wide("STATIC").as_ptr(),
             wide("").as_ptr(),
             0x80000000,
@@ -336,11 +385,14 @@ pub fn start(app: &tauri::AppHandle) {
             0,
             0,
             0,
-            main,
+            0, // Unowned: an owned window cannot sit below its owner.
             0,
             0,
             std::ptr::null(),
         );
+        if glass == 0 {
+            return;
+        }
         SetLayeredWindowAttributes(glass, 0, 255, 2);
         let proc = GetProcAddress(
             GetModuleHandleW(wide("user32.dll").as_ptr()),
@@ -351,31 +403,47 @@ pub fn start(app: &tauri::AppHandle) {
         let mut revision = u64::MAX;
         let mut oldscale = 0.;
         let mut blur_ok = false;
+        let mut cached_rects = None;
+        let mut reported_rects = None;
+        let mut moving = false;
+        let mut applied_blur = None;
         loop {
             let mut msg = Msg::default();
             while PeekMessageW(&mut msg, 0, 0, 0, 1) != 0 {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
-            let visible = IsWindowVisible(main) != 0 && IsIconic(main) == 0;
-            if !visible {
-                ShowWindow(glass, 0);
-                if ignored {
-                    let _ = w.set_ignore_cursor_events(false);
-                    ignored = false
-                }
-                std::thread::sleep(Duration::from_millis(200));
-                continue;
+            if IsWindow(main) == 0 {
+                DestroyWindow(glass);
+                break;
             }
+            let visible = IsWindowVisible(main) != 0 && IsIconic(main) == 0;
             let scale = GetDpiForWindow(main) as f64 / 96.;
             let mut bounds = Rect::default();
             GetWindowRect(main, &mut bounds);
-            let (rects, blur, tint, rev) = {
+            let (blur, tint, rev) = {
                 let state = app.state::<State>();
                 let s = state.0.lock().unwrap();
-                (s.rects.clone(), s.blur, s.tint, s.revision)
+                if s.revision != revision {
+                    reported_rects = s.rects.clone();
+                }
+                (s.blur, s.tint, s.revision)
             };
-            if rev != revision || scale != oldscale {
+            let rects = &reported_rects;
+            let bounds_changed = previous != Some(bounds);
+            if bounds_changed && GetAsyncKeyState(1) < 0 {
+                moving = true;
+            }
+            if GetAsyncKeyState(1) >= 0 {
+                moving = false;
+            }
+            // Hide before changing geometry; region and position are committed in this tick.
+            if bounds_changed || *rects != cached_rects || scale != oldscale {
+                if IsWindowVisible(glass) != 0 {
+                    ShowWindow(glass, 0);
+                }
+            }
+            if *rects != cached_rects || scale != oldscale {
                 let region = CreateRectRgn(0, 0, 0, 0);
                 for r in rects.iter().flatten().filter_map(Surface::inset) {
                     let n = |v: f64| (v * scale).round() as i32;
@@ -393,6 +461,10 @@ pub fn start(app: &tauri::AppHandle) {
                 if SetWindowRgn(glass, region, 0) == 0 {
                     DeleteObject(region);
                 }
+                cached_rects = (*rects).clone();
+                oldscale = scale;
+            }
+            if applied_blur != Some((blur, tint)) {
                 if !proc.is_null() {
                     let f: unsafe extern "system" fn(isize, *mut Composition) -> i32 =
                         std::mem::transmute(proc);
@@ -409,29 +481,53 @@ pub fn start(app: &tauri::AppHandle) {
                     };
                     blur_ok = f(glass, &mut data) != 0;
                 }
-                revision = rev;
-                oldscale = scale;
+                applied_blur = Some((blur, tint));
             }
-            if blur && blur_ok {
-                if previous != Some(bounds) {
-                    SetWindowPos(
-                        glass,
-                        main,
-                        bounds.left,
-                        bounds.top,
-                        bounds.right - bounds.left,
-                        bounds.bottom - bounds.top,
-                        0x10 | 0x40,
-                    );
-                    previous = Some(bounds);
-                } else {
-                    SetWindowPos(glass, main, 0, 0, 0, 0, 0x10 | 0x40 | 1 | 2);
-                }
-            } else {
+            revision = rev;
+            // HWND_NOTOPMOST explicitly drops the companion out of the topmost band.
+            let topmost = GetWindowLongPtrW(main, -20) & 8 != 0;
+            if (GetWindowLongPtrW(glass, -20) & 8 != 0) != topmost {
+                SetWindowPos(
+                    glass,
+                    if topmost { -1 } else { -2 },
+                    0,
+                    0,
+                    0,
+                    0,
+                    0x10 | 1 | 2,
+                );
+            }
+            let show = visible
+                && blur
+                && blur_ok
+                && !moving
+                && rects.as_ref().is_some_and(|rs| !rs.is_empty());
+            let glass_visible = IsWindowVisible(glass) != 0;
+            if !show && glass_visible {
                 ShowWindow(glass, 0);
             }
+            if bounds_changed || !below_main(main, glass, true) || (show && !glass_visible) {
+                if SetWindowPos(
+                    glass,
+                    main,
+                    bounds.left,
+                    bounds.top,
+                    bounds.right - bounds.left,
+                    bounds.bottom - bounds.top,
+                    0x10 | if show { 0x40 } else { 0 },
+                ) != 0
+                {
+                    previous = Some(bounds);
+                }
+            }
+            if !visible && ignored {
+                if w.set_ignore_cursor_events(false).is_ok() {
+                    ignored = false;
+                }
+            }
             let mut p = Point::default();
-            if GetCursorPos(&mut p) != 0
+            if visible
+                && GetCursorPos(&mut p) != 0
                 && [1, 2, 4, 5, 6].iter().all(|k| GetAsyncKeyState(*k) >= 0)
             {
                 let desired = rects.as_ref().is_some_and(|rs| {
@@ -443,7 +539,15 @@ pub fn start(app: &tauri::AppHandle) {
                     ignored = desired
                 }
             }
-            std::thread::sleep(Duration::from_millis(16));
+            {
+                let state = app.state::<State>();
+                let mut s = state.0.lock().unwrap();
+                s.debug.blur_ok = blur_ok;
+                s.debug.glass_hwnd = glass;
+                s.debug.main_hwnd = main;
+                s.debug.ignoring = ignored;
+            }
+            std::thread::sleep(Duration::from_millis(if visible { 16 } else { 250 }));
         }
     });
 }

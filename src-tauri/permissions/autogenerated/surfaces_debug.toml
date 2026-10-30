@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-surfaces-debug"
+description = "Enables the surfaces_debug command without any pre-configured scope."
+commands.allow = ["surfaces_debug"]
+
+[[permission]]
+identifier = "deny-surfaces-debug"
+description = "Denies the surfaces_debug command without any pre-configured scope."
+commands.deny = ["surfaces_debug"]

@@ -1,11 +1,13 @@
 // Real native settings lifecycle in an isolated, hidden debug instance. No account or OS input.
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const isolatedExe = path.join(root, 'src-tauri/target-surfaces-test/debug/qchat.exe');
+const testExe = process.env.QCHAT_SURFACES_EXE || (existsSync(isolatedExe) ? isolatedExe : path.join(root, 'src-tauri/target/debug/qchat.exe'));
 const profile = mkdtempSync(path.join(tmpdir(), 'qchat-surfaces-'));
 const port = 9347;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -50,7 +52,7 @@ const settingsPage = async () => (await pages()).find(p => p.url.includes('tauri
 const slash = `(()=>{const i=document.getElementById('prompt-input');i.value='/settings';i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));return i.value===''})()`;
 try {
   if ((await pages()).length) throw Error('Test debug port already in use');
-  app = spawn(path.join(root, 'src-tauri/target/debug/qchat.exe'), [], {
+  app = spawn(testExe, [], {
     env: { ...process.env, QCHAT_DEBUG_PORT: String(port), QCHAT_TEST_MODE: '1', QCHAT_TEST_PROFILE: profile, QCHAT_TEST_SHOW_SETTINGS: visible ? '1' : '0' },
     stdio: 'ignore', windowsHide: true,
   });
@@ -64,6 +66,15 @@ try {
   check('surface command round trip',result.same);
   check('isolated autostart memory',result.enabled && !result.disabled);
   check('invalid shortcut preserves previous value',result.rejected && result.unchanged);
+  const debug = await evaluate(`(async()=>{const i=window.__TAURI__.core.invoke;window.__TAURI__.core.invoke=(name,args)=>name==='surfaces_set'||name==='surfaces_set_blur'?Promise.resolve(args?.rects):i(name,args);await i('surfaces_set_blur',{enabled:true,tintArgb:2569011232});await i('surfaces_set',{rects:[{x:28,y:28,w:200,h:52,r:26},{x:28,y:90,w:180,h:60,r:12}]});return await i('surfaces_debug')})()`);
+  check('two reported surfaces', debug.rectCount === 2);
+  let lastNative;
+  const native = await until(async () => {
+    const s = await evaluate(`window.__TAURI__.core.invoke('surfaces_debug')`);
+    lastNative = s;
+    return s.glassHwnd && s.mainHwnd && s.blurOk && s.glassIsBelowMain ? s : false;
+  }, 'native companion initialized and directly below main').catch(error => { throw Error(`${error.message}: ${JSON.stringify(lastNative)}`); });
+  check('hidden blur state coherent', native.rectCount === 2 && !native.glassVisible && !native.ignoring);
   const after = spawnSync('reg.exe', ['query','HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','/v','QChat'], {encoding:'utf8',windowsHide:true});
   check('registry unchanged', before.status===after.status && before.stdout===after.stdout && before.stderr===after.stderr);
   console.log('ALL PASS');

@@ -1,7 +1,7 @@
 fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
-            "bridge_event", "surfaces_set", "surfaces_set_blur", "get_hotkey", "set_hotkey", "get_autostart", "set_autostart",
+            "surfaces_debug", "bridge_event", "surfaces_set", "surfaces_set_blur", "get_hotkey", "set_hotkey", "get_autostart", "set_autostart",
             "chat_send",
             "chat_stop",
             "chat_new",
