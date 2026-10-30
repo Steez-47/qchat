@@ -1,0 +1,640 @@
+// Synthetic browser/stream fixtures only. No profile, network, native picker or window.
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import vm from 'node:vm';
+
+const source = process.argv.includes('--baseline')
+  ? execFileSync('git', ['show', 'HEAD:src-tauri/bridge/chatgpt-bridge.js'], { encoding: 'utf8' })
+  : readFileSync(new URL('../src-tauri/bridge/chatgpt-bridge.js', import.meta.url), 'utf8');
+const encoder = new TextEncoder();
+const drain = async () => { for (let i = 0; i < 120; i++) await Promise.resolve(); };
+const message = (parts, extra = {}) => ({ message: { id: 'reply', author: { role: 'assistant' }, content: { content_type: 'multimodal_text', parts }, ...extra } });
+const sse = (...packets) => packets.map(packet => `data: ${typeof packet === 'string' ? packet : JSON.stringify(packet)}\n\n`).join('');
+function element(tag, attrs = {}, text = '') {
+  return { tagName: tag.toUpperCase(), textContent: text, innerText: text, disabled: false,
+    ...attrs, getClientRects: () => [{}], closest: () => null, focus() {},
+    getAttribute(key) { return attrs[key] ?? null; }, hasAttribute(key) { return key in attrs; },
+    setAttribute(key, value) { attrs[key] = value; }, querySelector: () => null, querySelectorAll: () => [] };
+}
+function semantic(tag, children = [], attrs = {}) {
+  const nodes = children.map(child => typeof child === 'string' ? { nodeType: 3, nodeValue: child, textContent: child } : child);
+  const node = element(tag, attrs, nodes.map(child => child.textContent || '').join(''));
+  node.childNodes = nodes;
+  node.querySelector = selector => nodes.find(child => child.tagName?.toLowerCase() === selector) || nodes.map(child => child.querySelector?.(selector)).find(Boolean) || null;
+  return node;
+}
+function browser({ data = '', chunks, readError, cloneError, cancelReject = false, hold = false, type = 'text/event-stream', networkError, httpError, emitHook, chunkDelays = [], responseOverride } = {}) {
+  let now = 0, serial = 0, reads = 0, cancels = 0, clicks = 0, stop = false, pending = false, pickerClicks = 0;
+  let assistants = [], inputs = [], attachmentButton, heldRead, originalPart = 0, removeButtons = [], newChats = 0, previewButtons = [];
+  const timers = new Map(), events = [], requests = [];
+  chunks ||= [encoder.encode(data)];
+  const body = element('div');
+  const area = element('form');
+  area.querySelector = selector => pending && selector.includes('progressbar') ? {} : null;
+  area.querySelectorAll = selector => selector === 'button' ? [...removeButtons, ...(attachmentButton ? [attachmentButton] : [])] : [];
+  const composer = element('div'); composer.closest = selector => selector === 'form' ? area : null;
+  const reader = {
+    async read() {
+      if (reads < chunks.length) {
+        const part = reads++;
+        if (chunkDelays[part]) await new Promise(resolve => schedule(resolve, chunkDelays[part]));
+        return { value: chunks[part], done: false };
+      }
+      if (readError) throw new Error('observer read failure');
+      if (hold) return new Promise(resolve => { heldRead = resolve; });
+      return { done: true };
+    },
+    cancel() { cancels++; return cancelReject ? Promise.reject(new Error('clone cancellation failed')) : new Promise(() => {}); }
+  };
+  const cloned = { ok: !httpError, status: httpError || 200, text: async () => 'site request failed',
+    headers: { get: () => type }, body: { getReader: () => reader },
+  };
+  const primaryReader = { async read() { return originalPart < chunks.length ? { value: chunks[originalPart++], done: false } : { done: true }; } };
+  const stream = responseOverride || { ...cloned, body: { getReader: () => primaryReader },
+    clone() { if (cloneError) throw new Error('cannot clone'); return cloned; } };
+  const sendButton = element('button');
+  sendButton.click = () => { clicks++; window.fetch('/backend-api/f/conversation', { method: 'POST' }); };
+  const stopButton = element('button'); stopButton.click = () => { stop = false; };
+  const freshButton = element('button'); freshButton.click = () => { newChats++; assistants = []; inputs = []; removeButtons = []; pending = false; stop = false; };
+  const document = {
+    title: 'ChatGPT', body, visibilityState: 'visible', hasFocus: () => true,
+    execCommand: () => true,
+    querySelector(selector) {
+      if (selector === '#prompt-textarea') return composer;
+      if (selector === '[data-testid="send-button"]') return sendButton;
+      if (selector === '[data-testid="stop-button"]') return stop ? stopButton : null;
+      if (selector === '[data-testid="create-new-chat-button"]') return freshButton;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === '#prompt-textarea') return [composer];
+      if (selector === 'input[type="file"]') return inputs;
+      if (selector === 'button[aria-label="Download file"]') return previewButtons.filter(node => node.getAttribute('aria-label') === 'Download file');
+      if (selector.startsWith('[data-message-author-role="assistant"]')) return assistants.filter(node => !node.dilOnly || selector.includes('[data-dil-source-message-id][data-markdown-copy]'));
+      return [];
+    }
+  };
+  const schedule = (fn, delay, interval = 0) => { const id = ++serial; timers.set(id, { fn, at: now + delay, interval }); return id; };
+  const window = {
+    innerWidth: 1280, innerHeight: 720,
+    __QCHAT_EMIT__: event => { events.push(event); return emitHook?.(event); },
+    fetch(url, options) {
+      requests.push({ url, options });
+      if (url === '/api/auth/session') return Promise.resolve({ ok: true, json: async () => ({}) });
+      if (url === '/backend-api/f/conversation') return networkError ? Promise.reject(new Error('site network failed')) : Promise.resolve(stream);
+      if (/\/files\//.test(url)) return Promise.resolve({ ok: true, headers: { get: () => 'application/json' }, text: async () => JSON.stringify({ download_url: 'https://files.oaiusercontent.com/result.pdf?secret=download' }) });
+      throw new Error(`Unexpected request ${url}`);
+    }
+  }; window.top = window;
+  vm.runInContext(source, vm.createContext({ window, document, location: { hostname: 'chatgpt.com', href: 'https://chatgpt.com/', pathname: '/', origin: 'https://chatgpt.com' },
+    URL, TextDecoder, AbortController, console, MutationObserver: class { observe() {} disconnect() {} },
+    Date: class extends Date { static now() { return now; } },
+    setTimeout: (fn, ms) => schedule(fn, ms), clearTimeout: id => timers.delete(id),
+    setInterval: (fn, ms) => schedule(fn, ms, ms), clearInterval: id => timers.delete(id)
+  }));
+  return {
+    events, requests, api: window.__qchat,
+    send: (args = {}) => window.__qchat.send({ id: 'job', prompt: 'hello', ...args }),
+    get clicks() { return clicks; }, get cancels() { return cancels; }, get pickerClicks() { return pickerClicks; },
+    get newChats() { return newChats; },
+    stop(value) { stop = value; }, pending(value) { pending = value; },
+    input(accept = '') { const input = element('input', { accept }); input.accept = accept; input.click = () => { pickerClicks++; }; inputs.push(input); return input; },
+    openAttachments() { attachmentButton = element('button', { 'aria-label': 'Attach files' }); attachmentButton.click = () => this.input(); },
+    pendingAttachment(name = 'test.txt') {
+      const button = element('button', { 'aria-label': `Remove file ${name}` });
+      button.click = () => { removeButtons = removeButtons.filter(item => item !== button); pending = false; };
+      removeButtons.push(button); pending = true;
+      return button;
+    },
+    previewDownload(name, label = 'Download file') {
+      const button = element('button', { 'aria-label': label });
+      button.parentElement = element('div', {}, name); button.parentElement.parentElement = body;
+      button.scrollIntoView = () => {}; button.getBoundingClientRect = () => ({ left: 500, top: 100, width: 80, height: 40 });
+      button.click = () => assert.fail('preview API must return coordinates without clicking');
+      previewButtons.push(button); return button;
+    },
+    dom(text = '', nodes = []) {
+      const node = element('div', {}, text); node.querySelectorAll = () => nodes;
+      assistants = [node]; return node;
+    },
+    dil(text = '', nodes = []) {
+      const body = element('div', { 'data-dil-message-id': 'dil-reply' }, text); body.querySelectorAll = () => nodes;
+      const turn = element('div', { 'data-dil-source-message-id': 'source-reply', 'data-markdown-copy': '' }, text);
+      turn.dilOnly = true; turn.querySelector = selector => selector === '[data-dil-message-id]' ? body : null;
+      turn.querySelectorAll = () => nodes; assistants = [turn]; return turn;
+    },
+    resume() { heldRead?.({ done: true }); },
+    async consumeOriginal() {
+      const original = stream.body.getReader();
+      const parts = []; for (;;) { const { value, done } = await original.read(); if (done) break; parts.push(value); }
+      return Buffer.concat(parts).toString('utf8');
+    },
+    async tick(ms) {
+      await drain(); const end = now + ms;
+      for (;;) {
+        const due = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        const [id, timer] = due; now = timer.at;
+        if (timer.interval) timer.at += timer.interval; else timers.delete(id);
+        timer.fn(); await drain();
+      }
+      now = end; await drain();
+    }
+  };
+}
+const tests = [];
+const test = (name, run) => tests.push({ name, run });
+const terminal = b => b.events.filter(event => ['done', 'error'].includes(event.type));
+const done = b => b.events.find(event => event.type === 'done');
+
+test('UTF-8 emoji, ZWJ, skin tones, flags and non-Latin survive every split byte', async () => {
+  const text = 'A😀 👩🏽‍🚀 🇳🇿 café e\u0301 中文 日本語 العربية हिन्दी Z';
+  const bytes = encoder.encode(sse(message([text]), '[DONE]'));
+  for (let split = 1; split < bytes.length; split++) {
+    const b = browser({ chunks: [bytes.slice(0, split), bytes.slice(split)] });
+    await b.send(); await b.tick(200);
+    assert.equal(done(b)?.text, text, `split ${split}`);
+    assert.equal(terminal(b).length, 1);
+  }
+});
+test('existing NDJSON Unicode decoder also preserves one-byte chunks', async () => {
+  const text = '😀 👩🏽‍🚀 🇳🇿 café e\u0301 中文 日本語 العربية हिन्दी';
+  const bytes = encoder.encode(JSON.stringify({ type: 'content', messageId: 'a', revision: 1, markdown: text }) + '\n' + JSON.stringify({ type: 'done' }));
+  const b = browser({ type: 'application/x-ndjson', chunks: Array.from(bytes, byte => new Uint8Array([byte])) });
+  await b.send(); await b.tick(1000); assert.equal(done(b)?.text, text);
+});
+test('parsed high/low surrogate patches never send invalid Unicode to the native emitter', async () => {
+  let rejected = 0;
+  const b = browser({
+    chunks: [sse(message(['line \uD83D'])), sse({ p: '/message/content/parts/0', o: 'append', v: '\uDE0A complete' }), sse('[DONE]')].map(text => encoder.encode(text)),
+    chunkDelays: [0, 150, 100],
+    emitHook(event) {
+      if (typeof event.text === 'string' && /\p{Surrogate}/u.test(event.text)) {
+        rejected++; return Promise.reject(new Error('native JSON rejected lone surrogate'));
+      }
+    }
+  });
+  await b.send(); await b.tick(100);
+  assert.equal(b.events.find(event => event.type === 'delta')?.text, 'line ');
+  assert.equal(terminal(b).length, 0);
+  await b.tick(500);
+  assert.equal(rejected, 0); assert.equal(done(b)?.text, 'line 😊 complete');
+});
+test('twelve emoji lines plus final marker survive patches split at every UTF-16 code unit', async () => {
+  const text = Array.from({ length: 12 }, (_, i) => `${i + 1}. 😊 👨‍👩‍👧‍👦 👍🏽 🇳🇿 ${i + 1}`).join('\n') + '\nFINAL_MARKER';
+  let invalid = 0;
+  const packets = [sse(message([''])), ...text.split('').map(unit => sse({ p: '/message/content/parts/0', o: 'append', v: unit })), sse('[DONE]')];
+  const b = browser({ chunks: packets.map(packet => encoder.encode(packet)), chunkDelays: packets.map((_, i) => i ? 60 : 0),
+    emitHook(event) {
+      if (typeof event.text === 'string' && /\p{Surrogate}/u.test(event.text)) {
+        invalid++; return Promise.reject(new Error('native rejected invalid Unicode'));
+      }
+    }
+  });
+  await b.send(); await b.tick(packets.length * 60 + 200);
+  assert.equal(invalid, 0); assert.equal(done(b)?.text, text); assert.match(done(b)?.text, /FINAL_MARKER$/);
+});
+test('emitter promise rejection is handled and later cumulative snapshots resync', async () => {
+  const unhandled = []; const listener = reason => unhandled.push(reason);
+  process.on('unhandledRejection', listener);
+  let rejected = false; const accepted = [];
+  try {
+    const b = browser({
+      chunks: [sse(message(['first'])), sse({ p: '/message/content/parts/0', o: 'append', v: ' 😀 later' }), sse('[DONE]')].map(text => encoder.encode(text)),
+      chunkDelays: [0, 150, 100],
+      emitHook(event) {
+        if (event.type === 'delta' && !rejected) { rejected = true; return Promise.reject(new Error('temporary native rejection')); }
+        accepted.push(event); return Promise.resolve();
+      }
+    });
+    await b.send(); await b.tick(500); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(rejected, true); assert.equal(unhandled.length, 0);
+    assert.equal(accepted.filter(event => event.type === 'delta').at(-1)?.text, 'first 😀 later');
+    assert.equal(done(b)?.text, 'first 😀 later'); assert.equal(terminal(b).length, 1);
+  } finally { process.removeListener('unhandledRejection', listener); }
+});
+test('terminal snapshots repair truly unpaired surrogates safely', async () => {
+  const b = browser({ data: sse(message(['bad \uDC00 end \uD83D']), '[DONE]') });
+  await b.send(); await b.tick(200);
+  assert.equal(done(b)?.text, 'bad � end �');
+  for (const event of b.events) if (typeof event.text === 'string') assert.doesNotMatch(event.text, /\p{Surrogate}/u);
+});
+test('terminal observer packet does not finish while the site still shows Stop', async () => {
+  const b = browser({ data: sse(message(['partial']), '[DONE]') });
+  b.stop(true); await b.send(); await b.tick(500); assert.equal(terminal(b).length, 0);
+  b.dom('complete from site 😀'); await b.tick(300); b.stop(false); await b.tick(1500);
+  assert.equal(done(b)?.text, 'complete from site 😀'); assert.equal(terminal(b).length, 1);
+});
+test('completed signed-in DIL DOM replaces a stale parsed prefix and scopes media lookup', async () => {
+  const full = Array.from({ length: 12 }, (_, i) => `${i + 1}. 😊 👨‍👩‍👧‍👦 👍🏽 🇳🇿`).join('\n') + '\nQCHAT_UNICODE_DONE';
+  const b = browser({ chunks: [sse(message([full.slice(0, 57), { type: 'file', name: 'report.csv', url: 'sandbox:/mnt/data/report.csv' }])), sse('[DONE]')].map(text => encoder.encode(text)), chunkDelays: [0, 200] });
+  await b.send(); await b.tick(100);
+  const file = element('a', {}, 'report.csv'); file.href = 'sandbox:/mnt/data/report.csv'; let clicks = 0; file.click = () => { clicks++; };
+  b.dil(full, [file]); await b.tick(500); assert.equal(terminal(b).length, 0);
+  await b.tick(1000);
+  assert.equal(done(b)?.text, full); assert.match(done(b)?.text, /QCHAT_UNICODE_DONE$/);
+  const id = b.events.find(event => event.type === 'media').items[0].id;
+  await b.api.activateMedia(id); assert.equal(clicks, 1);
+});
+test('DIL text mounting after the terminal packet is allowed to settle fully', async () => {
+  const b = browser({ chunks: [sse(message(['prefix'])), sse('[DONE]')].map(text => encoder.encode(text)), chunkDelays: [0, 200] });
+  await b.send(); await b.tick(100); b.dil('prefix still rendering');
+  await b.tick(500); assert.equal(terminal(b).length, 0);
+  b.dil('prefix still rendering and now complete QCHAT_UNICODE_DONE');
+  await b.tick(500); assert.equal(terminal(b).length, 0);
+  await b.tick(700); assert.equal(done(b)?.text, 'prefix still rendering and now complete QCHAT_UNICODE_DONE');
+});
+test('media-only DIL completion has a bounded settle wait without text', async () => {
+  const b = browser({ chunks: [sse(message([{ type: 'image', url: 'https://chatgpt.com/generated.png' }])), sse('[DONE]')].map(text => encoder.encode(text)), chunkDelays: [0, 200] });
+  await b.send(); await b.tick(100); b.dil(''); await b.tick(1500);
+  assert.ok(done(b)); assert.equal(terminal(b).length, 1);
+});
+test('completed DIL fallback preserves semantic code fences, inline formatting and lists', async () => {
+  const code = 'const face = "😀";\n\n\nconsole.log(face);\n';
+  const paragraph = semantic('p', ['Use ', semantic('strong', ['bold']), ' and ', semantic('em', ['care']), ' with ', semantic('code', ['face']), '.']);
+  const block = semantic('pre', [semantic('code', [code], { className: 'language-js' })]);
+  const list = semantic('ul', [semantic('li', ['First 😀']), semantic('li', ['Second'])]);
+  const b = browser({ chunks: [sse(message(['Use'])), sse('[DONE]')].map(text => encoder.encode(text)), chunkDelays: [0, 200] });
+  await b.send(); await b.tick(100);
+  const turn = b.dil('Use bold and care with face.\n' + code + '\nFirst 😀\nSecond');
+  turn.querySelector('[data-dil-message-id]').childNodes = [semantic('h2', ['Example']), paragraph, block, list];
+  await b.tick(1500);
+  assert.match(done(b)?.text, /^## Example/);
+  assert.match(done(b)?.text, /Use \*\*bold\*\* and \*care\* with `face`\./);
+  assert.ok(done(b)?.text.includes('```js\n' + code + '```'));
+  assert.match(done(b)?.text, /- First 😀\n- Second/);
+  assert.doesNotMatch(done(b)?.text, /<pre|<strong/);
+});
+test('DIL markdown links use opaque registered media and safe normal HTTPS links', async () => {
+  const file = semantic('a', ['Download CSV'], { href: 'sandbox:/mnt/data/report.csv' }); file.href = 'sandbox:/mnt/data/report.csv';
+  const normal = semantic('a', ['Reference'], { href: 'https://example.com/reference' }); normal.href = 'https://example.com/reference';
+  const unsafe = semantic('a', ['Unsafe'], { href: 'javascript:alert(1)' }); unsafe.href = 'javascript:alert(1)';
+  const b = browser({ chunks: [sse(message(['Files'])), sse('[DONE]')].map(text => encoder.encode(text)), chunkDelays: [0, 200] });
+  await b.send(); await b.tick(100);
+  const turn = b.dil('Files Download CSV Reference Unsafe', [file, normal, unsafe]);
+  turn.querySelector('[data-dil-message-id]').childNodes = [semantic('p', ['Files ', file, ' ', normal, ' ', unsafe])];
+  await b.tick(1500);
+  assert.match(done(b)?.text, /\[Download CSV\]\(qchat-media:/);
+  assert.match(done(b)?.text, /\[Reference\]\(https:\/\/example\.com\/reference\)/);
+  assert.doesNotMatch(done(b)?.text, /sandbox:|javascript:/);
+});
+test('custom patch arrays and JSON Patch additions preserve mixed parts', async () => {
+  const b = browser({ data: sse({ v: message(['Hello']) },
+    { o: 'patch', v: [{ p: '/message/content/parts/0', o: 'append', v: ' 😀' }] },
+    { op: 'add', path: '/message/content/parts/-', value: { type: 'text', text: ' world' } },
+    { op: 'add', path: '/message/content/parts/-', value: { type: 'image', url: 'https://chatgpt.com/image.png' } }, '[DONE]') });
+  await b.send(); await b.tick(200);
+  assert.equal(done(b)?.text, 'Hello 😀 world');
+  assert.equal(b.events.filter(event => event.type === 'media').at(-1)?.items.length, 1);
+});
+test('standard messages, append patches, malformed packets and terminal SSE without newline', async () => {
+  const b = browser({ data: sse(message(['one']), '{malformed', { p: '/message/content/parts/0', o: 'append', v: ' 😀' }) + 'data: [DONE]' });
+  await b.send(); await b.tick(200);
+  assert.equal(done(b)?.text, 'one 😀'); assert.equal(terminal(b).length, 1);
+});
+test('NDJSON final packet without trailing newline and revision snapshots', async () => {
+  const b = browser({ type: 'application/x-ndjson', data: [
+    { type: 'content', messageId: 'a', revision: 1, markdown: 'Hello ' },
+    { type: 'content', messageId: 'a', revision: 2, baseRevision: 1, mode: 'append', markdown: '😀' },
+    { type: 'done' }
+  ].map(JSON.stringify).join('\n') });
+  await b.send(); await b.tick(200); assert.equal(done(b)?.text, 'Hello 😀');
+});
+test('clone cancellation cannot hang or reject a completed stream', async () => {
+  for (const cancelReject of [false, true]) {
+    const b = browser({ data: sse(message(['complete']), '[DONE]'), cancelReject });
+    await b.send(); await b.tick(200);
+    assert.equal(done(b)?.text, 'complete'); assert.equal(b.cancels, 1);
+    assert.equal(await b.consumeOriginal(), sse(message(['complete']), '[DONE]'));
+  }
+});
+test('real Response.clone cancellation leaves the original fetch body intact', async () => {
+  const text = sse(message(['real tee 😀']), '[DONE]') + ': original branch still owns this tail\n';
+  const response = new Response(new ReadableStream({ start(controller) { controller.enqueue(encoder.encode(text)); controller.close(); } }),
+    { headers: { 'content-type': 'text/event-stream' } });
+  let cancellations = 0;
+  const clone = response.clone.bind(response);
+  response.clone = () => {
+    const observer = clone(); const reader = observer.body.getReader();
+    return { ok: observer.ok, headers: observer.headers, body: { getReader: () => ({
+      read: () => reader.read(), cancel: () => { cancellations++; return reader.cancel(); }
+    }) } };
+  };
+  const b = browser({ responseOverride: response });
+  await b.send(); await new Promise(resolve => setImmediate(resolve)); await b.tick(200);
+  assert.equal(done(b)?.text, 'real tee 😀'); assert.equal(cancellations, 1);
+  assert.equal(await b.consumeOriginal(), text);
+});
+test('reader rejection preserves partial text and recovers via DOM, with no early done', async () => {
+  const b = browser({ data: sse(message(['partial'])), readError: true });
+  b.stop(true); await b.send(); await b.tick(100);
+  assert.equal(terminal(b).length, 0); assert.equal(b.events.find(event => event.type === 'delta')?.text, 'partial');
+  b.dom('partial plus DOM'); b.stop(false); await b.tick(400); assert.equal(terminal(b).length, 0);
+  b.stop(true); await b.tick(100); assert.equal(terminal(b).length, 0);
+  b.stop(false); await b.tick(1500);
+  assert.equal(done(b)?.text, 'partial plus DOM'); assert.equal(terminal(b).length, 1); assert.equal(b.cancels, 1);
+});
+test('clone failure and premature EOF detach, then timeout instead of an infinite wait', async () => {
+  for (const options of [{ cloneError: true }, { data: sse(message(['partial'])) }]) {
+    const b = browser(options); await b.send(); await b.tick(200);
+    assert.equal(terminal(b).length, 0);
+    await b.tick(301000); assert.equal(terminal(b).length, 1); assert.equal(terminal(b)[0].code, 'timeout');
+    if (!options.cloneError) assert.equal(b.events.find(event => event.type === 'delta')?.text, 'partial');
+  }
+});
+test('Stop finishes promptly exactly once and late observer reads cannot emit', async () => {
+  const b = browser({ data: sse(message(['partial'])), hold: true });
+  b.stop(true); await b.send(); await b.tick(100); b.api.stop(); await b.tick(100);
+  assert.equal(done(b)?.text, 'partial'); assert.equal(b.cancels, 1);
+  const count = b.events.filter(event => event.type !== 'status').length; b.resume(); await b.tick(1000);
+  assert.equal(b.events.filter(event => event.type !== 'status').length, count); assert.equal(terminal(b).length, 1);
+});
+test('genuine network and HTTP errors terminate once', async () => {
+  for (const options of [{ networkError: true }, { httpError: 429 }]) {
+    const b = browser(options); await b.send(); await b.tick(200);
+    assert.equal(terminal(b).length, 1); assert.equal(terminal(b)[0].type, 'error');
+  }
+});
+test('mixed structured parts emit safe opaque metadata and exclude analysis/tools', async () => {
+  const b = browser({ data: sse(
+    message(['SECRET ANALYSIS'], { channel: 'analysis' }),
+    message(['SECRET TOOL'], { author: { role: 'tool' } }),
+    message(['Visible 😀', { content_type: 'image_asset_pointer', asset_pointer: 'https://files.oaiusercontent.com/image.png?secret=signed' },
+      { type: 'audio', url: 'blob:https://chatgpt.com/audio' }, { type: 'video', url: 'https://chatgpt.com/video.mp4' },
+      { type: 'file', filename: 'report.pdf', url: 'sandbox:/mnt/data/report.pdf' }, { type: 'document', format: 'unhandled_rich_content' }]), '[DONE]') });
+  await b.send(); await b.tick(200);
+  assert.equal(done(b)?.text, 'Visible 😀');
+  const items = b.events.filter(event => event.type === 'media').at(-1).items;
+  assert.deepEqual(Array.from(items, item => item.kind), ['image', 'audio', 'video', 'file', 'file']);
+  assert.doesNotMatch(JSON.stringify(b.events), /secret|sandbox:|blob:|SECRET|oaiusercontent/);
+  assert.equal(b.events.filter(event => event.type === 'media' && event.final).length, 1);
+  assert.match((await b.api.resolveMedia(items[0].id)).url, /secret=signed/);
+  await assert.rejects(b.api.resolveMedia(items[3].id), /View it in ChatGPT/);
+});
+test('internal thoughts and non-media metadata never produce placeholder attachment cards', async () => {
+  const b = browser({ data: sse(message(['Visible 😀', {}, { type: 'unhandled_rich_content' },
+    { type: 'thoughts', filename: 'secret.txt', url: 'https://chatgpt.com/secret.txt' },
+    { type: 'metadata', assets: [{ type: 'image', url: 'https://chatgpt.com/internal.png' }] },
+    { content_type: 'status', name: 'Working' }, { title: 'Ordinary metadata' }]),
+    message(['SECRET THOUGHT'], { content: { content_type: 'thoughts', parts: ['SECRET THOUGHT'] } }),
+    message([], { content: { content_type: 'metadata', debug: true } }), '[DONE]') });
+  await b.send(); await b.tick(200);
+  assert.equal(done(b)?.text, 'Visible 😀');
+  assert.equal(b.events.filter(event => event.type === 'media').length, 0);
+  assert.doesNotMatch(JSON.stringify(b.events), /SECRET|secret\.txt|internal\.png|Attachment/);
+});
+test('markdown downloads are registered, deduplicated and do not leak URLs', async () => {
+  const text = 'Look 😀 ![cat](https://files.oaiusercontent.com/cat.png?secret=token) [report.pdf](sandbox:/mnt/data/report.pdf)';
+  const b = browser({ data: sse(message([text]), message([text]), '[DONE]') });
+  await b.send(); await b.tick(200);
+  assert.match(done(b)?.text, /Look 😀 !\[cat\]\(qchat-media:/);
+  assert.equal(b.events.filter(event => event.type === 'media').at(-1).items.length, 2);
+  assert.doesNotMatch(JSON.stringify(b.events), /secret|sandbox:|oaiusercontent/);
+});
+test('media-only DOM fallback uses actual sources and resolves sandbox anchor filenames', async () => {
+  const b = browser({ cloneError: true }); b.stop(true); await b.send(); await b.tick(100);
+  const image = element('img', { src: 'https://files.oaiusercontent.com/live.png', alt: 'Picture' });
+  image.src = image.currentSrc = 'blob:https://chatgpt.com/current-image';
+  const audio = element('audio'); audio.src = 'https://chatgpt.com/speech.mp3';
+  const video = element('video'); video.src = 'https://chatgpt.com/movie.mp4';
+  const file = element('a', { download: 'report.pdf' }); file.href = 'https://chatgpt.com/backend-api/files/report/download';
+  b.dom('', [image, audio, video, file]); await b.tick(200); b.stop(false); await b.tick(1500);
+  const items = b.events.filter(event => event.type === 'media').at(-1).items;
+  assert.equal(items.length, 4); assert.ok(done(b));
+  assert.equal((await b.api.resolveMedia(items[0].id)).url, image.currentSrc);
+  const resolved = await b.api.resolveMedia(items[3].id); assert.match(resolved.url, /secret=download/);
+  const request = b.requests.find(request => request.url.includes('/files/'));
+  assert.equal(request.options.cache, 'no-store'); assert.equal(request.options.credentials, 'same-origin');
+  assert.doesNotMatch(JSON.stringify(b.events.filter(event => event.type !== 'status')), /secret|blob:|https:/);
+});
+test('sandbox metadata resolves by actual DOM download anchor and keeps its opaque ID', async () => {
+  const b = browser({ data: sse(message(['[report.pdf](sandbox:/mnt/data/report.pdf)'])), readError: true });
+  b.stop(true); await b.send(); await b.tick(200);
+  const original = b.events.find(event => event.type === 'media').items[0].id;
+  const file = element('a', { download: 'report.pdf' }); file.href = 'https://chatgpt.com/backend-api/files/report/download';
+  b.dom('report.pdf', [file]); await b.tick(200);
+  const resolved = await b.api.resolveMedia(original); assert.match(resolved.url, /secret=download/);
+  b.stop(false); await b.tick(1500);
+  assert.equal(b.events.filter(event => event.type === 'media').at(-1).items.length, 1);
+});
+test('safe bounded raster data and same-page blob URLs resolve only through opaque IDs', async () => {
+  for (const url of ['data:image/png;base64,aGVsbG8=', 'blob:https://chatgpt.com/local-image']) {
+    const b = browser({ data: sse(message([{ type: 'image', name: 'Picture', url }]), '[DONE]') });
+    await b.send(); await b.tick(200);
+    const item = b.events.find(event => event.type === 'media').items[0];
+    assert.equal((await b.api.resolveMedia(item.id)).url, url);
+    assert.doesNotMatch(JSON.stringify(b.events), /base64|blob:/);
+  }
+});
+test('sandbox anchors mounted after protocol completion still resolve by filename', async () => {
+  const b = browser({ data: sse(message(['[late.pdf](sandbox:/mnt/data/late.pdf)']), '[DONE]') });
+  await b.send(); await b.tick(200);
+  const id = b.events.find(event => event.type === 'media').items[0].id;
+  const file = element('a', { download: 'late.pdf' }); file.href = 'https://files.oaiusercontent.com/late.pdf';
+  b.dom('late.pdf', [file]);
+  assert.equal((await b.api.resolveMedia(id)).url, file.href);
+});
+test('manual media activation clicks the scoped site sandbox link and returns metadata only', async () => {
+  const b = browser({ data: sse(message(['[Download CSV](sandbox:/mnt/data/report.csv)']), '[DONE]') });
+  await b.send(); await b.tick(200);
+  const id = b.events.find(event => event.type === 'media').items[0].id;
+  const file = element('a', {}, 'Download CSV'); file.href = 'sandbox:/mnt/data/report.csv';
+  let activated = 0; file.click = () => { activated++; };
+  b.dom('Download CSV', [file]);
+  await assert.rejects(b.api.resolveMedia(id), /View it in ChatGPT/);
+  assert.equal(b.api.mediaInfo(id).name, 'Download CSV');
+  assert.equal((await b.api.activateMedia(id)).kind, 'file'); assert.equal(activated, 1);
+  assert.doesNotMatch(JSON.stringify(b.api.mediaInfo(id)), /url|sandbox:/);
+  assert.doesNotMatch(JSON.stringify(b.events), /sandbox:/);
+});
+test('manual activation supports real download buttons and rejects unrelated controls', async () => {
+  for (const allowed of [true, false]) {
+    const b = browser({ data: sse(message([{ type: 'file', filename: 'report.csv', url: 'sandbox:/mnt/data/report.csv' }]), '[DONE]') });
+    await b.send(); await b.tick(200);
+    const id = b.events.find(event => event.type === 'media').items[0].id;
+    const button = element('button', {}, `${allowed ? 'Download' : 'Delete'} report.csv`);
+    let activated = 0; button.click = () => { activated++; };
+    b.dom('report.csv', [button]);
+    if (allowed) { await b.api.activateMedia(id); assert.equal(activated, 1); }
+    else { await assert.rejects(b.api.activateMedia(id), /View it in ChatGPT/); assert.equal(activated, 0); }
+  }
+});
+test('actual signed-in DIL pressable role-link activates only the matching download filename', async () => {
+  const b = browser({ data: sse(message(['[Download report.csv](sandbox:/mnt/data/report.csv)']), '[DONE]') });
+  await b.send(); await b.tick(200);
+  const id = b.events.find(event => event.type === 'media').items[0].id;
+  const link = element('span', { 'data-d-component': 'pressable', role: 'link', 'aria-label': 'Open Download report.csv' }, 'Download report.csv');
+  let clicks = 0; link.click = () => { clicks++; };
+  b.dil('Download report.csv', [link]); await b.api.activateMedia(id); assert.equal(clicks, 1);
+});
+test('media coordinates mode returns a visible control center without clicking', async () => {
+  const b = browser({ data: sse(message(['[Download report.csv](sandbox:/mnt/data/report.csv)']), '[DONE]') });
+  await b.send(); await b.tick(200);
+  const id = b.events.find(event => event.type === 'media').items[0].id;
+  const link = element('span', { 'data-d-component': 'pressable', role: 'link', 'aria-label': 'Open Download report.csv' }, 'Download report.csv');
+  let clicks = 0, scrolls = 0;
+  link.click = () => { clicks++; }; link.scrollIntoView = () => { scrolls++; };
+  link.getBoundingClientRect = () => ({ left: 100, top: 200, width: 200, height: 40 });
+  b.dil('Download report.csv', [link]);
+  const result = await b.api.activateMedia(id, { coordinates: true });
+  assert.equal(result.point.x, 200); assert.equal(result.point.y, 220); assert.equal(result.kind, 'file');
+  assert.equal(clicks, 0); assert.equal(scrolls, 1);
+  for (const rect of [{ left: 0, top: 0, width: 0, height: 20 }, { left: NaN, top: 0, width: 20, height: 20 }, { left: 1300, top: 0, width: 20, height: 20 }]) {
+    link.getBoundingClientRect = () => rect;
+    await assert.rejects(b.api.activateMedia(id, { coordinates: true }), /not visible/);
+  }
+  assert.equal(clicks, 0);
+});
+test('DOM-only DIL download pressables register generated files missed by the parsed prefix', async () => {
+  for (const [name, kind] of [['report.csv', 'file'], ['picture.png', 'image'], ['speech.mp3', 'audio'], ['clip.mp4', 'video']]) {
+    const b = browser({ chunks: [sse(message(['Created'])), sse('[DONE]')].map(text => encoder.encode(text)), chunkDelays: [0, 200] });
+    await b.send(); await b.tick(100);
+    const link = element('span', { 'data-d-component': 'pressable', role: 'link', 'aria-label': `Open Download ${name}` }, `Download ${name}`);
+    let clicks = 0; link.click = () => { clicks++; };
+    link.scrollIntoView = () => {}; link.getBoundingClientRect = () => ({ left: 100, top: 200, width: 200, height: 40 });
+    b.dil(`Created Download ${name}`, [link]); await b.tick(1500);
+    const items = b.events.filter(event => event.type === 'media').at(-1)?.items;
+    assert.equal(items?.length, 1); assert.equal(items[0].name, name); assert.equal(items[0].kind, kind);
+    const result = await b.api.activateMedia(items[0].id, { coordinates: true });
+    assert.equal(result.point.x, 200); assert.equal(result.point.y, 220); assert.equal(clicks, 0);
+    assert.equal(b.events.filter(event => event.type === 'media' && event.final).length, 1);
+    assert.doesNotMatch(JSON.stringify(b.events.filter(event => event.type !== 'status')), /https:|sandbox:/);
+  }
+});
+test('ordinary DIL pressable links never register attachment cards', async () => {
+  const b = browser({ chunks: [sse(message(['Answer'])), sse('[DONE]')].map(text => encoder.encode(text)), chunkDelays: [0, 200] });
+  await b.send(); await b.tick(100);
+  const links = ['Open Reference', 'Open Download', 'Download', 'Open Downloading report.csv'].map(label =>
+    element('span', { 'data-d-component': 'pressable', role: 'link', 'aria-label': label }, label));
+  b.dil('Answer with references', links); await b.tick(1500);
+  assert.equal(b.events.filter(event => event.type === 'media').length, 0);
+});
+async function downloadPreviewFixture() {
+  const b = browser({ data: sse(message(['[Download report.csv](sandbox:/mnt/data/report.csv)']), '[DONE]') });
+  await b.send(); await b.tick(200);
+  const id = b.events.find(event => event.type === 'media').items[0].id;
+  const source = element('span', { 'data-d-component': 'pressable', role: 'link', 'aria-label': 'Open Download report.csv' }, 'Download report.csv');
+  source.click = () => assert.fail('coordinates mode must not click source'); source.scrollIntoView = () => {};
+  source.getBoundingClientRect = () => ({ left: 100, top: 200, width: 200, height: 40 });
+  b.dil('Download report.csv', [source]); return { b, id };
+}
+test('source activation associates only the newly mounted exact file-preview download action', async () => {
+  const { b, id } = await downloadPreviewFixture();
+  b.previewDownload('unrelated-old.csv');
+  assert.equal(b.api.mediaDownloadAction(id), null);
+  await b.api.activateMedia(id, { coordinates: true });
+  assert.equal(b.api.mediaDownloadAction(id), null, 'preview has not mounted');
+  b.previewDownload('unrelated generic', 'Download');
+  assert.equal(b.api.mediaDownloadAction(id), null, 'generic Download is never selected');
+  b.previewDownload('report.csv');
+  const action = b.api.mediaDownloadAction(id);
+  assert.equal(action.name, 'Download report.csv'); assert.equal(action.point.x, 540); assert.equal(action.point.y, 120);
+  assert.equal(b.api.mediaDownloadAction('unknown'), null);
+});
+test('reused preview download requires nearby matching filename and ambiguous new previews reject', async () => {
+  const { b, id } = await downloadPreviewFixture();
+  const reused = b.previewDownload('old.csv');
+  await b.api.activateMedia(id, { coordinates: true });
+  assert.equal(b.api.mediaDownloadAction(id), null);
+  reused.parentElement.innerText = 'Preview report.csv';
+  assert.equal(b.api.mediaDownloadAction(id).point.x, 540);
+  b.previewDownload('one.csv'); b.previewDownload('two.csv');
+  assert.throws(() => b.api.mediaDownloadAction(id), /More than one/);
+  await b.tick(30100); assert.equal(b.api.mediaDownloadAction(id), null, 'stale activation cannot select a later preview');
+});
+test('manual activation excludes previous turns and unsafe links even with matching filenames', async () => {
+  const b = browser({ data: sse(message([{ type: 'file', filename: 'report.csv', url: 'sandbox:/mnt/data/report.csv' }]), '[DONE]') });
+  const prior = element('a', {}, 'report.csv'); prior.href = 'sandbox:/mnt/data/report.csv'; prior.click = () => assert.fail('must not click previous turn');
+  b.dom('previous', [prior]); await b.send(); await b.tick(200);
+  const id = b.events.find(event => event.type === 'media').items[0].id;
+  await assert.rejects(b.api.activateMedia(id), /View it in ChatGPT/);
+  const unsafe = element('a', {}, 'report.csv'); unsafe.href = 'javascript:alert(1)'; unsafe.click = () => assert.fail('must not click unsafe URL');
+  b.dom('report.csv', [unsafe]); await assert.rejects(b.api.activateMedia(id), /View it in ChatGPT/);
+});
+test('unsafe protocols, hosts and non-raster data are visible fallback files with rejected resolution', async () => {
+  for (const url of ['javascript:alert(1)', 'file:///C:/secret', 'https://127.0.0.1/a.png', 'https://evil.example/a.png', 'blob:https://evil.example/id', 'data:image/svg+xml;base64,PHN2Zz4=']) {
+    const b = browser({ data: sse(message([{ type: 'file', filename: 'unsafe.svg', url }]), '[DONE]') });
+    await b.send(); await b.tick(200);
+    const item = b.events.find(event => event.type === 'media').items[0];
+    assert.equal(item.kind, 'file'); await assert.rejects(b.api.resolveMedia(item.id), /View it in ChatGPT/);
+    assert.doesNotMatch(JSON.stringify(b.events), /javascript:|file:|evil\.example|127\.0\.0\.1|base64/);
+  }
+});
+test('attachmentInput prefers generic file input and never clicks a native picker', async () => {
+  const b = browser(); b.input('image/*'); const generic = b.input();
+  const selector = await b.api.attachmentInput();
+  assert.match(selector, /^input\[type="file"\]\[data-qchat-file-input="qchat-file-input-/);
+  assert.ok(generic.getAttribute('data-qchat-file-input')); assert.equal(b.pickerClicks, 0);
+  const menu = browser(); menu.openAttachments(); assert.match(await menu.api.attachmentInput(), /qchat-file-input/); assert.equal(menu.pickerClicks, 0);
+});
+test('attachment-only Send waits for processing and a quiet upload window', async () => {
+  const b = browser({ data: sse(message(['uploaded']), '[DONE]') });
+  b.pending(true); const sent = b.send({ prompt: '', attachmentCount: 1 });
+  await b.tick(2000); assert.equal(b.clicks, 0);
+  b.pending(false); await b.tick(500); assert.equal(b.clicks, 0);
+  await b.tick(600); await sent; assert.equal(b.clicks, 1); assert.equal(done(b)?.text, 'uploaded');
+});
+
+test('native pre-send cancellation removes selected files before another attachment selection', async () => {
+  const b = browser(); const input = b.input(); input.files = [{ name: 'cancelled.txt' }];
+  b.pendingAttachment('cancelled.txt');
+  b.api.cancelAttachmentSelection(1);
+  assert.match(await b.api.attachmentInput(), /qchat-file-input/);
+  assert.equal(b.clicks, 0);
+});
+
+test('native pre-send cancellation blocks reuse when remove controls have not appeared', async () => {
+  const b = browser(); const input = b.input(); input.files = [{ name: 'pending.txt' }];
+  b.api.cancelAttachmentSelection(1);
+  await assert.rejects(b.api.attachmentInput(), /cancelled attachments/);
+  await b.send();
+  assert.equal(b.clicks, 0); assert.equal(terminal(b).at(-1).code, 'attachment_pending');
+});
+test('Stop before sending removes only scoped attachment controls and prevents late Send', async () => {
+  const b = browser({ data: sse(message(['next text']), '[DONE]') });
+  b.pendingAttachment(); const sent = b.send({ attachmentCount: 1 });
+  await b.tick(100); b.api.stop(); await b.tick(500); await sent;
+  assert.equal(b.clicks, 0); assert.equal(terminal(b).length, 1);
+  await b.send({ id: 'next', prompt: 'text only' }); await b.tick(200);
+  assert.equal(b.clicks, 1); assert.equal(b.events.filter(event => event.type === 'done').at(-1).text, 'next text');
+});
+test('unrecognized attachment cleanup blocks a later text-only Send with a clear fallback', async () => {
+  const b = browser(); b.pending(true); const sent = b.send({ attachmentCount: 1 });
+  await b.tick(100); b.api.stop(); await b.tick(500); await sent;
+  assert.equal(b.clicks, 0); assert.equal(terminal(b)[0].code, 'attachment_cancelled');
+  await b.send({ id: 'next', prompt: 'text only' }); await b.tick(200);
+  assert.equal(b.clicks, 0); assert.equal(terminal(b).at(-1).code, 'attachment_pending');
+});
+test('New chat awaits active stream cancellation and clears the media registry', async () => {
+  const b = browser({ data: sse(message(['partial', { type: 'file', filename: 'old.csv', url: 'sandbox:/mnt/data/old.csv' }])), hold: true });
+  b.stop(true); await b.send(); await b.tick(100);
+  const id = b.events.find(event => event.type === 'media').items[0].id;
+  const reset = b.api.newChat(); assert.equal(b.newChats, 0);
+  await b.tick(500); await reset;
+  assert.equal(b.newChats, 1); assert.equal(terminal(b).length, 1);
+  assert.throws(() => b.api.mediaInfo(id), /unavailable/); assert.equal(b.cancels, 1);
+  const count = b.events.filter(event => event.type !== 'status').length; b.resume(); await b.tick(300);
+  assert.equal(b.events.filter(event => event.type !== 'status').length, count);
+});
+test('New chat during pending upload prevents submission and clears blocked attachment state', async () => {
+  const b = browser({ data: sse(message(['fresh text']), '[DONE]') });
+  b.pending(true); const sent = b.send({ attachmentCount: 1 }); await b.tick(100);
+  const reset = b.api.newChat(); await b.tick(500); await reset; await sent;
+  assert.equal(b.clicks, 0); assert.equal(b.newChats, 1);
+  await b.send({ id: 'fresh', prompt: 'text only' }); await b.tick(200);
+  assert.equal(b.clicks, 1); assert.equal(b.events.filter(event => event.type === 'done').at(-1).text, 'fresh text');
+});
+test('unavailable attachment input rejects in a bounded wait and pending uploads time out', async () => {
+  const b = browser(); const selection = assert.rejects(b.api.attachmentInput(), /unavailable/); await b.tick(3200); await selection;
+  b.pending(true); const sent = b.send({ attachmentCount: 1 }); await b.tick(121000); await sent;
+  assert.equal(b.clicks, 0); assert.equal(terminal(b)[0]?.code, 'attachment_failed');
+});
+
+let failed = 0;
+for (const { name, run } of tests) {
+  try { await run(); console.log(`PASS ${name}`); }
+  catch (error) { failed++; console.error(`FAIL ${name}\n${error.stack}`); }
+}
+console.log(failed ? `${failed} FAILED` : `ALL PASS (${tests.length})`);
+process.exitCode = failed ? 1 : 0;

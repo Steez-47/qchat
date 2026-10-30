@@ -10,6 +10,8 @@
     const listeners = new Map();
     let mockTimer = null;
     let mockLoggedIn = false;
+    const mockFiles = new Map();
+    const MOCK_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII=";
 
     const emitMock = (event, payload) => {
       for (const cb of listeners.get(event) || []) {
@@ -57,6 +59,28 @@
       core: {
         invoke: async (cmd, args = {}) => {
           switch (cmd) {
+            case "attachment_begin": {
+              const id = crypto.randomUUID();
+              const meta = { id, name: args.name, mime: args.mime, size: args.size, kind: "file", offset: 0 };
+              mockFiles.set(id, meta);
+              return meta;
+            }
+            case "attachment_chunk": {
+              const file = mockFiles.get(args.id);
+              if (!file || args.offset !== file.offset) throw new Error("Invalid attachment chunk");
+              const size = atob(args.data).length;
+              if (size > 512 * 1024 || file.offset + size > file.size) throw new Error("Invalid attachment size");
+              file.offset += size;
+              return null;
+            }
+            case "attachment_finish": {
+              const file = mockFiles.get(args.id);
+              if (!file || file.offset !== file.size) throw new Error("Incomplete file");
+              return file;
+            }
+            case "attachment_remove": mockFiles.delete(args.id); return null;
+            case "media_load": return { id: args.mediaId, name: "Demo image.png", kind: "image", mime: "image/png", src: MOCK_PNG };
+            case "media_save": return "Demo image.png";
             case "chat_status":
               emitStatus(15);
               return null;
@@ -76,6 +100,8 @@
               const forceError = params.get("mock") === "error" || cleanPrompt === "error";
 
               setTimeout(() => emitMock("bridge", { type: "start", id }), 10);
+              if (params.get("mock") === "media") setTimeout(() => emitMock("bridge", { type: "media", id, items: [{ id: "demo-raster", kind: "image", name: "Demo image.png", mime: "image/png" }, { id: "demo-file", kind: "file", name: "Demo file.txt" }] }), 40);
+              for (const token of args.attachmentIds || []) mockFiles.delete(token);
 
               if (forceError) {
                 mockTimer = setTimeout(() => {
@@ -110,6 +136,7 @@
               emitStatus(20);
               return null;
             case "hide_main":
+            case "set_layout":
             case "open_external":
             default:
               return null;
@@ -202,14 +229,14 @@
     const renderer = new window.marked.Renderer();
 
     renderer.html = (token) => escapeHtml(typeof token === "string" ? token : (token?.text ?? ""));
-    renderer.image = (href, _title, text) => escapeHtml(`[${typeof text === "string" ? text : (href?.text ?? "image")}]`);
+    renderer.image = (href, _title, text) => `<button type="button" class="hyperlink-btn" data-action="view-media">${escapeHtml(typeof text === "string" ? text : (href?.text || "Image"))}</button>`;
 
     renderer.link = (href, title, text) => {
       const rawHref = typeof href === "string" ? href : (href?.href ?? "");
       const rawTitle = typeof title === "string" ? title : (href?.title ?? "");
       const labelHtml = typeof text === "string" ? text : (href?.text ?? "");
       const safeUrl = sanitizeHref(rawHref);
-      if (!safeUrl) return labelHtml;
+      if (!safeUrl) return /^(sandbox:|attachment:|qchat-media:)/i.test(rawHref) ? `<button type="button" class="hyperlink-btn" data-action="view-media">${labelHtml || "View file in ChatGPT"}</button>` : labelHtml;
       const titleAttr = ` title="${escapeHtml(rawTitle || safeUrl)}"`;
       return `<a href="${escapeHtml(safeUrl)}"${titleAttr} rel="noopener noreferrer">${labelHtml}</a>`;
     };
@@ -275,6 +302,9 @@
     btnJumpLatest: $("btn-jump-latest"),
     promptInput: $("prompt-input"),
     btnSend: $("btn-send"),
+    btnAttach: $("btn-attach"),
+    attachmentInput: $("attachment-input"),
+    attachments: $("attachments"),
     settingsPage: $("settings-page"),
     btnCloseSettings: $("btn-close-settings"),
     accountStatus: $("account-status"),
@@ -285,6 +315,10 @@
   const turns = [];
   const turnNodes = new Map();
   const renderSchedule = new Map();
+  const pendingFiles = [];
+  let stageQueue = Promise.resolve();
+  let sending = false;
+  let chatGeneration = 0;
   let userScrolledUp = false;
   let settingsOpen = false;
   let settingsHideTimer = null;
@@ -299,11 +333,28 @@
     el.btnSend.firstElementChild.textContent = active ? GLYPH.stop : GLYPH.send;
     el.btnSend.title = active ? "Stop generating (Ctrl+.)" : "Send (Enter) · Shift+Enter for a new line";
     el.btnSend.setAttribute("aria-label", active ? "Stop generating" : "Send");
-    el.btnSend.disabled = !active && !el.promptInput.value.trim();
+    el.btnAttach.disabled = active || sending;
+    el.btnSend.disabled = !active && (sending || pendingFiles.some(f => f.state !== "ready") || (!el.promptInput.value.trim() && !pendingFiles.length));
+  }
+
+  // Compact = just the floating composer; expanded = conversation sheet or settings.
+  // CSS animates the sheet; the native window grows at once and shrinks after the animation.
+  let layoutExpanded = null;
+  let layoutTimer = null;
+  function syncLayout() {
+    const expanded = turns.length > 0 || settingsOpen;
+    if (expanded === layoutExpanded) return;
+    layoutExpanded = expanded;
+    clearTimeout(layoutTimer);
+    document.documentElement.dataset.layout = expanded ? "expanded" : "compact";
+    const apply = () => invoke("set_layout", { expanded }).catch(() => {});
+    if (expanded) apply();
+    else layoutTimer = setTimeout(apply, 280);
   }
 
   function updateWorkspaceVisibility() {
     const hasTurns = turns.length > 0;
+    syncLayout();
     el.emptyState.hidden = hasTurns;
     el.turnsList.hidden = !hasTurns;
     if (!hasTurns) {
@@ -364,6 +415,159 @@
     return svg;
   }
 
+  const CHUNK_SIZE = 512 * 1024;
+  const MAX_BYTES = 512 * 1024 * 1024;
+  const fileSize = bytes => bytes < 1048576 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
+  function renderAttachments() {
+    el.attachments.replaceChildren();
+    el.attachments.hidden = !pendingFiles.length;
+    for (const item of pendingFiles) {
+      const chip = make("div", "attachment-chip");
+      chip.dataset.state = item.state;
+      const label = make("span", "attachment-name", item.file.name);
+      const status = item.state === "error" ? "Could not attach. Remove and try again." : item.state === "ready" ? fileSize(item.file.size) : `${Math.floor(item.offset / Math.max(1, item.file.size) * 100)}%`;
+      const remove = make("button", "icon-btn", "×");
+      remove.type = "button";
+      remove.setAttribute("aria-label", `Remove ${item.file.name}`);
+      remove.disabled = sending;
+      remove.addEventListener("click", () => removeAttachment(item));
+      chip.append(label, make("span", "attachment-status", status), remove);
+      el.attachments.append(chip);
+    }
+    updateComposerMode();
+  }
+  async function discardAttachment(item) {
+    if (!item.id || item.discarded) return;
+    item.discarded = true;
+    try { await invoke("attachment_remove", { id: item.id }); }
+    catch (_) { item.discarded = false; showGlobalError("attachment_failed", "Could not discard a file. Try New chat before attaching more files."); }
+  }
+  function removeAttachment(item) {
+    item.cancelled = true;
+    item.reader?.abort();
+    const index = pendingFiles.indexOf(item);
+    if (index >= 0) pendingFiles.splice(index, 1);
+    // The staging task discards after any in-flight command settles.
+    if (item.state === "ready" || item.state === "error") void discardAttachment(item);
+    renderAttachments();
+  }
+  function readChunk(item, blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      item.reader = reader;
+      reader.onload = () => { item.reader = null; resolve(String(reader.result).split(",", 2)[1]); };
+      reader.onerror = reader.onabort = () => { item.reader = null; reject(new Error("File read interrupted")); };
+      reader.readAsDataURL(blob);
+    });
+  }
+  async function stageAttachment(item) {
+    try {
+      if (item.cancelled) return;
+      const meta = await invoke("attachment_begin", { name: item.file.name, mime: item.file.type || "application/octet-stream", size: item.file.size });
+      if (!meta || typeof meta.id !== "string") throw new Error("Invalid attachment response");
+      item.id = meta.id;
+      while (!item.cancelled && item.offset < item.file.size) {
+        const end = Math.min(item.offset + CHUNK_SIZE, item.file.size);
+        const data = await readChunk(item, item.file.slice(item.offset, end));
+        if (item.cancelled) break;
+        await invoke("attachment_chunk", { id: item.id, offset: item.offset, data });
+        item.offset = end;
+        renderAttachments();
+      }
+      if (!item.cancelled) {
+        await invoke("attachment_finish", { id: item.id });
+        item.state = "ready";
+      }
+    } catch (_) {
+      item.state = "error";
+      await discardAttachment(item);
+    } finally {
+      if (item.cancelled) await discardAttachment(item);
+      renderAttachments();
+    }
+  }
+  function addFiles(files) {
+    if (isStreaming() || sending) return;
+    for (const file of Array.from(files || [])) {
+      if (pendingFiles.length >= 10 || file.size > MAX_BYTES || pendingFiles.reduce((n, f) => n + f.file.size, 0) + file.size > MAX_BYTES) {
+        showGlobalError("attachment_failed", "Attach up to 10 files, totalling at most 512 MB.");
+        continue;
+      }
+      const item = { file, offset: 0, state: "staging", cancelled: false, id: null };
+      pendingFiles.push(item);
+      stageQueue = stageQueue.then(() => stageAttachment(item));
+    }
+    renderAttachments();
+  }
+
+  function safeMediaSource(meta, kind) {
+    if (!meta || meta.kind !== kind || typeof meta.src !== "string") return false;
+    try {
+      const url = new URL(meta.src);
+      const broker = /^http:\/\/qchat-media\.localhost\/[A-Za-z0-9_-]+$/.test(meta.src) && url.protocol === "http:" && url.hostname === "qchat-media.localhost" && !url.port && !url.username && !url.password && !url.search && !url.hash && /^\/[A-Za-z0-9_-]+$/.test(url.pathname);
+      const mockRaster = IS_MOCK && kind === "image" && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(meta.src);
+      if (!broker && !mockRaster) return false;
+      const mime = String(meta.mime || "").toLowerCase().split(";")[0].trim();
+      if (kind === "image") return /^image\/(png|jpeg|gif|webp|avif|bmp|x-icon)$/.test(mime);
+      if (kind === "audio") return /^audio\/(mpeg|mp3|mp4|ogg|wav|x-wav|webm|aac|flac)$/.test(mime);
+      if (kind === "video") return /^video\/(mp4|webm|ogg|quicktime)$/.test(mime);
+      return false;
+    } catch (_) { return false; }
+  }
+  function appendMedia(turn, items) {
+    const entry = turnNodes.get(turn.id);
+    if (!entry) return;
+    for (const item of Array.isArray(items) ? items : []) {
+      if (!item || typeof item.id !== "string" || entry.mediaItems.has(item.id)) continue;
+      entry.mediaItems.add(item.id);
+      const kind = ["image", "audio", "video"].includes(item.kind) ? item.kind : "file";
+      const card = make("div", "media-card");
+      const status = make("span", "media-status");
+      const preview = make("div", "media-preview");
+      const actions = make("div", "media-actions");
+      const view = make("button", "hyperlink-btn", "View in ChatGPT");
+      view.type = "button";
+      view.addEventListener("click", openSignin);
+      const save = make("button", "btn btn-compact", "Save to Downloads");
+      save.type = "button";
+      save.addEventListener("click", async () => {
+        save.disabled = true;
+        try { await invoke("media_save", { mediaId: item.id }); status.textContent = "Saved to Downloads"; }
+        catch (_) { status.textContent = "Could not save. View in ChatGPT to download."; }
+        finally { save.disabled = false; }
+      });
+      actions.append(save, view);
+      card.append(make("div", "attachment-name", typeof item.name === "string" ? item.name : "File"), preview, status, actions);
+      entry.mediaEl.append(card);
+      if (kind === "file") continue;
+      const load = make("button", "btn btn-compact", "Load");
+      load.type = "button";
+      actions.prepend(load);
+      let loaded = false;
+      const loadMedia = async () => {
+        if (loaded || load.disabled) return;
+        load.disabled = true;
+        try {
+          const meta = await invoke("media_load", { mediaId: item.id });
+          if (!safeMediaSource(meta, kind)) throw new Error("Unsupported media");
+          if (turnNodes.get(turn.id) !== entry) return;
+          const media = make(kind === "image" ? "img" : kind);
+          if (kind === "image") { media.alt = typeof item.name === "string" ? item.name : "Image"; media.loading = "lazy"; }
+          else { media.controls = true; media.preload = "none"; media.autoplay = false; }
+          media.addEventListener("error", () => { status.textContent = "Preview unavailable. View in ChatGPT."; });
+          media.src = meta.src;
+          preview.append(media);
+          loaded = true;
+          load.hidden = true;
+          status.textContent = "";
+        } catch (_) { status.textContent = "Preview unavailable. View in ChatGPT."; }
+        finally { load.disabled = false; }
+      };
+      load.addEventListener("click", loadMedia);
+      if (kind === "image") void loadMedia();
+    }
+  }
+
   function createTurnRow(turn) {
     const row = make("article", "turn-row");
     row.dataset.id = turn.id;
@@ -374,6 +578,9 @@
     const body = make("div", "turn-body");
     const contentEl = make("div", "turn-content");
     body.appendChild(contentEl);
+    const mediaEl = make("div", "turn-media");
+    body.appendChild(mediaEl);
+    for (const file of turn.attachments || []) mediaEl.append(make("div", "attachment-chip", `${file.name} · ${fileSize(file.size)}`));
     row.appendChild(body);
 
     let errorWrap = null;
@@ -402,7 +609,7 @@
       row.appendChild(errorWrap);
     }
 
-    turnNodes.set(turn.id, { row, contentEl, errorWrap });
+    turnNodes.set(turn.id, { row, contentEl, errorWrap, mediaEl, mediaItems: new Set() });
     renderTurnNow(turn.id);
     return row;
   }
@@ -422,11 +629,19 @@
       signin.dataset.action = "signin";
       actions.appendChild(signin);
     }
-    const retry = make("button", "btn btn-compact", "Retry");
-    retry.type = "button";
-    retry.dataset.action = "retry-turn";
-    retry.dataset.id = turn.id;
-    actions.appendChild(retry);
+    if ((!turn.hadAttachments && turn.prompt) || pendingFiles.some(f => f.state === "ready")) {
+      const retry = make("button", "btn btn-compact", "Retry");
+      retry.type = "button";
+      retry.dataset.action = "retry-turn";
+      retry.dataset.id = turn.id;
+      actions.appendChild(retry);
+    }
+    if (turn.hadAttachments) {
+      const view = make("button", "btn btn-compact", "View in ChatGPT");
+      view.type = "button";
+      view.dataset.action = "signin";
+      actions.appendChild(view);
+    }
     bar.append(icon, text, actions);
     return bar;
   }
@@ -505,20 +720,17 @@
     updateComposerMode();
   }
 
-  function takePrompt() {
-    const text = el.promptInput.value;
-    el.promptInput.value = "";
-    autoResizePrompt();
-    return text;
-  }
-
   async function sendPrompt(rawPrompt) {
     const prompt = String(rawPrompt ?? "").trim();
-    if (!prompt || isStreaming()) return;
+    if (sending || isStreaming() || pendingFiles.some(f => f.state !== "ready") || (!prompt && !pendingFiles.length)) return;
+    sending = true;
+    const generation = chatGeneration;
+    const files = pendingFiles.slice();
+    const draft = el.promptInput.value;
 
     hideGlobalError();
-    const userTurn = { id: crypto.randomUUID(), role: "user", text: prompt, status: "done" };
-    const assistantTurn = { id: crypto.randomUUID(), role: "assistant", text: "", status: "streaming", prompt };
+    const userTurn = { id: crypto.randomUUID(), role: "user", text: prompt, status: "done", attachments: files.map(f => ({ name: f.file.name, size: f.file.size })) };
+    const assistantTurn = { id: crypto.randomUUID(), role: "assistant", text: "", status: "streaming", prompt, hadAttachments: files.length > 0 };
 
     turns.push(userTurn, assistantTurn);
     updateWorkspaceVisibility();
@@ -528,13 +740,37 @@
     scrollToBottom(true);
 
     try {
-      await invoke("chat_send", { id: assistantTurn.id, prompt });
+      await invoke("chat_send", { id: assistantTurn.id, prompt, attachmentIds: files.map(f => f.id) });
+      for (const file of files) {
+        const index = pendingFiles.indexOf(file);
+        if (index >= 0) pendingFiles.splice(index, 1);
+      }
+      if (generation === chatGeneration && el.promptInput.value === draft) {
+        el.promptInput.value = "";
+        autoResizePrompt();
+      }
     } catch (err) {
+      if (generation !== chatGeneration) return;
+      if (assistantTurn.status === "done" && !assistantTurn.text && !assistantTurn.media?.length) {
+        for (const turn of [userTurn, assistantTurn]) {
+          const index = turns.indexOf(turn);
+          if (index >= 0) turns.splice(index, 1);
+          turnNodes.get(turn.id)?.row.remove();
+          turnNodes.delete(turn.id);
+        }
+        updateWorkspaceVisibility();
+        updateComposerMode();
+        return;
+      }
+      if (assistantTurn.status !== "streaming") return;
       assistantTurn.status = "error";
       assistantTurn.code = "send_failed";
       assistantTurn.error = formatErrorCopy("send_failed", err?.message || String(err));
       scheduleTurnRender(assistantTurn.id, true);
       updateComposerMode();
+    } finally {
+      sending = false;
+      renderAttachments();
     }
   }
 
@@ -551,6 +787,10 @@
   }
 
   async function startNewChat(notifyBackend = true) {
+    chatGeneration++;
+    for (const item of pendingFiles.slice()) removeAttachment(item);
+    el.promptInput.value = "";
+    autoResizePrompt();
     for (const sched of renderSchedule.values()) {
       if (sched.rafId) cancelAnimationFrame(sched.rafId);
       if (sched.timerId) clearTimeout(sched.timerId);
@@ -635,6 +875,7 @@
     const root = document.documentElement;
     const wasOpen = settingsOpen;
     settingsOpen = Boolean(open);
+    syncLayout();
     el.btnSettings.setAttribute("aria-expanded", String(settingsOpen));
     clearTimeout(settingsHideTimer);
 
@@ -716,7 +957,12 @@
       if (turn) copyWithFeedback(turn.text, actionBtn);
     } else if (action === "retry-turn") {
       const turn = turns.find((t) => t.id === actionBtn.dataset.id);
-      if (turn && turn.prompt && !isStreaming()) sendPrompt(turn.prompt);
+      if (turn && typeof turn.prompt === "string" && !isStreaming()) sendPrompt(turn.prompt);
+    } else if (action === "view-media") {
+      const row = actionBtn.closest(".turn-row");
+      const media = row?.querySelector(".turn-media .media-card");
+      if (media) media.scrollIntoView({ block: "nearest" });
+      else openSignin();
     } else if (action === "signin") {
       openSignin();
     }
@@ -733,16 +979,26 @@
   });
 
   el.promptInput.addEventListener("input", autoResizePrompt);
+  el.btnAttach.addEventListener("click", () => el.attachmentInput.click());
+  el.attachmentInput.addEventListener("change", () => { addFiles(el.attachmentInput.files); el.attachmentInput.value = ""; });
+  el.promptInput.addEventListener("paste", e => {
+    const files = Array.from(e.clipboardData?.files || []);
+    if (files.length) { e.preventDefault(); addFiles(files); }
+  });
+  el.chatView.addEventListener("dragover", e => {
+    if (Array.from(e.dataTransfer?.types || []).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = isStreaming() || sending ? "none" : "copy"; }
+  });
+  el.chatView.addEventListener("drop", e => { if (e.dataTransfer?.files?.length) { e.preventDefault(); addFiles(e.dataTransfer.files); } });
   el.promptInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      if (!isStreaming() && el.promptInput.value.trim()) sendPrompt(takePrompt());
+      if (!isStreaming()) sendPrompt(el.promptInput.value);
     }
   });
 
   el.btnSend.addEventListener("click", () => {
     if (isStreaming()) stopStreaming();
-    else if (el.promptInput.value.trim()) sendPrompt(takePrompt());
+    else sendPrompt(el.promptInput.value);
     el.promptInput.focus();
   });
 
@@ -803,6 +1059,11 @@
         }
         break;
       }
+      case "media": {
+        const turn = turns.find(t => t.id === evt.id && t.role === "assistant");
+        if (turn) appendMedia(turn, evt.items);
+        break;
+      }
       case "done": {
         const turn = turns.find((t) => t.id === evt.id);
         if (turn) {
@@ -839,6 +1100,7 @@
 
   listen("qchat://new-chat", () => startNewChat(true));
 
+  syncLayout();
   updateComposerMode();
   el.promptInput.focus();
   refreshTheme();

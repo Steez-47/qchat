@@ -1,12 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod media;
+use media::{
+    attachment_begin, attachment_chunk, attachment_finish, attachment_remove, media_load,
+    media_save,
+};
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
-use tauri::{
-    window::{Effect, EffectsBuilder},
-    Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
-};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -141,16 +143,48 @@ fn show(app: &tauri::AppHandle) {
             let Ok(size) = w.outer_size() else {
                 return;
             };
-            let margin = (16.0 * m.scale_factor()) as i32;
+            let lift = (area.size.height as f64 * 0.06) as i32;
             let _ = w.set_position(tauri::PhysicalPosition::new(
-                area.position.x + area.size.width as i32 - size.width as i32 - margin,
-                area.position.y + area.size.height as i32 - size.height as i32 - margin,
+                area.position.x + (area.size.width as i32 - size.width as i32) / 2,
+                area.position.y + area.size.height as i32 - size.height as i32 - lift,
             ));
         }
     }
     let _ = w.show();
     let _ = w.set_focus();
     let _ = w.emit("qchat://shown", ());
+}
+const PANEL_W: f64 = 680.0;
+const PANEL_COMPACT_H: f64 = 248.0;
+const PANEL_EXPANDED_H: f64 = 680.0;
+#[tauri::command]
+fn set_layout(app: tauri::AppHandle, expanded: bool) {
+    let Some(w) = app.get_webview_window("main") else {
+        return;
+    };
+    let scale = w.scale_factor().unwrap_or(1.0);
+    let mut h = if expanded {
+        PANEL_EXPANDED_H
+    } else {
+        PANEL_COMPACT_H
+    };
+    if let Ok(Some(m)) = w.current_monitor() {
+        h = h
+            .min(m.work_area().size.height as f64 / scale - 24.0)
+            .max(PANEL_COMPACT_H);
+    }
+    let (Ok(pos), Ok(old)) = (w.outer_position(), w.outer_size()) else {
+        return;
+    };
+    let new_h = (h * scale).round() as i32;
+    if new_h == old.height as i32 {
+        return;
+    }
+    let _ = w.set_size(tauri::LogicalSize::new(PANEL_W, h));
+    let _ = w.set_position(tauri::PhysicalPosition::new(
+        pos.x,
+        pos.y + old.height as i32 - new_h,
+    ));
 }
 #[tauri::command]
 fn hide_main(app: tauri::AppHandle) {
@@ -231,6 +265,11 @@ fn show_signin(app: tauri::AppHandle) {
 }
 #[tauri::command]
 fn bridge_event(app: tauri::AppHandle, event: serde_json::Value) -> Result<(), String> {
+    if matches!(event["type"].as_str(), Some("done" | "error")) {
+        if let Some(id) = event["id"].as_str() {
+            media::finish_turn(&app, id);
+        }
+    }
     let auto_return = {
         let state = app.state::<Host>();
         let mut a = state.0.lock().unwrap();
@@ -239,7 +278,7 @@ fn bridge_event(app: tauri::AppHandle, event: serde_json::Value) -> Result<(), S
             .is_some_and(|id| a.flight_id.as_deref() == Some(id))
         {
             match event["type"].as_str() {
-                Some("start" | "delta") => a.last_progress = Instant::now(),
+                Some("start" | "delta" | "media" | "progress") => a.last_progress = Instant::now(),
                 Some("done" | "error") => a.flight_id = None,
                 _ => (),
             }
@@ -273,22 +312,54 @@ fn bridge_event(app: tauri::AppHandle, event: serde_json::Value) -> Result<(), S
 }
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
+    media::clear_all(&app);
     app.exit(0);
 }
 #[tauri::command]
-fn chat_send(app: tauri::AppHandle, id: String, prompt: String) -> Result<(), String> {
+async fn chat_send(
+    app: tauri::AppHandle,
+    id: String,
+    prompt: String,
+    attachment_ids: Option<Vec<String>>,
+) -> Result<(), String> {
     chat_page(&app)?;
+    resume(&app);
     {
         let s = app.state::<Host>();
         let mut a = s.0.lock().unwrap();
-        if a.flight_id.is_some() && a.last_progress.elapsed() < Duration::from_secs(120) {
+        if a.flight_id.is_some() && a.last_progress.elapsed() < Duration::from_secs(600) {
             return Err("busy: A request is already in progress".into());
         }
         a.flight_id = Some(id.clone());
         a.last_progress = Instant::now();
     }
-    let data = serde_json::to_string(&serde_json::json!({"id":id,"prompt":prompt}))
-        .map_err(|e| e.to_string())?;
+    let attachment_ids = attachment_ids.unwrap_or_default();
+    if let Err(error) = media::attach(&app, &attachment_ids, &id).await {
+        let state = app.state::<Host>();
+        let mut a = state.0.lock().unwrap();
+        if a.flight_id.as_deref() == Some(&id) {
+            a.flight_id = None;
+        }
+        return Err(error);
+    }
+    if app.state::<Host>().0.lock().unwrap().flight_id.as_deref() != Some(&id) {
+        if !attachment_ids.is_empty() {
+            let _ = media::evaluate(
+                &app,
+                format!(
+                    "window.__qchat.cancelAttachmentSelection({})",
+                    attachment_ids.len()
+                ),
+            )
+            .await;
+        }
+        return Err("Send was cancelled".into());
+    }
+    let data = serde_json::to_string(
+        &serde_json::json!({"id":id,"prompt":prompt,"attachmentCount":attachment_ids.len()}),
+    )
+    .map_err(|e| e.to_string())?;
+    media::track_turn(&app, &id, &attachment_ids);
     let result = eval(&app,&format!("(()=>{{const p={data}; if(window.__qchat) window.__qchat.send(p); else window.__QCHAT_EMIT__({{type:'error',id:p.id,code:'not_ready',message:'ChatGPT page not loaded yet'}});}})()"));
     if result.is_err() {
         let state = app.state::<Host>();
@@ -301,10 +372,13 @@ fn chat_send(app: tauri::AppHandle, id: String, prompt: String) -> Result<(), St
 }
 #[tauri::command]
 fn chat_stop(app: tauri::AppHandle) -> Result<(), String> {
+    app.state::<Host>().0.lock().unwrap().flight_id = None;
     eval(&app, "window.__qchat && window.__qchat.stop()")
 }
 #[tauri::command]
 fn chat_new(app: tauri::AppHandle) -> Result<(), String> {
+    media::clear_all(&app);
+    app.state::<Host>().0.lock().unwrap().flight_id = None;
     eval(&app, "window.__qchat && window.__qchat.newChat()")
 }
 #[tauri::command]
@@ -357,7 +431,13 @@ fn main() {
             );
         }
     }
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default()
+        .manage(media::MediaState::default())
+        .register_asynchronous_uri_scheme_protocol("qchat-media", |context, request, responder| {
+            let app = context.app_handle().clone();
+            let label = context.webview_label().to_owned();
+            std::thread::spawn(move || responder.respond(media::protocol(&app, &label, request)));
+        });
     let builder = if test_profile().is_none() {
         builder.plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
     } else {
@@ -367,12 +447,13 @@ fn main() {
  .manage(Host(Mutex::new(Activity{hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0,logged_in:false,signin_was_logged_in:false})))
 
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,_,event|{if event.state()==ShortcutState::Pressed{toggle(app);}}).build())
- .invoke_handler(tauri::generate_handler![bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,open_external,show_signin,quit_app,get_theme])
+ .invoke_handler(tauri::generate_handler![bridge_event,chat_send,chat_stop,chat_new,chat_status,hide_main,set_layout,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save])
  .setup(|app|{
- {let b=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat").inner_size(420.,620.).min_inner_size(340.,420.).decorations(false).shadow(true).transparent(true).effects(EffectsBuilder::new().effect(Effect::Mica).build()).always_on_top(true).skip_taskbar(true).resizable(true).visible(false).build()?;
+ {let b=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat").inner_size(PANEL_W,PANEL_COMPACT_H).min_inner_size(PANEL_W,PANEL_COMPACT_H).decorations(false).shadow(false).transparent(true).always_on_top(true).skip_taskbar(true).resizable(false).disable_drag_drop_handler().visible(false).build()?;
  {let b=WebviewWindowBuilder::new(app,"chatgpt",WebviewUrl::External("https://chatgpt.com/".parse()?)); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat – ChatGPT sign-in").inner_size(1000.,760.).skip_taskbar(true).decorations(false).visible(false)
  .initialization_script("if(location.hostname === 'chatgpt.com' || location.hostname.endsWith('.chatgpt.com')) window.__QCHAT_EMIT__ = (evt) => window.__TAURI_INTERNALS__.invoke('bridge_event', {event:evt});")
- .initialization_script(include_str!("../bridge/chatgpt-bridge.js")).build()?;
+ .initialization_script(include_str!("../bridge/chatgpt-bridge.js"))
+ .on_download(|webview,event|media::on_download(webview.app_handle(),event)).build()?;
  background(app.handle());
  if test_profile().is_none() { if let Err(e) = app.global_shortcut().register("Alt+Q") { eprintln!("Alt+Q unavailable: {e}"); } }
  use tauri::{menu::{Menu,MenuItem},tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState}};
@@ -382,7 +463,7 @@ fn main() {
  let handle=app.handle().clone();std::thread::spawn(move||loop{
  std::thread::sleep(Duration::from_secs(10));
  let hidden=handle.get_webview_window("main").and_then(|w| w.is_visible().ok()).map(|v| !v).unwrap_or(false);
- let (suspend,generation)={let s=handle.state::<Host>();let mut a=s.0.lock().unwrap();if a.flight_id.is_some()&&a.last_progress.elapsed()>=Duration::from_secs(120){a.flight_id=None;} let yes=hidden&&a.hidden.elapsed()>=Duration::from_secs(180)&&a.background&&a.flight_id.is_none()&&!a.suspended&&!a.suspend_pending;if yes{a.suspend_pending=true;}(yes,a.resume_generation)};
+ let (suspend,generation)={let s=handle.state::<Host>();let mut a=s.0.lock().unwrap();if a.flight_id.is_some()&&a.last_progress.elapsed()>=Duration::from_secs(600){a.flight_id=None;} let yes=hidden&&a.hidden.elapsed()>=Duration::from_secs(180)&&a.background&&a.flight_id.is_none()&&!a.suspended&&!a.suspend_pending;if yes{a.suspend_pending=true;}(yes,a.resume_generation)};
  if suspend {
    if let Some(w)=handle.get_webview_window("chatgpt") {
      let callback_handle=handle.clone();

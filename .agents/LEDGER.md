@@ -15,6 +15,11 @@ Edit these anytime. The orchestrator reads them at kickoff and before each miles
 
 ## Delegations
 
+- 2026-10-30 | K1 stream/media bridge | native codex/gpt-6.1-sol/medium | done | Unicode, DOM recovery, scoped media and attachment cancellation; parent final 47 checks pass
+- 2026-10-30 | K2 media UI | native codex/gpt-6.1-sol/medium | done | uploads, previews, paste/drop; parent final 20 UI checks pass
+- 2026-10-30 | K3 native media harness | native codex/gpt-6-luna/medium | done | exact bytes, downloads, WAV and VP9 WebM playback
+- 2026-10-30 | K3 live stream diagnosis | native codex/gpt-6-astra/high | done | read-only diagnosis of parsed-prefix/DOM mismatch after two failing hypotheses
+- 2026-10-30 | K3 initial and final cross-family reviews | antigravity/gemini-4-argon/low | done | two reviews; parent fixed cancellation, MIME/source checks and native download cleanup
 - 2026-10-30 | J1 normal sign-in diagnosis | opencode/deepseek-v4.1-flash-free/high | done | read-only bridge/state analysis
 - 2026-10-30 | J2 auth and prepare lifecycle fix | native codex/gpt-6.1-sol/medium | done | synthetic failing-then-passing prepare regression; parent verified real signed-in reply
 - 2026-10-30 | J3 cross-family review | antigravity/gemini-4-argon/low | done | fixed loading polling, matching auth routes and loading UI; kept safe probe identity guard
@@ -48,3 +53,5 @@ Edit these anytime. The orchestrator reads them at kickoff and before each miles
 - 2026-10-30 22:50 | G1b Fluent UI | claudeAgent/claude-opus-5-5/high | done | mock checks 16/16; real-app e2e pending G2
 - 2026-10-30 23:05 | G2 Mica/get_theme/tray | antigravity/gemini-4-argon/medium | done | e2e 7/7 re-verified by T0 with new UI; release 4.3MB
 - 2026-10-30 21:30 | H remove cookie flow, normal sign-in | T0 (delegate_task unavailable: parent_not_active) | done | e2e 7/7, persist 3/3, unit 1/1; release 4.3MB
+- 2026-10-30 23:40 | L1 glass UI | antigravity/gemini-4-argon/medium | running | CSS/HTML/look.js
+- 2026-10-30 23:55 | L1 glass UI | antigravity/gemini-4-argon/medium | done | media-ui-test 19/19, 12 mock screenshots checked by T0; release dist/QChat-glass.exe
