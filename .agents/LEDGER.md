@@ -42,3 +42,4 @@
 - 2026-10-31 | Response tag evidence inventory | opencode/deepseek-v4.1-flash-free high | done | official docs and indexes checked; fresh guest bundle probe blocked by Cloudflare; no account access or model messages
 - 2026-10-31 | Response tags cross-family review | antigravity/gemini-4-argon low | done | six findings; parent fixed all and added parser/native-stream/Edge regression cases, no additional review delegates
 - 2026-10-31 | Response tags release | parent | done | final parser/stream73/auth17/all UI/history/Rust19/native checks and npm build PASS; previous exe backed up, final hash verified; running other-worktree QChat preserved, update ready for next launch after that copy quits
+- 2026-10-31 | v0.1.2 release integration | parent | verified for publication | release build/version/hash PASS; both merged PRs integrated into main; Rust19/parser/stream73/auth17/reasoning/UI/history/animation/media PASS; no delegation
