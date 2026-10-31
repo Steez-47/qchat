@@ -94,7 +94,7 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
       throw new Error(`Unexpected request ${url}`);
     }
   }; window.top = window;
-  vm.runInContext(source, vm.createContext({ window, document, location: { hostname: 'chatgpt.com', href: 'https://chatgpt.com/', pathname: '/', origin: 'https://chatgpt.com' },
+  vm.runInContext(readFileSync(new URL('../ui/response-tags.js', import.meta.url), 'utf8') + '\n' + source, vm.createContext({ window, document, location: { hostname: 'chatgpt.com', href: 'https://chatgpt.com/', pathname: '/', origin: 'https://chatgpt.com' },
     URL, TextDecoder, AbortController, console, MutationObserver: class { observe() {} disconnect() {} },
     Date: class extends Date { static now() { return now; } },
     setTimeout: (fn, ms) => schedule(fn, ms), clearTimeout: id => timers.delete(id),
@@ -963,6 +963,25 @@ test('Stop and errors complete activity and delayed reads cannot restart it', as
     assert.deepEqual(activities(b).map(event => event.state), ['running', 'complete']);
     assert.equal(terminal(b).length, 1); assert.doesNotMatch(JSON.stringify(b.events), /SECRET/);
   }
+});
+
+test('literal tag and citation examples survive native streaming inside variable fences and inline runs', async () => {
+  const text = 'Examples: ``<Entity value="literal"/> <Cite ref="unknown"/>``\n\n~~~~\n<Future-widget query={{"x":1}}/>\n~~~~';
+  const b = browser({chunks:[encoder.encode(sse(message([text]), '[DONE]'))]});
+  await b.send(); await b.tick(2000);
+  assert.equal(terminal(b).at(-1).text, text);
+});
+
+test('citation prefixes, math, quoted code and source titles remain safe through native snapshots', async () => {
+  const raw = '$x < y$ and \\(a <b\\)\n\n> ~~~\n> <Entity value="literal"/> <Cite ref="literal"/>\n> ~~~\n\nRead <Cite ref="turn1search0"/>';
+  const b = browser({ data: sse(message([raw], {metadata:{content_references:[{ref_id:'turn1search0',url:'https://example.com/source',title:'A <div> title\nwith words'}]}}),'[DONE]') });
+  await b.send(); await b.tick(2000);
+  assert.ok(done(b)?.text.includes('$x < y$ and \\(a <b\\)'));
+  assert.ok(done(b)?.text.includes('> <Entity value="literal"/> <Cite ref="literal"/>'));
+  assert.ok(done(b)?.text.includes('[A &lt;div> title with words](https://example.com/source)'));
+  const partial = browser({data:sse(message(['Hello <Cit']),{p:'/message/content/parts/0',o:'append',v:'e ref="turn1search0"/>'},{op:'add',path:'/message/metadata',value:{content_references:[{ref_id:'turn1search0',url:'https://example.com/source',title:'Source'}]}},'[DONE]')});
+  await partial.send(); await partial.tick(2000);
+  assert.equal(done(partial)?.text,'Hello [Source](https://example.com/source)');
 });
 
 let failed = 0;

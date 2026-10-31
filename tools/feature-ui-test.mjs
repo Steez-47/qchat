@@ -198,7 +198,7 @@ try {
   const appSource = await readFile(path.join(root,'ui/app.js'),'utf8');
   const surfacesSource = await readFile(path.join(root,'ui/surfaces.js'),'utf8');
   const nativeSource = await readFile(path.join(root,'src-tauri/src/surfaces.rs'),'utf8');
-  const bridgeSource = await readFile(path.join(root,'src-tauri/bridge/chatgpt-bridge.js'),'utf8');
+  const bridgeSource = await readFile(path.join(root,'ui/response-tags.js'),'utf8') + '\n' + await readFile(path.join(root,'src-tauri/bridge/chatgpt-bridge.js'),'utf8');
   const settingsAcl = JSON.parse(await readFile(path.join(root,'src-tauri/capabilities/settings.json'),'utf8'));
   check('finding 1 settings selection and desktop command ACL', ['get-hotkey','set-hotkey','get-autostart','set-autostart','get-selection-hotkey','set-selection-hotkey','set-selection-clipboard'].every(c=>settingsAcl.permissions.includes('allow-'+c)));
   check('finding 2 startup registration tracked and fallback attempted', nativeSource.includes('s.registered=registered') && nativeSource.includes('chosen = "Alt+Q"'));

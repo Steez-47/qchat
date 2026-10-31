@@ -15,7 +15,7 @@ if (!port || !/^\d+$/.test(port)) {
   if(!page) throw Error('No ChatGPT page in supplied test instance');
   socket=new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject;});
-  const source=readFileSync(new URL('../../src-tauri/bridge/chatgpt-bridge.js',import.meta.url),'utf8');
+  const source=readFileSync(new URL('../../ui/response-tags.js',import.meta.url),'utf8')+'\n'+readFileSync(new URL('../../src-tauri/bridge/chatgpt-bridge.js',import.meta.url),'utf8');
   const helper=source.slice(source.indexOf('  let reasoningSelection ='),source.indexOf('  window.__qchat = {'));
   const selection=String.raw`(async()=>{
     const trigger=()=>document.querySelector('button[aria-label="Select ChatGPT model"]');
