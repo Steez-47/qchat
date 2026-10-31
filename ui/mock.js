@@ -41,6 +41,7 @@
     hold: false,
     statusHold: params.get("status") === "hold",
     connectTimeout: Number(params.get("connect")) || 0,
+    accountListTimeout: Number(params.get("listTimeout")) || 0,
     reply: null,
     failOpen: null,
     silentOpen: false,

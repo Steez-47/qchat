@@ -487,7 +487,7 @@
       if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return;
       if (kind === "selection" && e.key === "Backspace") { await invoke("set_selection_hotkey", {accelerator: ""}); current = ""; shortcutRefreshers.forEach(refresh => refresh()); delete button.dataset.recording; sync(); return; }
       if (!e.ctrlKey && !e.altKey && !e.metaKey) { hint.textContent = "Include Ctrl, Alt or Windows"; return; }
-      const accelerator = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super", e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join("+");
+      const accelerator = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super", e.key === " " ? "Space" : e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join("+");
       try { await invoke("set_" + command, {accelerator}); current = accelerator; shortcutRefreshers.forEach(refresh => refresh()); sync(); hint.textContent = ""; delete button.dataset.recording; } catch (err) { hint.textContent = String(err.message || err); }
     });
     return row;

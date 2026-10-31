@@ -2401,7 +2401,11 @@
     entry.row.classList.add(entrance);
     entry.row.addEventListener("animationend", () => entry.row.classList.remove(entrance), { once: true });
 
-    if (!QSettings.settings.showPrompt) for (const other of turns.slice()) if (other.role === "user") retireTurn(other);
+    for (const other of turns.slice()) {
+      if (other.role !== "user") continue;
+      if (QSettings.settings.showPrompt) turnNodes.get(other.id)?.row.querySelector(".thinking")?.remove();
+      else retireTurn(other);
+    }
     queueSizes();
     fitNow();
   }
@@ -2580,7 +2584,7 @@
     const files = retryFiles || (retrying ? [] : pendingFiles.filter((f) => f.state === "ready"));
     const staging = pendingFiles.some((f) => f.state === "staging");
     if (snapshotCapturing || staging) {
-      if (retrying) showCommandFeedback(snapshotCapturing ? "Wait for the snapshot to finish." : "Wait for files to finish attaching.");
+      if (retrying || fromInput) showCommandFeedback(snapshotCapturing ? "Wait for the snapshot to finish." : "Wait for files to finish attaching.");
       return;
     }
     if (isBusy() || (!prompt && !files.length && !selectionTexts.length)) return;
@@ -3050,6 +3054,7 @@
   function saveChatName() {
     if (renameForm.hidden || renameTarget !== chats.current) { closeRenameChat(false); return; }
     const title = normalizeChatTitle(renameInput.value);
+    const shortened = Array.from(renameInput.value.replace(/\s+/gu, " ").replace(/[\u0000-\u001f\u007f]/g, "").trim()).length > 40;
     if (!title) {
       renameInput.setAttribute("aria-invalid", "true");
       renameError.textContent = "Enter a chat name.";
@@ -3059,7 +3064,7 @@
     renameTarget.title = title;
     saveChats(); renderTabs();
     closeRenameChat();
-    showCommandFeedback("Renamed in QChat");
+    showCommandFeedback(shortened ? "Renamed in QChat, shortened to 40 characters" : "Renamed in QChat");
   }
   renameForm.addEventListener("submit", event => { event.preventDefault(); event.stopPropagation(); saveChatName(); });
   renameForm.addEventListener("keydown", event => {
@@ -3253,7 +3258,20 @@
     if (accountChats.loaded && Date.now() - accountChats.at < 120000) return;
     accountChats.loading = true;
     accountChats.items = [];
+    armAccountChatsTimeout();
     invoke("chat_list_conversations", { offset: 0 }).catch(() => { accountChats.loading = false; });
+  }
+
+  // The bridge answers with an event, and a page reloading mid-request never does.
+  // Without this the list would read as loading, and refuse new requests, for the session.
+  let accountChatsTimer;
+  function armAccountChatsTimeout() {
+    clearTimeout(accountChatsTimer);
+    accountChatsTimer = setTimeout(() => {
+      if (!accountChats.loading) return;
+      accountChats.loading = false;
+      if (!featureList.hidden) featureList._repaint?.();
+    }, Number(window.__mock?.accountListTimeout) || 30000);
   }
 
   function receiveAccountChats(event) {
@@ -3261,8 +3279,8 @@
     const before = accountChats.items.length;
     for (const item of Array.isArray(event.items) ? event.items : []) if (!seen.has(item.id)) { seen.add(item.id); accountChats.items.push(item); }
     const more = !event.error && event.items?.length && accountChats.items.length > before && accountChats.items.length < Math.min(event.total || 0, 600);
-    if (more) { const provider = activeProvider; setTimeout(() => { if (provider === activeProvider) invoke("chat_list_conversations", { offset: accountChats.items.length }).catch(() => { accountChats.loading = false; }); }, 500); }
-    else { accountChats.loading = false; accountChats.loaded = !event.error; accountChats.at = Date.now(); }
+    if (more) { armAccountChatsTimeout(); const provider = activeProvider; setTimeout(() => { if (provider === activeProvider) invoke("chat_list_conversations", { offset: accountChats.items.length }).catch(() => { accountChats.loading = false; }); }, 500); }
+    else { clearTimeout(accountChatsTimer); accountChats.loading = false; accountChats.loaded = !event.error; accountChats.at = Date.now(); }
     if (!featureList.hidden) featureList._repaint?.();
   }
 

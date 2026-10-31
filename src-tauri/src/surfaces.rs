@@ -799,6 +799,12 @@ pub fn start(app: &tauri::AppHandle) {
 mod tests {
     use super::*;
     #[test]
+    fn recorded_space_shortcut_parses() {
+        assert!(parse("Ctrl+Space").is_ok());
+        assert!(parse("Alt+Shift+Space").is_ok());
+        assert!(parse("Ctrl+ ").is_err());
+    }
+    #[test]
     fn rounded() {
         let r = Surface {
             x: 10.,
