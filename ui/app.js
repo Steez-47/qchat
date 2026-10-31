@@ -2875,7 +2875,7 @@
       let selectionKey = "Ctrl+Alt+Q"; try { selectionKey = await invoke("get_selection_hotkey"); } catch (_) {}
       const shortcuts = [[selectionKey || "Disabled", "Ask about selection"], [hotkey, "Show QChat"], [QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter", "Send"], ["Shift+Enter", "New line"], ["Esc", "Close"], ["Ctrl+N", "New chat"], ["Ctrl+K", "Menu"], ["Ctrl+P", "Chats"], ["Ctrl+.", "Stop"], ["ArrowUp / ArrowDown", "Recall prompts"], ["Paste / drop", "Attach files"]];
       shortcuts.splice(8, 0, ["Ctrl+F", "Find in conversation"], ["F3 / Shift+F3", "Next / previous match"]);
-      shortcuts.push(["Ctrl+Shift+C", "Copy reply"], ["Ctrl+Shift+X", "Copy last code block"]);
+      shortcuts.push(["Ctrl+End", "Jump to latest"], ["Ctrl+Shift+C", "Copy reply"], ["Ctrl+Shift+X", "Copy last code block"]);
       showFeatureList("Keyboard shortcuts", shortcuts.map(([key, action]) => ({ keys: key, title: action })));
     } }
   );
@@ -3949,6 +3949,24 @@
 
   window.addEventListener("keydown", (e) => {
     if (e.isComposing || e.keyCode === 229) return;
+    if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key === "End") {
+      const target = e.target;
+      if (target === el.promptInput) {
+        if (target.value && (target.selectionStart !== target.value.length || target.selectionEnd !== target.value.length)) return;
+      } else if (target instanceof Element && (target.closest("input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])"))) return;
+      if (historyOpen) {
+        e.preventDefault();
+        historyHeld = false;
+        el.historyPanel.scrollTop = el.historyPanel.scrollHeight;
+        syncHistoryEdge();
+      } else {
+        const entry = responseEntry();
+        if (!entry) return;
+        e.preventDefault();
+        entry.jump.click();
+      }
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       if (historyOpen) { setHistoryOpen(false); return; }

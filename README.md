@@ -22,6 +22,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - **Ctrl+Alt+Q** opens QChat with the text selected in the current app quoted in the box.
 - The desktop is really blurred behind the glass, and clicks pass through the empty space around it. Desktop blur can be turned off in Settings.
 - Code is highlighted and maths is rendered.
+- **Ctrl+End** jumps to the latest message and resumes following the reply.
 - `/keys` lists the shortcuts. Settings has the global shortcut.
 - **Open at startup:** turn it on in Settings, the tray or with `/startup`. QChat then starts quietly in the tray at login, ready for your shortcut. Turn on *Show the bar at startup* to see it straight away. Opening QChat yourself always shows the bar.
 - **Gemini:** `/gemini` and `/chatgpt`, or the last row of the picker beside the prompt, switch provider. That picker sets reasoning on ChatGPT and the model on Gemini. Tabs show each chat's provider logo. Each chat stays with the provider it started on, and Settings has a default provider and a sign-in for each. Gemini loads only once you first use it.
