@@ -25,6 +25,7 @@
     provider: "chatgpt",
     autostart: params.has("autostart"),
     failProvider: params.has("failProvider"),
+    providerHold: params.has("holdProvider"),
     model: "Flash-Lite",
     failModel: false,
     models: {gemini:[{id:"flash",label:"Flash-Lite",selected:true,meta:"Fast answers"},{id:"pro",label:"Pro",meta:"Advanced reasoning",disabled:true},{id:"thinking",label:"Thinking",meta:"Deeper answers"}]},
@@ -128,7 +129,10 @@
         }
         switch (cmd) {
           case "provider_get": return mock.provider;
-          case "provider_set": if (mock.failProvider) throw new Error("unavailable"); mock.provider = args.provider; if (!mock.statusHold) emitStatus(0); return;
+          case "provider_set":
+            if (mock.providerHold) await new Promise(resolve => { mock.releaseProvider = resolve; });
+            if (mock.failProvider) throw new Error("unavailable");
+            mock.provider = args.provider; if (!mock.statusHold) emitStatus(0); return;
           case "launch_info": return {autostart:mock.autostart};
           case "show_main": return;
           case "snapshot_capture": {

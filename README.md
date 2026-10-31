@@ -31,6 +31,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - Without signing in it chats as a ChatGPT guest.
 - Attach files with the paperclip, paste from the clipboard, or drop them onto the chat. Pasting text or files outside an editing field sends them to the composer. Attachments can be sent with or without text.
 - Failed attachment messages offer Retry for ten minutes, keeping newer drafts and files intact. Expired files ask you to attach them again.
+- If a file fails to prepare, Retry on its chip reuses the selected file. Draft files and image previews stay with you when switching providers.
 - Replies support image previews, audio/video controls, and files saved to Downloads without overwriting existing files. Unsupported previews can be opened in ChatGPT.
 - Images show thumbnails before sending and previews in the chat. **Copy image** copies pixels to the Windows clipboard. Image requests show a preparation/generation graphic, with ChatGPT's percentage when the site supplies one.
 
@@ -74,6 +75,8 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/selection-native-test.mjs`: selection hotkey and clipboard preference. Requires a debug build.
 - `node tools/media-ui-test.mjs`: uploads, paste/drop, previews, safe rendering and draft retention.
 - `node tools/attachment-retry-ui-test.mjs`: attachment retry, matching draft consumption, blocked retries, expiry and early terminal races.
+- `node tools/attachment-stage-retry-ui-test.mjs`: file-preparation failures, cleanup races, queued retries, provider portability, previews and narrow keyboard controls.
+- `node tools/attachment-stage-retry-native-test.mjs`: real partial upload cleanup, fresh-ID byte replay, cancellation, Stop and provider switching in an isolated hidden app. Requires a debug build.
 - `node tools/rename-chat-ui-test.mjs`: local titles, Unicode, persistence, privacy, keyboard undo and editor lifecycle.
 - `node tools/native-media-e2e.mjs`: real WebView2 attachment bytes, local media serving, downloads, audio and video. Requires a debug build; video checks use ffmpeg from PATH.
 - `node tools/app-e2e.mjs`: off-screen chat checks against ChatGPT as a guest.

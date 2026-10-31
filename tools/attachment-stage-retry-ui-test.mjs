@@ -136,14 +136,38 @@ try {
   check('failed cleanup refuses fresh begin and keeps discard warning',await evalJS(`__mock.count('attachment_begin')===1 && document.body.textContent.includes('Could not discard')`));
   await click(retry); await wait(ready);
   check('later successful cleanup permits fresh begin',await evalJS(`__mock.count('attachment_begin')===2 && __mock.count('attachment_remove')===3`));
+  check('successful cleanup clears its obsolete discard warning',await evalJS('document.getElementById("global-error").hidden'));
+  await setup();await fault('attachment_chunk',{failOn:[2]});await fault('attachment_remove',{failOn:[1],holdOn:[2]});await add('warning.bin',524311);await wait(err);await click(retry);await wait('__mock.attachmentFaults.attachment_remove.release');
+  await evalJS(`__mock.emit('qchat://selection-error','Keep this unrelated warning');__mock.attachmentFaults.attachment_remove.release()`);await wait(ready);
+  check('successful cleanup preserves a newer unrelated warning',await evalJS(`!document.getElementById('global-error').hidden&&document.getElementById('global-error-text').textContent.includes('Keep this unrelated warning')`));
+  await setup();await fault('attachment_begin',{failOn:[1],holdOn:[2]});await add('failed-switch.bin',35);await wait(err);await type('keep failed-switch draft');await click(retry);await wait(`__mock.attachmentFaults.attachment_begin.release`);
+  await evalJS('__mock.failProvider=true');await key('k',{ctrlKey:true});await evalJS(`document.getElementById('slash-gemini').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))`);await wait(`document.body.textContent.includes("Couldn't switch providers")`);
+  await evalJS('__mock.attachmentFaults.attachment_begin.release()');await sleep(80);
+  check('failed provider switch keeps the retrying file and draft',await evalJS(`__mock.provider==='chatgpt'&&!!document.querySelector('[aria-label="Remove failed-switch.bin"]')&&!!${ready}&&__mock.attachmentFiles.size===1&&document.getElementById('prompt-input').value==='keep failed-switch draft'`));
+  await setup();await evalJS(`window.previewRevokes=[];window.originalRevoke=URL.revokeObjectURL;URL.revokeObjectURL=function(url){previewRevokes.push(url);return originalRevoke.call(URL,url)};(()=>{const bytes=Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='),c=>c.charCodeAt(0));const d=new DataTransfer();d.items.add(new File([bytes],'portable.png',{type:'image/png'}));const input=document.getElementById('attachment-input');input.files=d.files;input.dispatchEvent(new Event('change'))})()`);await wait(ready);await evalJS(`window.portablePreview=document.querySelector('#attachments img').src`);
+  await key('k',{ctrlKey:true});await evalJS(`document.getElementById('slash-gemini').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))`);await wait(`__mock.provider==='gemini'`);await sleep(60);
+  check('provider switch preserves the pending image preview resource',await evalJS(`!!document.querySelector('[aria-label="Remove portable.png"]')&&document.querySelector('#attachments img').src===portablePreview&&!previewRevokes.includes(portablePreview)`));
+  await setup();await fault('attachment_begin',{failOn:[1],holdOn:[2]});await add('local-retry.bin',22);await wait(err);await add('local-blocker.bin',22);await wait(`__mock.attachmentFaults.attachment_begin.release`);await click(retry);
+  await evalJS('__mock.providerHold=true');await key('k',{ctrlKey:true});await evalJS(`document.getElementById('slash-gemini').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))`);await wait('typeof __mock.releaseProvider==="function"');
+  await evalJS('__mock.attachmentFaults.attachment_begin.release()');await wait(`document.querySelector('[aria-label="Remove local-retry.bin"]').closest('.attachment-chip').dataset.state!=='staging'`);
+  check('queued local preparation continues while a provider switch is pending',await evalJS(`document.querySelector('[aria-label="Remove local-retry.bin"]').closest('.attachment-chip').dataset.state==='ready'&&__mock.count('attachment_begin')===3`));
+  await evalJS('__mock.releaseProvider()');await wait(`__mock.provider==='gemini'`);
+  await open('/?mock=1&holdProvider=1',{settings:{animations:'off',defaultProvider:'gemini',barWidth:340,replyWidth:340}});await wait('typeof __mock.releaseProvider==="function"');await type('startup draft');await add('startup.bin',27);await wait(ready);
+  await evalJS('__mock.failProvider=true;__mock.releaseProvider()');await wait(`document.body.textContent.includes('Using ChatGPT for now')`);
+  check('startup provider fallback keeps the staged file and draft',await evalJS(`!!document.querySelector('[aria-label="Remove startup.bin"]')&&!!${ready}&&__mock.attachmentFiles.size===1&&document.getElementById('prompt-input').value==='startup draft'`));
   for(const action of ['remove','new','provider']) {
     await setup(); await fault('attachment_begin',{failOn:[1],holdOn:[2]}); await add('held.bin',100); await wait(err); await click(retry); await wait(`__mock.attachmentFaults.attachment_begin.release`);
     if(action==='remove') await click(`document.querySelector('#attachments [aria-label^="Remove"]')`);
     if(action==='new') await evalJS(`__mock.emit('qchat://new-chat',{})`);
     if(action==='provider') {await key('k',{ctrlKey:true}); await evalJS(`document.getElementById('slash-gemini').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))`);}
-    await wait(`!document.querySelector('#attachments .attachment-name')`);
-    await evalJS(`__mock.attachmentFaults.attachment_begin.release()`); await wait(`__mock.count('attachment_remove')===1`); await sleep(50);
-    check(action+' during retry begin cancels and discards without resurrection',await evalJS(`!document.querySelector('#attachments .attachment-name') && __mock.attachmentFiles.size===0`));
+    if(action==='provider') {
+      await wait(`__mock.provider==='gemini'`);await evalJS(`__mock.attachmentFaults.attachment_begin.release()`);await wait(ready);
+      check('provider switch keeps in-flight Retry with the draft',await evalJS(`!!document.querySelector('[aria-label="Remove held.bin"]')&&__mock.attachmentFiles.size===1&&__mock.count('attachment_begin')===2&&__mock.count('chat_send')===0`));
+    } else {
+      await wait(`!document.querySelector('#attachments .attachment-name')`);
+      await evalJS(`__mock.attachmentFaults.attachment_begin.release()`); await wait(`__mock.count('attachment_remove')===1`); await sleep(50);
+      check(action+' during retry begin cancels and discards without resurrection',await evalJS(`!document.querySelector('#attachments .attachment-name') && __mock.attachmentFiles.size===0`));
+    }
   }
 
   // A queued retry must not survive removal or navigation while another file owns the queue.
@@ -154,9 +178,14 @@ try {
     if(action==='remove') await click(`document.querySelector('#attachments [aria-label="Remove failed.bin"]')`);
     if(action==='new') await evalJS(`__mock.emit('qchat://new-chat',{})`);
     if(action==='provider') {await key('k',{ctrlKey:true}); await evalJS(`document.getElementById('slash-gemini').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))`);}
-    await wait(`!document.querySelector('[aria-label="Remove failed.bin"]')`);
-    await evalJS(`__mock.attachmentFaults.attachment_begin.release();detached.click()`); await sleep(150);
-    check(action+' cancels queued retry and detached clicks',await evalJS(`__mock.count('attachment_begin')===2 && !document.querySelector('[aria-label="Remove failed.bin"]') && !Array.from(__mock.attachmentFiles.values()).some(f=>f.name==='failed.bin')`));
+    if(action==='provider') {
+      await wait(`__mock.provider==='gemini'`);await evalJS(`__mock.attachmentFaults.attachment_begin.release()`);await wait(`document.querySelectorAll('#attachments [data-state=ready]').length===2`);await evalJS('detached.click()');
+      check('provider switch preserves queued Retry and the other file',await evalJS(`__mock.count('attachment_begin')===3&&!!document.querySelector('[aria-label="Remove failed.bin"]')&&!!document.querySelector('[aria-label="Remove blocker.bin"]')&&__mock.attachmentFiles.size===2&&__mock.count('chat_send')===0`));
+    } else {
+      await wait(`!document.querySelector('[aria-label="Remove failed.bin"]')`);
+      await evalJS(`__mock.attachmentFaults.attachment_begin.release();detached.click()`); await sleep(150);
+      check(action+' cancels queued retry and detached clicks',await evalJS(`__mock.count('attachment_begin')===2 && !document.querySelector('[aria-label="Remove failed.bin"]') && !Array.from(__mock.attachmentFiles.values()).some(f=>f.name==='failed.bin')`));
+    }
   }
   for(const phase of ['attachment_chunk','attachment_finish']) {
     await setup(); await fault('attachment_begin',{failOn:[1]}); await fault(phase,{holdOn:[1]}); await add('phase.bin',30); await wait(err); await click(retry);

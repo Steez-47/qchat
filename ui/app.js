@@ -406,6 +406,7 @@
   const pendingFiles = [];
   const imageURLs = new Set();
   let stageQueue = Promise.resolve();
+  let globalErrorRevision = 0;
   let sending = false;
   let snapshotCapturing = false;
   let chatGeneration = 0;
@@ -1175,14 +1176,10 @@
   }
   async function chooseProvider(provider) {
     if (provider === activeProvider || isBusy()) return;
-    for (const item of pendingFiles.slice()) if (item.retrying) removeAttachment(item);
     const draft = el.promptInput.value;
     if (!await setProvider(provider)) return;
     // Staged files live on this PC until a send, so they can follow the draft to the new provider.
-    const files = [...pendingFiles];
-    pendingFiles.length = 0;
-    await startNewChat(false);
-    pendingFiles.push(...files);
+    await startNewChat(false, { preserveFiles: true });
     renderAttachments();
     chats.current.provider = provider;
     el.promptInput.value = draft;
@@ -1427,28 +1424,35 @@
     if (item.discardPromise) return item.discardPromise;
     if (!item.id || item.discarded) return;
     item.discardPromise = (async () => {
-      try { await invoke("attachment_remove", { id: item.id }); item.discarded = true; }
-      catch (_) { item.discarded = false; showGlobalError("attachment_failed", "Could not discard a file. Try New chat before attaching more files."); }
+      try {
+        await invoke("attachment_remove", { id: item.id }); item.discarded = true;
+        if (item.discardErrorRevision === globalErrorRevision) hideGlobalError();
+        item.discardErrorRevision = null;
+      } catch (_) {
+        item.discarded = false;
+        showGlobalError("attachment_failed", "Could not discard a file. Try New chat before attaching more files.");
+        item.discardErrorRevision = globalErrorRevision;
+      }
     })();
     try { await item.discardPromise; } finally { item.discardPromise = null; }
   }
   function retryAttachment(item) {
     if (isBusy() || item.cancelled || !pendingFiles.includes(item) || item.state !== "error") return;
     item.state = "staging";
-    item.retrying = true;
     renderAttachments();
     const start = el.promptInput.selectionStart, end = el.promptInput.selectionEnd, direction = el.promptInput.selectionDirection;
     el.promptInput.focus();
     el.promptInput.setSelectionRange(start, end, direction);
-    stageQueue = stageQueue.then(async () => { try {
+    stageQueue = stageQueue.then(async () => {
       if (item.cancelled || !pendingFiles.includes(item)) return;
-      if (isBusy()) { item.state = "error"; renderAttachments(); return; }
+      // Preparation is local and can continue through a provider change.
+      if (sending || isStreaming()) { item.state = "error"; renderAttachments(); return; }
       await discardAttachment(item);
       if (item.cancelled || !pendingFiles.includes(item)) return;
-      if (isBusy() || (item.id && !item.discarded)) { item.state = "error"; renderAttachments(); return; }
+      if (sending || isStreaming() || (item.id && !item.discarded)) { item.state = "error"; renderAttachments(); return; }
       item.id = null; item.offset = 0; item.discarded = false;
       await stageAttachment(item);
-    } finally { item.retrying = false; } });
+    });
   }
   function removeAttachment(item) {
     item.cancelled = true;
@@ -2351,7 +2355,9 @@
     rememberTurn(turn);
     const index = turns.indexOf(turn);
     if (index >= 0) turns.splice(index, 1);
-    for (const file of turn.attachments || []) releasePreview(file.previewURL);
+    for (const file of turn.attachments || []) {
+      if (!pendingFiles.some(item => item.previewURL === file.previewURL)) releasePreview(file.previewURL);
+    }
     const entry = turnNodes.get(turn.id);
     cancelReveal(entry);
     clearTimeout(entry?.reveal?.holdTimer);
@@ -2672,20 +2678,22 @@
     queueSizes();
   }
 
-  function discardPendingFiles() {
-    for (const turn of turns) releaseTurnFiles(turn);
-    for (const item of pendingFiles.slice()) removeAttachment(item);
-    for (const url of [...imageURLs]) releasePreview(url);
+  function discardPendingFiles(preserveFiles = false) {
+    const retainedIds = preserveFiles ? pendingFiles.map(file => file.id) : [];
+    for (const turn of turns) releaseTurnFiles(turn, retainedIds);
+    if (!preserveFiles) for (const item of pendingFiles.slice()) removeAttachment(item);
+    const retainedURLs = new Set(preserveFiles ? pendingFiles.map(file => file.previewURL) : []);
+    for (const url of [...imageURLs]) if (!retainedURLs.has(url)) releasePreview(url);
   }
 
-  async function startNewChat(notifyBackend = true) {
+  async function startNewChat(notifyBackend = true, { preserveFiles = false } = {}) {
     if (isStreaming()) await stopStreaming();
     rememberReadingPosition();
     chats.current.draft = draftValue();
     for (const t of turns) recordPartial(t);
     chatGeneration++;
     sending = false;
-    discardPendingFiles();
+    discardPendingFiles(preserveFiles);
     el.promptInput.value = "";
     autoResizePrompt();
     hideGlobalError();
@@ -3353,6 +3361,7 @@
   }
 
   function showGlobalError(code, message) {
+    globalErrorRevision++;
     el.globalErrorText.textContent = formatErrorCopy(code, message);
     const retry = code === "offline" || code === "not_ready";
     el.btnErrorSignin.hidden = !(code === "auth" || retry);
@@ -3367,6 +3376,7 @@
 
   function hideGlobalError() {
     if (el.globalError.hidden) return;
+    globalErrorRevision++;
     el.globalError.hidden = true;
     el.globalErrorText.textContent = "";
     el.btnErrorSignin.hidden = true;
@@ -4274,7 +4284,7 @@
       activeProvider = await invoke("provider_get").catch(() => "chatgpt") || "chatgpt";
       if (activeProvider !== restored) {
         const draft = el.promptInput.value;
-        await startNewChat(false);
+        await startNewChat(false, { preserveFiles: true });
         el.promptInput.value = draft;
         chats.current.draft = draftValue();
         saveChats(); autoResizePrompt(); updateComposerMode();
