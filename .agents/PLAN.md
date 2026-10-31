@@ -222,3 +222,18 @@ Reproduced live: a sent prompt showed thinking indefinitely or completed empty w
 In progress: completed signed-in DOM replies replace plain streamed text with Markdown. paceTurn rolls back its visible common prefix and retypes the final snapshot. Keep append-only tail pacing; apply corrections to already displayed content immediately, including final delta before DONE. Add real-browser regression for list formatting, saved final Markdown and subsequent appended text. Preserve running QChat session.
 
 Completed: corrections touching visible graphemes replace the displayed snapshot once and cancel its pending reveal callback. Append-only snapshots still pace only their unseen tails. Animation UI ALL PASS including final list formatting via delta + DONE with no disappeared content/replay, exact saved Markdown, combining/ZWJ extensions, subsequent append pacing, Stop and reduced motion. Full glass UI ALL PASS; release build PASS, dist/QChat.exe matches compiled SHA256. Running PID19748 preserved; user must quit from tray and reopen to load updated UI. Signed-in retest skipped because the active profile's Cookies database is locked; existing session kept intact.
+## Window Snapshot (2026-10-31)
+
+Goal: one camera action captures the last active external app window, excludes all QChat surfaces, and adds a normal removable image attachment to the draft. No capture animation, picker, clipboard change, or automatic send. Preserve the running app and saved profile.
+
+Contract: main-only async `snapshot_capture` returns `{ name, mime: "image/png", data }`, where `data` is base64 PNG. Capture is bounded and targets a window rather than a desktop crop. UI makes a File and reuses addFiles/staging, protecting draft/chat races.
+
+| id | task | tier/model | owns | deps | status |
+|---|---|---|---|---|---|
+| S1 | Native target tracking, isolated capture, permissions, native regression | T2 Sol medium | src-tauri/**, tools/snapshot-native-test.mjs | none | done |
+| S2 | Camera action, normal attachment flow, UI regression | T3 DeepSeek high | ui/index.html, ui/app.js, ui/mock.js, tools/snapshot-ui-test.mjs | contract | done |
+| S3 | Review, integrate, native/UI validation, release | orchestrator + cross-family review | integration | S1,S2 | done |
+
+Verified: Rust18, Snapshot UI27, native PNG pixels/dimensions and real camera-to-staging/removal, closed-target failure and QChat/settings exclusion. Auth17, stream/media71, glass, media, feature, UX, animation, history, presets, math and highlight suites PASS. Headless UI screenshots inspected. Final npm run build PASS; dist/QChat.exe matches compiled release. Running PID37108 and saved profile preserved.
+Review fixes: sample foreground before showing/focusing QChat and selection activation; serialize observations; clear stale targets on inaccessible process lookup; ignore tool, cloaked, tiny and transient shell windows. Parent fixed native harness startup readiness and bounded temporary-profile cleanup.
+Limitations: PrintWindow support varies; protected/incorrectly rendered captures are not always detectable. Four-second timeout with a single worker slot. Full window bounds may include invisible frame margins. Real global hotkey timing, elevated targets and mixed-DPI capture remain unverified. No saved-account messages were sent by this task. Delegation: one Codex implementation, one OpenCode UI implementation and one Antigravity review.

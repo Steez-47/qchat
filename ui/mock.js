@@ -11,6 +11,7 @@
   const listeners = new Map();
   const mockFiles = new Map();
   const MOCK_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII=";
+  const MOCK_SNAPSHOT_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
   let mockTimer = null;
 
   const emitMock = (event, payload) => {
@@ -32,6 +33,7 @@
     reply: null,
     failOpen: null,
     silentOpen: false,
+    snapshotError: null,
     pageConv: null,
     conversations: 0,
     emit: emitMock,
@@ -107,6 +109,10 @@
       invoke: async (cmd, args = {}) => {
         mock.calls.push({ cmd, args });
         switch (cmd) {
+          case "snapshot_capture": {
+            if (mock.snapshotError) throw new Error(mock.snapshotError);
+            return { name: "Snapshot.png", mime: "image/png", data: MOCK_SNAPSHOT_PNG };
+          }
           case "attachment_begin": {
             const id = crypto.randomUUID();
             const meta = { id, name: args.name, mime: args.mime, size: args.size, kind: "file", offset: 0 };

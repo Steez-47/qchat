@@ -23,3 +23,6 @@
 - 2026-10-31 | UX bug fixes, KaTeX, model probe, migration + README | opencode/deepseek-v4.1-flash-free | done | 4 tasks; parent reran suites; migration conflict with one stale test seed fixed by parent
 - 2026-10-31 | Highlighter, list polish | opencode/glm-5.3-flash-free | done | 2 tasks + 1 audit; suites PASS
 - 2026-10-31 | Cross-family review | antigravity/claude-sonnet-5-5 medium | done | 15 real findings, all fixed
+- 2026-10-31 | S1 window Snapshot native | codex/gpt-6.1-sol/medium | done | Rust17 and synthetic native harness PASS; parent adds real camera-to-staging check
+- 2026-10-31 | S2 Snapshot composer | opencode/deepseek-v4.1-flash-free/high | done | Snapshot27, media UI and glass UI PASS
+- 2026-10-31 | S3 Snapshot review | antigravity/claude-sonnet-5-5/medium | done | parent fixed fast activation target race, inaccessible-target fallback and transient shell targets; native8/Rust18 and full UI regressions PASS; release built

@@ -18,7 +18,7 @@ fn main() {
             "attachment_remove",
             "media_load",
             "media_save",
-            "image_copy",
+            "image_copy", "snapshot_capture",
         ]),
     ))
     .expect("build manifest");

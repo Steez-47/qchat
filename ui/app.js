@@ -308,6 +308,7 @@
     promptInput: $("prompt-input"),
     btnSend: $("btn-send"),
     btnAttach: $("btn-attach"),
+    btnSnapshot: $("btn-snapshot"),
     attachmentInput: $("attachment-input"),
     attachments: $("attachments")
   };
@@ -321,6 +322,7 @@
   const imageURLs = new Set();
   let stageQueue = Promise.resolve();
   let sending = false;
+  let snapshotCapturing = false;
   let chatGeneration = 0;
   let userScrolledUp = false;
   let guestDismissed = false;
@@ -1131,6 +1133,65 @@
     }
     renderAttachments();
     return true;
+  }
+
+  const snapshotRoom = () => pendingFiles.length < 10
+    && pendingFiles.reduce((n, f) => n + f.file.size, 0) < MAX_BYTES;
+
+  function snapshotFile(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") throw new Error("no image returned");
+    const { name, mime, data } = snapshot;
+    if (typeof name !== "string" || !name || typeof data !== "string" || !data) throw new Error("no image returned");
+    if (String(mime || "").toLowerCase() !== "image/png") throw new Error("image was not a PNG");
+    const binary = atob(data);
+    if (!binary) throw new Error("no image returned");
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new File([bytes], name, { type: "image/png" });
+  }
+
+  function snapshotErrorCopy(err) {
+    const raw = String(err?.message || err?.code || err || "")
+      .replace(/^\s*snapshot_[a-z_]+\s*:\s*/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return raw && raw.length <= 160 && !/^error$/i.test(raw)
+      ? `Couldn't take a snapshot: ${raw}`
+      : "Couldn't take a snapshot. Put the window you want in front, then try again.";
+  }
+
+  async function captureSnapshot() {
+    if (snapshotCapturing || isBusy()) return;
+    if (!snapshotRoom()) {
+      showGlobalError("attachment_failed", "Attach up to 10 files, totalling at most 512 MB.");
+      return;
+    }
+    const generation = chatGeneration;
+    snapshotCapturing = true;
+    hideGlobalError();
+    updateComposerMode();
+    try {
+      const file = snapshotFile(await invoke("snapshot_capture"));
+      // New chat or a chat switch abandons this capture rather than feeding the new draft.
+      if (generation !== chatGeneration) return;
+      if (!snapshotRoom() || file.size > MAX_BYTES
+        || pendingFiles.reduce((n, f) => n + f.file.size, 0) + file.size > MAX_BYTES) {
+        showGlobalError("attachment_failed", "Attach up to 10 files, totalling at most 512 MB.");
+        return;
+      }
+      addFiles([file]);
+      updateIdleChips();
+    } catch (err) {
+      if (generation !== chatGeneration) return;
+      showGlobalError(null, snapshotErrorCopy(err));
+    } finally {
+      snapshotCapturing = false;
+      updateComposerMode();
+      if (generation === chatGeneration && document.hasFocus()
+        && [document.body, el.btnSnapshot, el.promptInput].includes(document.activeElement)) {
+        el.promptInput.focus();
+      }
+    }
   }
 
   function safeMediaSource(meta, kind) {
@@ -1972,7 +2033,8 @@
     const staging = pendingFiles.some((f) => f.state === "staging");
     const attachable = pendingFiles.some((f) => f.state === "ready");
     el.btnAttach.disabled = active || sending;
-    el.btnSend.disabled = !active && (!bridge.ready || sending || staging || (!el.promptInput.value.trim() && !attachable));
+    el.btnSnapshot.disabled = active || sending || snapshotCapturing;
+    el.btnSend.disabled = !active && (!bridge.ready || sending || staging || snapshotCapturing || (!el.promptInput.value.trim() && !attachable));
     syncTabsDisabled();
   }
 
@@ -2004,7 +2066,7 @@
   async function sendPrompt(rawPrompt, { fromInput = false } = {}) {
     const prompt = String(rawPrompt ?? "").trim();
     const files = pendingFiles.filter((f) => f.state === "ready");
-    if (isBusy() || pendingFiles.some((f) => f.state === "staging") || (!prompt && !files.length)) return;
+    if (snapshotCapturing || isBusy() || pendingFiles.some((f) => f.state === "staging") || (!prompt && !files.length)) return;
     prompts.push(prompt); recallIndex = -1; firstRunHint = false;
     try { localStorage.setItem("qchat.introduced", "1"); } catch (_) {}
     el.promptInput.placeholder = QSettings.settings.placeholderText || "Ask anything";
@@ -2744,6 +2806,7 @@
   window.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCommandMenu(); } });
   let filePickerOpen = false;
   el.btnAttach.addEventListener("click", () => { filePickerOpen = true; el.attachmentInput.click(); });
+  el.btnSnapshot.addEventListener("click", () => { void captureSnapshot(); });
   el.attachmentInput.addEventListener("cancel", () => { filePickerOpen = false; });
   el.attachmentInput.addEventListener("change", () => { filePickerOpen = false; addFiles(el.attachmentInput.files); el.attachmentInput.value = ""; updateIdleChips(); });
   el.promptInput.addEventListener("paste", (e) => {

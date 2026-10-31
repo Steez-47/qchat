@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod snapshot;
 mod clipboard;
 mod selection;
 mod surfaces;
@@ -140,6 +141,7 @@ fn eval(app: &tauri::AppHandle, js: &str) -> Result<(), String> {
     chat_page(app)?.eval(js).map_err(|e| e.to_string())
 }
 fn show(app: &tauri::AppHandle) {
+    snapshot::observe_foreground();
     if test_profile().is_some() && std::env::var("QCHAT_TEST_SHOW_MAIN").as_deref() != Ok("1") {
         // A real, visible window out of the user's sight, for native tests.
         if offscreen_test() {
@@ -585,7 +587,7 @@ fn main() {
  .manage(Host(Mutex::new(Activity { content: None, hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0,logged_in:false,signin_was_logged_in:false,anchor:None,remember_position:true,always_on_top:true,positioned:Instant::now(),save_due:None,save_generation:0})))
 
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,shortcut,event|{if event.state()==ShortcutState::Pressed{if selection::matches(app,shortcut) { selection::activate(app); } else { toggle(app); }}}).build())
- .invoke_handler(tauri::generate_handler![surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,chat_list_conversations,surfaces::get_hotkey, surfaces::get_hotkey_available, selection::get_selection_hotkey_available,surfaces::set_hotkey,selection::get_selection_hotkey,selection::set_selection_hotkey,selection::set_selection_clipboard,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_models,chat_model_choose,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy])
+ .invoke_handler(tauri::generate_handler![surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,chat_list_conversations,surfaces::get_hotkey, surfaces::get_hotkey_available, selection::get_selection_hotkey_available,surfaces::set_hotkey,selection::get_selection_hotkey,selection::set_selection_hotkey,selection::set_selection_clipboard,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_models,chat_model_choose,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy,snapshot::snapshot_capture])
  .setup(|app|{
  app.add_capability(r#"{"identifier":"selection-settings","windows":["settings"],"permissions":["allow-get-selection-hotkey","allow-set-selection-hotkey","allow-get-hotkey","allow-set-hotkey","allow-get-autostart","allow-set-autostart"]}"#)?;
  if let Ok(dir)=app.path().app_data_dir() {

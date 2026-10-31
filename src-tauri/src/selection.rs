@@ -121,6 +121,7 @@ pub fn activate(app: &tauri::AppHandle) {
     if crate::test_profile().is_some() {
         return;
     }
+    crate::snapshot::observe_foreground();
     static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if BUSY.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;

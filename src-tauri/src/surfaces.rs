@@ -440,11 +440,13 @@ unsafe extern "system" fn follow_main(
 static LAUNCH_FOREGROUND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 // Must run before any window exists: creating them is what takes the foreground.
 pub fn remember_launch_foreground() {
+    crate::snapshot::observe_foreground();
     LAUNCH_FOREGROUND.store(unsafe { GetForegroundWindow() }, std::sync::atomic::Ordering::Relaxed);
 }
 // The hidden ChatGPT page lives off screen but is a real window, and it or its webview can take the
 // foreground when shown or when the page loads. Focus there goes nowhere, so hand it straight back.
 unsafe fn return_stray_focus(w: &tauri::WebviewWindow, last_other: &mut isize) {
+    crate::snapshot::observe_foreground();
     let front = GetForegroundWindow();
     if front == 0 {
         return;
