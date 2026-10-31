@@ -46,14 +46,14 @@ function cdp(url) {
 }
 
 const profile = mkdtempSync(path.join(tmpdir(), 'qchat-e2e-'));
-let app, ui, site, launchError, failed = 0;
-const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${info ? ' :: ' + info : ''}`); if (!ok) failed++; };
+let app, ui, site, launchError, failed = 0, lastGuestDiagnostic = '';
+const check = (name, ok, info = '') => { const detail = info || (!ok ? lastGuestDiagnostic : ''); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' :: ' + detail : ''}`); if (!ok) failed++; };
 function ownsEndpoint() {
   const script = `$probeId=Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction Stop | Where-Object { $_.LocalAddress -in @('127.0.0.1','0.0.0.0') } | Select-Object -First 1 -ExpandProperty OwningProcess; for($depth=0;$depth -lt 20 -and $probeId;$depth++){if($probeId -eq ${app.pid}){Write-Output 'owned';exit 0};$record=Get-CimInstance Win32_Process -Filter "ProcessId = $probeId" -ErrorAction Stop;$probeId=$record.ParentProcessId};exit 1`;
   const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
   return result.status === 0 && result.stdout.trim() === 'owned';
 }
-const lastTurn = `(()=>{const row=[...document.querySelectorAll('#bubble-zone [data-role=assistant]')].at(-1);return row?{id:row.dataset.id,txt:row.querySelector('.turn-content')?.innerText||'',html:row.querySelector('.turn-content')?.innerHTML||'',err:!!(row.querySelector('.turn-error')&&!row.querySelector('.turn-error').hidden),streaming:row.dataset.status==='streaming'}:null})()`;
+const lastTurn = `(()=>{const row=[...document.querySelectorAll('#bubble-zone [data-role=assistant]')].at(-1);return row?{id:row.dataset.id,txt:row.querySelector('.turn-content')?.innerText||'',html:row.querySelector('.turn-content')?.innerHTML||'',err:!!(row.querySelector('.turn-error')&&!row.querySelector('.turn-error').hidden),errorText:row.querySelector('.turn-error')?.innerText||'',errorCode:window.__e2eErrorCode,streaming:row.dataset.status==='streaming'}:null})()`;
 async function until(expression, timeout = 10000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await ui.evaluate(`!!(${expression})`)) return; await sleep(100); }
@@ -62,11 +62,14 @@ async function until(expression, timeout = 10000) {
 async function ask(prompt, stop = false) {
   const previous = await ui.evaluate(lastTurn);
   if (stop) await ui.evaluate(`window.__stopProbe={clicked:false};`);
-  await ui.evaluate(`(()=>{const input=document.getElementById('prompt-input');input.value=${JSON.stringify(prompt)};input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));})()`);
+  await ui.evaluate(`(()=>{window.__e2eErrorCode=null;const input=document.getElementById('prompt-input');input.value=${JSON.stringify(prompt)};input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));})()`);
   const start = Date.now();
   while (Date.now() - start < 120000) {
     const result = await ui.evaluate(lastTurn);
-    if (result && result.id !== previous?.id && !result.streaming && (result.txt.trim() || result.err)) return { ...result, ms: Date.now() - start };
+    if (result && result.id !== previous?.id && !result.streaming && (result.txt.trim() || result.err)) {
+      lastGuestDiagnostic = JSON.stringify({ error: result.err, code: result.errorCode, message: result.errorText, text: result.txt.slice(0, 200) });
+      return { ...result, ms: Date.now() - start };
+    }
     await sleep(150);
   }
   throw Error('Reply timed out');
@@ -96,6 +99,7 @@ try {
   // in the same event task as the first received snapshot, without a polling race.
   await ui.evaluate(`(async()=>{
     await window.__TAURI__.event.listen('bridge',({payload:event})=>{
+      if(event.type==='error')window.__e2eErrorCode=event.code;
       const probe=window.__stopProbe;
       if(!probe||probe.clicked||event.type!=='delta'||!event.text?.trim())return;
       const row=[...document.querySelectorAll('#bubble-zone [data-role=assistant]')].find(row=>row.dataset.id===event.id);

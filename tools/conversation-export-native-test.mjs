@@ -66,7 +66,7 @@ try{
   check('native concurrent exports use unique names and preserve the original',new Set(duplicates).size===4&&!duplicates.includes(first)&&(await readFile(path.join(downloads,first))).equals(bytes));
   const unsafe=await invoke({title:'../../CON:*?<>|\u0000"\\',markdown:'Safe filename'});
   check('native export confines unsafe titles to a Markdown basename',path.basename(unsafe)===unsafe&&path.extname(unsafe)==='.md'&&!/[<>:"/\\|?*\x00-\x1f]/.test(unsafe)&&(await readFile(path.join(downloads,unsafe),'utf8'))==='Safe filename');
-  const plain=await invoke({title:'Safe\u0085\u200b\u200f\u202e\u202c\u2066\u2069\ufeffname',markdown:'Readable filename'});
+  const plain=await invoke({title:'Safe\u0085\u00ad\u061c\u200b\u200f\u202e\u202c\u2060\u2061\u2062\u2063\u2064\u2066\u2069\ufeffname',markdown:'Readable filename'});
   check('native export strips hidden controls and bidi filename overrides',plain==='QChat - Safename.md');
   const capped=await invoke({title:'猫'.repeat(81),markdown:'Bounded title'});
   check('native export bounds Unicode title length',capped===`QChat - ${'猫'.repeat(80)}.md`);

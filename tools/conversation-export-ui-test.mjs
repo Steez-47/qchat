@@ -143,10 +143,14 @@ try {
   check('pending prevents duplicate',await evalJS("__mock.count('conversation_export')===2"));
   check('pending action gives Saving feedback',await evalJS("document.getElementById('command-feedback').textContent.includes('Saving conversation')"));
   await evalJS("document.querySelector('#tabs [data-key=other]').click(); __mock.releaseExport()"); await sleep(80);
-  check('switch suppresses stale feedback',await evalJS("document.getElementById('command-feedback').hidden"));
+  check('completed export reports its result after switching chats',await evalJS("document.getElementById('command-feedback').textContent.includes('Saved')&&JSON.parse(localStorage.getItem('qchat.chats')).current.key==='other'"));
   check('pending export keeps the original conversation snapshot',await evalJS("__mock.last('conversation_export').args.title==='async'&&__mock.last('conversation_export').args.markdown.includes('reply async')&&!__mock.last('conversation_export').args.markdown.includes('reply other')"));
   await evalJS('__mock.exportHold=false'); await runExport();
   check('retry succeeds',await evalJS("__mock.count('conversation_export')===3&&document.getElementById('command-feedback').textContent.includes('Saved')"));
+  await evalJS('__mock.exportHold=true;__mock.exportError=true');await runExport();
+  await evalJS("document.querySelector('#tabs [data-key=async]').click()");await type('new draft after switching');
+  await evalJS('__mock.releaseExport()');await sleep(80);
+  check('failed export reports after a switch and preserves the new draft',await evalJS("document.getElementById('command-feedback').textContent.includes(\"Couldn't save\")&&JSON.parse(localStorage.getItem('qchat.chats')).current.key==='async'&&document.getElementById('prompt-input').value==='new draft after switching'"));
   for (const mode of ['temporary','history-disabled']) {
     await open('/',{settings:{animations:'off',autoDismiss:0,keepHistory:mode!=='history-disabled',streamStyle:'paragraph'}});
     if (mode==='temporary') { await type('/temp'); await key('Enter'); await sleep(100); }

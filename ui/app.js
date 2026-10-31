@@ -3581,14 +3581,14 @@
       showCommandFeedback("This conversation is too long to save.");
       return;
     }
-    const chat = chats.current, generation = chatGeneration, title = chat.title;
+    const title = chats.current.title;
     exportPending = true;
     showCommandFeedback("Saving conversation…");
     try {
       const name = await invoke("conversation_export", { title, markdown });
-      if (chats.current === chat && chatGeneration === generation) showCommandFeedback(`Saved ${name} to Downloads.`);
+      showCommandFeedback(`Saved ${name} to Downloads.`);
     } catch {
-      if (chats.current === chat && chatGeneration === generation) showCommandFeedback("Couldn't save conversation. Try again.");
+      showCommandFeedback("Couldn't save conversation. Try again.");
     } finally { exportPending = false; }
   }
 

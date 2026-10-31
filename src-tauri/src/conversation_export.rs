@@ -9,9 +9,15 @@ const LIMIT: usize = 4 * 1024 * 1024;
 const ERROR: &str = "Could not save conversation";
 
 fn title_name(title: &str) -> String {
-    let cleaned: String = title.chars().filter(|c| !c.is_control()
-        && !matches!(*c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}')
-        && !"<>:\"/\\|?*".contains(*c)).take(80).collect();
+    let cleaned: String = title
+        .chars()
+        .filter(|c| {
+            !c.is_control()
+                && !matches!(*c, '\u{ad}' | '\u{61c}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}')
+                && !"<>:\"/\\|?*".contains(*c)
+        })
+        .take(80)
+        .collect();
     let cleaned = cleaned.trim().trim_end_matches(|c| c == '.' || c == ' ');
     if cleaned.is_empty() {
         "Conversation".into()
@@ -35,7 +41,11 @@ fn save(dir: &Path, title: &str, markdown: &str) -> Result<String, String> {
         let path = dir.join(&name);
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(mut file) => {
-                if file.write_all(markdown.as_bytes()).is_err() {
+                if file
+                    .write_all(markdown.as_bytes())
+                    .and_then(|_| file.sync_all())
+                    .is_err()
+                {
                     drop(file);
                     let _ = fs::remove_file(path);
                     return Err(ERROR.into());
@@ -91,6 +101,10 @@ mod tests {
         assert_eq!(title_name(&"猫".repeat(81)).chars().count(), 80);
         assert_eq!(title_name("a\nb.md"), "ab.md");
         assert_eq!(title_name("Safe\u{85}\u{200b}\u{200c}\u{200d}\u{200e}\u{200f}\u{202a}\u{202b}\u{202c}\u{202d}\u{202e}\u{2066}\u{2067}\u{2068}\u{2069}\u{feff}name"), "Safename");
+        assert_eq!(
+            title_name("Safe\u{ad}\u{61c}\u{2060}\u{2061}\u{2062}\u{2063}\u{2064}name"),
+            "Safename"
+        );
     }
     #[test]
     fn conversation_export_bytes_bounds_and_collisions() {
