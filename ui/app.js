@@ -1256,7 +1256,7 @@
 
   function confirmClearChats() {
     chats.current.draft = el.promptInput.value;
-    const snapshot = { type: "clear", current: structuredClone(chats.current), recent: structuredClone(chats.recent), stagedFiles: pendingFiles.length };
+    const snapshot = { type: "clear", current: structuredClone(chats.current), recent: structuredClone(chats.recent), stagedFiles: pendingFiles.slice() };
     clearRecentChats();
     snapshot.clearedKey = chats.current.key;
     offerChatUndo(snapshot);
@@ -3458,7 +3458,7 @@
         chats.recent.splice(Math.min(item.index, chats.recent.length), 0, item.chat);
       }
     } else {
-      const unchanged = () => chats.current.key === item.clearedKey && !hasContent(chats.current) && !el.promptInput.value && pendingFiles.length <= item.stagedFiles;
+      const unchanged = () => chats.current.key === item.clearedKey && !hasContent(chats.current) && !el.promptInput.value && pendingFiles.every(file => item.stagedFiles.includes(file));
       let restoreCurrent = !isBusy() && unchanged();
       if (restoreCurrent && item.current.provider !== activeProvider) {
         restoreCurrent = await setProvider(item.current.provider || "chatgpt") && unchanged() && !isBusy();

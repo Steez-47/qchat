@@ -160,12 +160,25 @@ try {
   if (process.env.QCHAT_SHOT) await writeFile(process.env.QCHAT_SHOT, Buffer.from((await cdp('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
   const searchPrevented = await evalJS(`(()=>{const f=document.querySelector('.feature-search');f.focus();f.value='abc';const e=new KeyboardEvent('keydown',{key:'z',ctrlKey:true,bubbles:true,cancelable:true});f.dispatchEvent(e);return e.defaultPrevented})()`);
   check('list search text keeps native undo',!searchPrevented && await visible());
-  await setup(); await list(); await remove('b'); await evalJS(`document.querySelector('.feature-search').blur();document.querySelector('#prompt-input').focus()`); await type('/');
+  await setup(); await list(); await remove('b'); await evalJS(`document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));document.querySelector('#prompt-input').focus()`); await waitFor(`document.querySelector('.feature-list').hidden`); await type('/');
   await waitFor(`!document.getElementById('slash-menu').hidden`); await key('Escape'); await sleep(40);
-  check('Escape closes the slash menu before the undo offer', await evalJS(`document.getElementById('slash-menu').hidden`) && await visible());
+  { const g=await evalJS(`({slash:document.getElementById('slash-menu').hidden,list:document.querySelector('.feature-list').hidden,undo:!document.getElementById('command-feedback').hidden,value:document.getElementById('prompt-input').value})`); check('Escape closes the slash menu before the undo offer', g.slash && g.undo, JSON.stringify(g)); }
   await setup(); await evalJS(`window.realInvoke=__TAURI__.core.invoke;__TAURI__.core.invoke=(c,a)=>c==='attachment_begin'?Promise.resolve({...a,id:'staged'}):c==='attachment_chunk'||c==='attachment_finish'?Promise.resolve({}):realInvoke(c,a);const d=new DataTransfer();d.items.add(new File(['x'],'x.txt'));const i=document.getElementById('attachment-input');i.files=d.files;i.dispatchEvent(new Event('change'))`);
   await waitFor(`document.querySelector('#attachments [data-state=ready]')`); await clear(); await undo(); s=await state();
   check('clear undo restores current with a file staged', s.current.key==='current' && await evalJS(`document.getElementById('attachments').textContent.includes('x.txt')`), JSON.stringify(s.current?.key));
+  const stage = (name) => evalJS(`(()=>{const d=new DataTransfer();d.items.add(new File(['x'],'${name}'));const i=document.getElementById('attachment-input');i.files=d.files;i.dispatchEvent(new Event('change'))})()`);
+  await setup(); await evalJS(`window.realInvoke=__TAURI__.core.invoke;window.nextFile=0;__TAURI__.core.invoke=(c,a)=>c==='attachment_begin'?Promise.resolve({...a,id:'staged-'+(++nextFile)}):c==='attachment_chunk'||c==='attachment_finish'||c==='attachment_remove'?Promise.resolve({}):realInvoke(c,a)`);
+  await stage('first.txt'); await waitFor(`document.querySelector('#attachments [data-state=ready]')`); await clear();
+  const chipRemove = `document.querySelector('#attachments .attachment-chip:not(.selection-chip) button')`;
+  await evalJS(`${chipRemove}.click()`); await waitFor(`!document.getElementById('attachments').textContent.includes('first.txt')`);
+  await stage('second.txt'); await waitFor(`document.getElementById('attachments').textContent.includes('second.txt')&&document.querySelector('#attachments [data-state=ready]')`);
+  await undo(); s=await state();
+  check('same-count replaced file keeps the new draft', s.current.key!=='current' && s.recent.some(x=>x.key==='current') && await evalJS(`document.getElementById('attachments').textContent.includes('second.txt')`), JSON.stringify(s.current?.key));
+  await setup(); await evalJS(`window.realInvoke=__TAURI__.core.invoke;window.nextFile=0;__TAURI__.core.invoke=(c,a)=>c==='attachment_begin'?Promise.resolve({...a,id:'staged-'+(++nextFile)}):c==='attachment_chunk'||c==='attachment_finish'||c==='attachment_remove'?Promise.resolve({}):realInvoke(c,a)`);
+  await stage('gone.txt'); await waitFor(`document.querySelector('#attachments [data-state=ready]')`); await clear();
+  await evalJS(`${chipRemove}.click()`); await waitFor(`!document.getElementById('attachments').textContent.includes('gone.txt')`);
+  await undo(); s=await state();
+  check('removing the original staged file still allows restore', s.current.key==='current', JSON.stringify(s.current?.key));
   check('no runtime errors',problems.length===0,problems.slice(0,4).join(' | '));
 } catch (e) {
   console.error(e);
