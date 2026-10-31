@@ -2855,6 +2855,7 @@
     { name: "rename", icon: "", desc: () => "Rename in QChat", run: openRenameChat },
     { name: "find", icon: GLYPH.clock, desc: () => "Find in conversation", run: openFind },
     { name: "copy", icon: GLYPH.copy, desc: () => "Copy conversation", run: copyConversation },
+    { name: "export", icon: GLYPH.copy, desc: () => "Save conversation", run: exportConversation },
     {name:"chatgpt", icon:GLYPH.account, desc:()=>"Switch to ChatGPT", run:()=>chooseProvider("chatgpt")},
     {name:"gemini", icon:GLYPH.account, desc:()=>"Switch to Gemini", run:()=>chooseProvider("gemini")},
     {name:"startup", icon:GLYPH.settings, desc:()=>"Open at startup", run:async()=>{
@@ -3557,22 +3558,41 @@
     if (notices.length) showCommandFeedback(notices.join(" · "));
   }
 
-  async function copyConversation() {
-    hideCommandFeedback();
-    const generation = copyGeneration;
-    if (el.globalErrorText.textContent === "Couldn't copy. Try again.") hideGlobalError();
-    const chatKey = chats.current.key;
+  function serializeConversation() {
     const items = historyItems(true);
     if (!chats.current.transcript.length && chats.current.lastPrompt && !items.some(item => item.role === "user")) {
       items.unshift({role:"user",text:chats.current.lastPrompt,hadAttachments:chats.current.lastHadAttachments});
     }
-    const messages = items.map(item => {
+    return items.map(item => {
       const text = item.role === "user" ? wirePrompt(item.text, item.selectionTexts || []) : copyReplyMarkdown(item.text, item.sources);
       const names = (item.media || []).map(file => file.name).filter(Boolean);
       const media = names.length ? names.map(name => `[Attachment: ${name.replace(/[\r\n]+/g, " ")}]`).join("\n") : item.hasMedia || item.hadAttachments ? "[Attachment]" : "";
       const body = [text, media].filter(Boolean).join("\n\n");
       return body ? `## ${item.role === "user" ? "You" : providerName()}\n\n${body}` : "";
     }).filter(Boolean).join("\n\n---\n\n");
+  }
+
+  let exportPending = false;
+  async function exportConversation() {
+    if (exportPending) return;
+    const markdown = serializeConversation();
+    if (!markdown.trim()) { showCommandFeedback("No messages to save yet."); return; }
+    const chat = chats.current, generation = chatGeneration, title = chat.title;
+    exportPending = true;
+    try {
+      const name = await invoke("conversation_export", { title, markdown });
+      if (chats.current === chat && chatGeneration === generation) showCommandFeedback(`Saved ${name} to Downloads.`);
+    } catch {
+      if (chats.current === chat && chatGeneration === generation) showCommandFeedback("Couldn't save conversation. Try again.");
+    } finally { exportPending = false; }
+  }
+
+  async function copyConversation() {
+    hideCommandFeedback();
+    const generation = copyGeneration;
+    if (el.globalErrorText.textContent === "Couldn't copy. Try again.") hideGlobalError();
+    const chatKey = chats.current.key;
+    const messages = serializeConversation();
     if (!messages) { showCommandFeedback("No messages to copy yet."); return; }
     const copied = await writeClipboardText(messages);
     if (chats.current.key !== chatKey || generation !== copyGeneration) return;

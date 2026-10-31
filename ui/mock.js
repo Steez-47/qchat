@@ -147,6 +147,10 @@
           case "attachment_remove": mockFiles.delete(args.id); return null;
           case "media_load": return { id: args.mediaId, name: "Demo image.png", kind: "image", mime: "image/png", src: MOCK_PNG };
           case "media_save": return "Demo image.png";
+          case "conversation_export":
+            if (mock.exportHold) await new Promise(resolve => { mock.releaseExport = resolve; });
+            if (mock.exportError) throw new Error("save failed");
+            return "QChat - Conversation.md";
           case "image_copy": return null;
           case "chat_models":
             if (mock.silentModels || params.get("mock") === "silent-models") return null;
