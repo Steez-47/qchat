@@ -482,6 +482,7 @@ async fn chat_send(
     attachment_ids: Option<Vec<String>>,
     reasoning_effort: Option<String>,
     provider: Option<String>,
+    temporary: Option<bool>,
 ) -> Result<(), String> {
     validate_reasoning_effort(reasoning_effort.as_deref())?;
     chat_page(&app)?;
@@ -500,9 +501,16 @@ async fn chat_send(
         a.flight_id = Some(id.clone());
         a.last_progress = Instant::now();
     }
+    let temporary = temporary.unwrap_or(false);
+    if temporary && !matches!(media::evaluate(&app, "!!(window.__qchat && window.__qchat.temporaryReady && window.__qchat.temporaryReady())".into()).await, Ok(serde_json::Value::Bool(true))) {
+        let state = app.state::<Host>();
+        let mut a = state.0.lock().unwrap();
+        if a.flight_id.as_deref() == Some(&id) { a.flight_id = None; }
+        return Err("temporary_unavailable: Temporary chat could not be confirmed".into());
+    }
     let attachment_ids = attachment_ids.unwrap_or_default();
     let attached = match media::track_turn(&app, &id, &attachment_ids) {
-        Ok(()) => media::attach(&app, &attachment_ids, &id).await,
+        Ok(()) => if temporary { media::attach_temporary(&app, &attachment_ids, &id).await } else { media::attach(&app, &attachment_ids, &id).await },
         Err(error) => Err(error),
     };
     if let Err(error) = attached {
@@ -528,7 +536,7 @@ async fn chat_send(
         return Err("Send was cancelled".into());
     }
     let data = serde_json::to_string(
-        &serde_json::json!({"id":id,"prompt":prompt,"attachmentCount":attachment_ids.len(),"reasoningEffort":reasoning_effort}),
+        &serde_json::json!({"id":id,"prompt":prompt,"attachmentCount":attachment_ids.len(),"reasoningEffort":reasoning_effort,"temporary":temporary}),
     )
     .map_err(|e| e.to_string())?;
     let result = media::dispatch_turn(&app, &id, format!("(()=>{{const p={data}; if(window.__qchat) window.__qchat.send(p); else window.__QCHAT_EMIT__({{type:'error',id:p.id,code:'not_ready',message:'Provider page not loaded yet'}});}})()")).await;
@@ -567,11 +575,14 @@ fn chat_models(app: tauri::AppHandle) -> Result<(), String> { eval(&app, "if (wi
 #[tauri::command]
 fn chat_model_choose(app: tauri::AppHandle, id: String) -> Result<(), String> { eval(&app, &format!("window.__qchat && window.__qchat.chooseModel({})", serde_json::to_string(&id).map_err(|e|e.to_string())?)) }
 #[tauri::command]
-fn chat_new(app: tauri::AppHandle, preserve_uploads: Option<bool>, temporary: Option<bool>) -> Result<(), String> {
+fn chat_new(app: tauri::AppHandle, preserve_uploads: Option<bool>, temporary: Option<bool>, setup_id: Option<String>) -> Result<(), String> {
     if preserve_uploads.unwrap_or(false) { media::clear_reply_media(&app); }
     else { media::clear_all(&app); }
     app.state::<Host>().0.lock().unwrap().flight_id = None;
-    eval(&app, if temporary.unwrap_or(false) { "window.__qchat && window.__qchat.newChat({temporary:true})" } else { "window.__qchat && window.__qchat.newChat()" })
+    if temporary.unwrap_or(false) {
+        let options = serde_json::json!({"temporary":true,"setupId":setup_id});
+        eval(&app, &format!("window.__qchat && window.__qchat.newChat({options})"))
+    } else { eval(&app, "window.__qchat && window.__qchat.newChat()") }
 }
 #[tauri::command]
 fn chat_open(app: tauri::AppHandle, conversation_id: String, preserve_uploads: Option<bool>) -> Result<(), String> {
