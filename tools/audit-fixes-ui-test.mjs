@@ -177,6 +177,22 @@ try {
   check('forty emoji count as forty', await stored()==='😀'.repeat(40) && (await notice())==='Renamed in QChat', await notice());
   await rename('  spaced     out  name  ');
   check('collapsed spaces count, not raw typing', await stored()==='spaced out name' && (await notice())==='Renamed in QChat', await notice());
+  // Composer text that comes from settings follows a change straight away.
+  await open('/?mock=1', {settings, chats:empty}); await sleep(200);
+  await evalJS("__mock.emit('qchat://settings-changed',QSettings.save({...QSettings.settings,placeholderText:'Type a prompt',sendKey:'ctrl'}))"); await sleep(80);
+  check('placeholder follows the setting', await evalJS("document.getElementById('prompt-input').placeholder.includes('Type a prompt')"), await evalJS("document.getElementById('prompt-input').placeholder"));
+  check('send tooltip follows the setting', await evalJS("document.getElementById('btn-send').title.includes('Ctrl+Enter')"), await evalJS("document.getElementById('btn-send').title"));
+
+  // A preset rebuild must keep the active settings search.
+  await open('/settings.html', {settings}); await sleep(250);
+  const visibleCards = "[...document.querySelectorAll('.preset-entry')].filter(c=>!c.hidden).length";
+  await evalJS("(()=>{const q=document.getElementById('settings-search');q.value='oled';q.dispatchEvent(new Event('input',{bubbles:true}))})()"); await sleep(40);
+  const filtered = await evalJS(visibleCards);
+  check('settings search filters presets', filtered>0 && filtered<await evalJS("document.querySelectorAll('.preset-entry').length"), String(filtered));
+  await evalJS("[...document.querySelectorAll('.preset-entry')].find(c=>!c.hidden).querySelector('.preset-card').click()"); await sleep(80);
+  check('applying a preset keeps the search filter', await evalJS(visibleCards)===filtered, String(await evalJS(visibleCards)));
+  await evalJS("(()=>{const q=document.getElementById('settings-search');q.value='';q.dispatchEvent(new Event('input',{bubbles:true}))})()"); await sleep(40);
+  check('clearing search shows every preset again', await evalJS(visibleCards)===await evalJS("document.querySelectorAll('.preset-entry').length"));
   check('no runtime errors', problems.length===0, problems.slice(0,4).join(' | '));
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: 999999, method: 'Browser.close' }));

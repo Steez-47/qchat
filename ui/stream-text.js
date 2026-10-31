@@ -125,13 +125,20 @@
     return end;
   }
 
+  // Blanks inline code so markup inside it is ignored, keeping every offset valid.
+  const blankCode = (text) => text.replace(/(`+)[^\n]*?\1/g, code => " ".repeat(code.length));
+
   function closeInline(line) {
     let out = line;
+    const prose = () => {
+      const blank = blankCode(out), open = blank.indexOf("`");
+      return open < 0 ? blank : blank.slice(0, open) + " ".repeat(blank.length - open);
+    };
     // A link still being typed shows its label only; the URL appears once it is whole.
-    out = out.replace(/\[([^\]\n]*)\]\([^)\n]*$/, "$1");
-    out = out.replace(/\[([^\]\n]*)\]$/, "[$1]");
-    const lastOpen = out.lastIndexOf("[");
-    if (lastOpen >= 0 && out.indexOf("]", lastOpen) < 0) out = out.slice(0, lastOpen) + out.slice(lastOpen + 1);
+    const link = /\[([^\]\n]*)\]\([^)\n]*$/.exec(prose());
+    if (link) out = out.slice(0, link.index) + out.slice(link.index + 1, link.index + 1 + link[1].length);
+    const text = prose(), lastOpen = text.lastIndexOf("[");
+    if (lastOpen >= 0 && text.indexOf("]", lastOpen) < 0) out = out.slice(0, lastOpen) + out.slice(lastOpen + 1);
 
     // Inline code first: markers inside it are literal.
     const codeRuns = out.match(/`+/g) || [];
@@ -162,12 +169,15 @@
     source = source.replace(/(^|\n) {0,3}(`{1,2}|~{1,2})$/, "$1");
 
     // Display maths: hold from the opener until it closes.
-    const dollars = source.lastIndexOf("$$");
-    if (dollars >= 0 && (source.slice(0, dollars).match(/\$\$/g) || []).length % 2 === 0) source = source.slice(0, dollars);
-    const bracket = source.lastIndexOf("\\[");
-    if (bracket >= 0 && source.indexOf("\\]", bracket) < 0) source = source.slice(0, bracket);
-    const paren = source.lastIndexOf("\\(");
-    if (paren >= 0 && source.indexOf("\\)", paren) < 0) source = source.slice(0, paren);
+    // Delimiters shown as inline code are not openers; blanking keeps the offsets valid.
+    const prose = () => blankCode(source);
+    let plain = prose();
+    const dollars = plain.lastIndexOf("$$");
+    if (dollars >= 0 && (plain.slice(0, dollars).match(/\$\$/g) || []).length % 2 === 0) { source = source.slice(0, dollars); plain = prose(); }
+    const bracket = plain.lastIndexOf("\\[");
+    if (bracket >= 0 && plain.indexOf("\\]", bracket) < 0) { source = source.slice(0, bracket); plain = prose(); }
+    const paren = plain.lastIndexOf("\\(");
+    if (paren >= 0 && plain.indexOf("\\)", paren) < 0) source = source.slice(0, paren);
 
     const cut = source.lastIndexOf("\n") + 1;
     const head = source.slice(0, cut);

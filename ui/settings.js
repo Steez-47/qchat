@@ -441,6 +441,7 @@
     return ({range:rangeRow,bool:switchRow,enum:choiceRow,color:colorRow,text:textRow})[spec.type]({key,label,hint,options:spec.options?.map(v => [v,v.charAt(0).toUpperCase()+v.slice(1)])});
   }));
   let refreshPresets = () => {};
+  let reapplySearch = () => {};
   function presetGallery() {
     const wrap = make("div","preset-area"), gallery = make("div","preset-gallery"), status = make("p","section-note"); status.id = "preset-status";
     const name = make("input","text-input"); name.placeholder = "Preset name"; name.maxLength = 60; name.setAttribute("aria-label","Preset name");
@@ -460,6 +461,7 @@
         gallery.append(card);
       }
       status.textContent = active;
+      reapplySearch();
     }; refreshPresets(); return wrap;
   }
   SECTIONS.unshift({id:"presets",title:"Presets",glyph:"",groups:[[presetGallery]]});
@@ -556,6 +558,8 @@
     }
     $("search-empty").hidden = count > 0;
   });
+  // Rebuilt preset cards must not come back unfiltered under an active search.
+  reapplySearch = () => { if (search.value.trim()) search.dispatchEvent(new Event("input")); };
   search.addEventListener("keydown",e => { if (e.key === "Escape" && search.value) { e.stopPropagation(); search.value = ""; search.dispatchEvent(new Event("input")); } });
   let activeId = null;
   let spyPausedUntil = 0;

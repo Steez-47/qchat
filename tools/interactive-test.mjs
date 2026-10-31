@@ -57,3 +57,8 @@ let alias=inputAlias.render(aliasSource);assert.equal(alias.controls[0].attrs.di
 const openButton=make();const openButtonSource='{@body const [n,setN]=DIL.useState(0)}<button onClick={()=>setN(n+1)}>Add item';
 assert.equal(openButton.render(openButtonSource).controls[0].label,'Add item');
 assert.equal(openButton.render(openButtonSource+'</button>').controls[0].label,'Add item');
+const selfClosed=make().render('{@body const [n,setN]=DIL.useState(0)}Click: <button onClick={()=>setN(n+1)} /> Follow-up paragraph. <button onClick={()=>setN(0)}>Reset</button>');
+assert.match(selfClosed.text,/Follow-up paragraph\./,'text after a self-closing button survives');
+assert.equal(selfClosed.controls[0].label,'','a self-closing button has no label of its own');
+assert.equal(selfClosed.controls[1].label,'Reset','the next control keeps its own label');
+assert.equal(selfClosed.controls.length,2);
