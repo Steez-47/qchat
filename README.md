@@ -5,7 +5,7 @@
 A tiny Windows popup for chatting with ChatGPT through your own chatgpt.com session.
 
 - **Alt+Q** toggles the popup. The tray icon has New chat, Sign in and Quit.
-- Click the orb or press **Ctrl+K** for the menu, or type `/` for commands.
+- Type `/` for commands, or press **Ctrl+K** for the menu. Drag the orb to move QChat.
 - **Ctrl+P** or `/chats` searches every saved chat. Up to 3 recent chats sit as tabs on the bar.
 - `/model` picks a ChatGPT model on a signed-in account. `/temp` starts a temporary chat that isn't saved.
 - Hover a reply to copy it, retry it or open it in ChatGPT. Up arrow recalls earlier prompts.

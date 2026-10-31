@@ -117,8 +117,12 @@ try {
   });
 
   await open('/', { settings: { animations: 'off', autoDismiss: 0 } });
+  const orbPoint = await evalJS(`(()=>{const r=document.getElementById('orb').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+  await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...orbPoint, button: 'left', clickCount: 1 });
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...orbPoint, button: 'left', clickCount: 1 });
+  check('clicking orb leaves command list closed', await evalJS(`document.getElementById('slash-menu').hidden`));
   await key('k', { ctrlKey: true });
-  check('orb menu / Ctrl+K opens command list', await evalJS(`!document.getElementById('slash-menu').hidden`));
+  check('Ctrl+K opens command list', await evalJS(`!document.getElementById('slash-menu').hidden`));
   await key('Escape');
   await key('p', { ctrlKey: true });
   check('chat switcher empty state', await evalJS(`document.querySelector('.feature-list').textContent.includes('No chats yet')`));
@@ -139,6 +143,7 @@ try {
   await key('Escape');
   await send('Recall this');
   await waitFor(`document.querySelector('[data-role=assistant]')?.dataset.status==='done'`);
+  check('command hint remains after sending', await evalJS(`document.getElementById('prompt-input').placeholder==='Ask anything · / commands'`));
   check('finished reply tools', await evalJS(`!!document.querySelector('[aria-label="Retry"]')`));
   await key('ArrowUp');
   check('prompt recall', await inputValue()==='Recall this');
@@ -157,7 +162,7 @@ try {
   check('model guest fallback has sign in', await waitFor(`document.querySelector('.feature-list').textContent.includes('Sign in to choose a model')`));
   await key('Escape');
   await evalJS(`__mock.emit('qchat://shown',null)`);
-  check('first-run placeholder on shown', await evalJS(`document.getElementById('prompt-input').placeholder==='Ask anything, or type / for commands'`));
+  check('command hint on shown', await evalJS(`document.getElementById('prompt-input').placeholder==='Ask anything · / commands'`));
   const seeded = Array.from({length:55}, (_,i)=>chatSeed('saved-'+i));
   await open('/', { chats: {v:1,current:chatSeed('current'),recent:seeded}, settings:{animations:'off',autoDismiss:0} });
   await type('draft');

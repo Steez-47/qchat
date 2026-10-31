@@ -402,7 +402,6 @@
   let userScrolledUp = false;
   let guestDismissed = false;
   let sentThisSession = false;
-  let firstRunHint = false;
   let autoDismissTimer = null;
   let historyOpen = false;
   let historyChatKey = null;
@@ -2226,7 +2225,7 @@
     const active = isStreaming();
     const sendKey = QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter";
     const placeholder = QSettings.settings.placeholderText || "Ask anything";
-    el.promptInput.placeholder = bridge.ready ? (firstRunHint ? `${placeholder}, or type / for commands` : placeholder) : "Connecting…";
+    el.promptInput.placeholder = bridge.ready ? `${placeholder} · / commands` : "Connecting…";
     el.btnSend.dataset.mode = active ? "stop" : "send";
     el.btnSend.firstElementChild.textContent = active ? GLYPH.stop : GLYPH.send;
     el.btnSend.title = active ? "Stop generating (Ctrl+.)" : `Send (${sendKey})`;
@@ -2270,9 +2269,7 @@
     const prompt = String(rawPrompt ?? "").trim();
     const files = pendingFiles.filter((f) => f.state === "ready");
     if (snapshotCapturing || isBusy() || pendingFiles.some((f) => f.state === "staging") || (!prompt && !files.length && !selectionTexts.length)) return;
-    prompts.push(prompt); recallIndex = -1; firstRunHint = false;
-    try { localStorage.setItem("qchat.introduced", "1"); } catch (_) {}
-    el.promptInput.placeholder = QSettings.settings.placeholderText || "Ask anything";
+    prompts.push(prompt); recallIndex = -1;
     const chat = chats.current;
     const reasoningEffort = effectiveReasoning(chat);
     const consumeSelections = fromInput || (selectionTexts.length > 0 && selectionTexts.every((text, index) => chat.selectionTexts[index] === text));
@@ -2799,13 +2796,11 @@
 
     el.statusDot.dataset.state = state;
     el.statusLabel.textContent = label;
-    el.orb.title = "QChat menu";
   }
 
   function setStatusError() {
     el.statusDot.dataset.state = "error";
     el.statusLabel.textContent = "Error";
-    el.orb.title = "QChat menu";
   }
 
   let startupRead = false;
@@ -3054,12 +3049,12 @@
   });
 
   function openCommandMenu() { commandMenu = true; updateSlashMenu(); el.promptInput.focus(); }
-  el.orb.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCommandMenu(); } });
   let orbDown = null, orbDragged = false;
   el.orb.addEventListener("pointerdown", e => { if (e.button !== 0) return; orbDown = [e.clientX, e.clientY]; orbDragged = false; el.orb.setPointerCapture?.(e.pointerId); });
   el.orb.addEventListener("pointermove", e => { if (orbDown && !orbDragged && Math.hypot(e.clientX-orbDown[0], e.clientY-orbDown[1]) >= 4) { orbDragged = true; window.__TAURI__.window?.getCurrentWindow().startDragging().catch(() => {}); } });
-  el.orb.addEventListener("pointerup", () => { if (orbDown && !orbDragged) openCommandMenu(); orbDown = null; });
-  document.addEventListener("pointerdown", e => { if (!el.slashMenu.contains(e.target) && !el.orb.contains(e.target) && e.target !== el.promptInput) closeSlashMenu(); });
+  el.orb.addEventListener("pointerup", () => { orbDown = null; });
+  el.orb.addEventListener("pointercancel", () => { orbDown = null; });
+  document.addEventListener("pointerdown", e => { if (!el.slashMenu.contains(e.target) && e.target !== el.promptInput) closeSlashMenu(); });
   window.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCommandMenu(); } });
   let filePickerOpen = false;
   el.btnAttach.addEventListener("click", () => { filePickerOpen = true; el.attachmentInput.click(); });
@@ -3347,7 +3342,6 @@
   listen("qchat://selection-error", ({ payload }) => showGlobalError("selection_failed", typeof payload === "string" ? payload : "Could not copy the selection. Try selecting the text again."));
   listen("qchat://shown", () => {
     el.promptInput.focus();
-    try { if (!localStorage.getItem("qchat.introduced")) { firstRunHint = true; updateComposerMode(); } } catch (_) {}
     refreshTheme();
     renderTabs();
     if (connectErrorShown) hideGlobalError();

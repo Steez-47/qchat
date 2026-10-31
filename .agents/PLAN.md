@@ -1,3 +1,13 @@
+## v0.1.3 beta release (2026-10-31)
+
+User authorized publishing v0.1.3. Includes all commits on main since v0.1.2 plus the orb drag-only interaction and persistent command hint. Versions bumped in npm, Tauri, Cargo and both lockfiles. Format: Windows x64 QChat.exe plus SHA256SUMS.txt, prerelease.
+
+Checks: cargo test --locked PASS (21 passed, 1 desktop fixture ignored); response tags, stream-text buffering, interactive unit/UI, auth17, stream-media75, selection UI and paragraph UI PASS. Feature and UX checks passed for the same composer source in the preceding task, with screenshot inspection. Fresh signed-in chat E2E not run. Windows release compilation PASS; standard staging encountered a running executable (EPERM). Preserved it by rename, staged the compiled executable and verified ProductVersion 0.1.3 and matching SHA256 650A6CE0C63D8078FE9492C5A64F3B77F4A613064B3345D2978DD87286A91C42. Publishing authorized: https://github.com/Steez-47/qchat/releases/tag/v0.1.3. Existing session preserved.
+
+## Composer command hint (2026-10-31)
+
+Removed the orb's menu activation and button semantics; drag behavior remains. The empty composer always shows the configured placeholder followed by ' / commands' (with a middle-dot separator). Ctrl+K and slash commands remain available. Feature UI suite ALL PASS, including real browser pointer click and hint persistence after sending; headless screenshot checked at 516px. Feature and UX regression suites ALL PASS. Release npm run build PASS; dist/QChat.exe matches compiled release (SHA256 4EDB511CED95E139601CF61D368C22810727579AEBB49F66849530B67C948EC6). Running session preserved; restart to load the change.
+
 ## Paragraph streaming renderer (2026-10-31)
 
 Goal: reveal complete formatted paragraphs/blocks as streaming snapshots arrive, preserve finished content and the reader's scroll position through completion and history refresh.

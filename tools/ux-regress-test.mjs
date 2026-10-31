@@ -197,7 +197,7 @@ try {
     check('Enter while connecting keeps the draft and sends nothing', await count('chat_send') === before && await inputValue() === 'draft while connecting');
     await evalJS(`__mock.emit('bridge',{type:'status',ready:true,loggedIn:false,url:'https://chatgpt.com/'})`);
     await sleep(30);
-    check('ready restores the normal placeholder and enables Send', await evalJS(`document.getElementById('prompt-input').placeholder==='Ask anything' && !document.getElementById('btn-send').disabled`));
+    check('ready restores the command hint and enables Send', await evalJS(`document.getElementById('prompt-input').placeholder==='Ask anything · / commands' && !document.getElementById('btn-send').disabled`));
     await key('Enter');
     check('Enter sends once ready', await waitFor(`__mock.count('chat_send')>${before}`));
   });
@@ -209,7 +209,7 @@ try {
     check('a silent connection shows the deadline error and a retry', shown && state.text === "Can't reach ChatGPT. Check your connection, then try again." && state.retry === 'Try again' && !state.hidden && state.dot === 'error', JSON.stringify(state));
     await evalJS(`__mock.statusHold=false; document.getElementById('btn-error-signin').click()`);
     const ready = await waitFor(`document.getElementById('status-dot').dataset.state==='ready'`);
-    check('retry checks the connection and clears the error when ready', ready && await evalJS(`document.getElementById('global-error').hidden && document.getElementById('prompt-input').placeholder==='Ask anything'`));
+    check('retry checks the connection and clears the error when ready', ready && await evalJS(`document.getElementById('global-error').hidden && document.getElementById('prompt-input').placeholder==='Ask anything · / commands'`));
     check('the retry button returns to Sign in afterwards', await evalJS(`document.getElementById('btn-error-signin').textContent==='Sign in' && document.getElementById('btn-error-signin').dataset.action==='signin'`));
     await evalJS(`__mock.statusHold=true; __mock.emit('bridge',{type:'status',ready:false,loggedIn:true,url:'https://chatgpt.com/'}); __mock.emit('qchat://shown',null)`);
     const rearmed = await waitFor(`!document.getElementById('global-error').hidden`, 4000);
@@ -246,7 +246,7 @@ try {
     check('opening, filtering and closing commands keeps the reply still', frames.samples.every(s => Math.abs(s.bubble - frames.baseline.bubble) <= 1));
     await key('k', { ctrlKey: true });
     await sleep(350);
-    check('orb command menu also opens above the input', await evalJS(`(()=>{const m=document.getElementById('slash-menu'),b=document.getElementById('bar');return !m.hidden && m.getBoundingClientRect().bottom<=b.getBoundingClientRect().top+1;})()`));
+    check('Ctrl+K command menu also opens above the input', await evalJS(`(()=>{const m=document.getElementById('slash-menu'),b=document.getElementById('bar');return !m.hidden && m.getBoundingClientRect().bottom<=b.getBoundingClientRect().top+1;})()`));
     await mkdir(path.join(root, '.tmp/slash-menu'), { recursive: true });
     const shot = await cdp('Page.captureScreenshot', { format: 'png' });
     await writeFile(path.join(root, '.tmp/slash-menu/commands.png'), Buffer.from(shot.data, 'base64'));
