@@ -256,7 +256,9 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
 .tool-btn[data-action="dismiss-turn"] .icon { font-size: 10px; }
 .tool-btn:hover { background: var(--fill-2); color: var(--text-1); }
 .tool-btn:focus-visible { outline-offset: -2px; }
-.turn-row[data-role="user"] > .bubble-tools { transform: none; transition: opacity var(--t1) linear; }
+/* Above the bubble, so the tools never cover the prompt they act on; the small overlap keeps hover continuous. */
+.turn-row[data-role="user"] > .bubble-tools,
+.history-row[data-role="user"] > .bubble-tools { top: auto; bottom: calc(100% - 2px); right: 6px; transform: none; transition: opacity var(--t1) linear; }
 .user-copy-icon::before { content: "\e8c8"; }
 .user-edit-icon::before { content: "\e70f"; }
 

@@ -3542,9 +3542,13 @@
 
   el.promptInput.addEventListener("keydown", (e) => {
     if (e.isComposing) return;
-    const recalled = prompts.length ? prompts : (chats.current.transcript.filter(item => item.role === "user" && item.text?.trim()).map(item => item.text));
-    if (!recalled.length && !prompts.length && chats.current.lastPrompt?.trim()) recalled.push(chats.current.lastPrompt);
-    if (!slashOpen() && recalled.length && (e.key === "ArrowUp" || e.key === "ArrowDown") && (!el.promptInput.value || recallIndex >= 0)) {
+    const arrow = e.key === "ArrowUp" || e.key === "ArrowDown";
+    const recalled = !arrow ? [] : prompts.length ? prompts : chats.current.transcript.filter(item => item.role === "user" && item.text?.trim()).map(item => item.text);
+    if (arrow && !recalled.length && chats.current.lastPrompt?.trim()) recalled.push(chats.current.lastPrompt);
+    // A chat switch or restored draft changes the text without an input event;
+    // only text that recall itself placed may be replaced by the next step.
+    if (arrow && recallIndex >= 0 && el.promptInput.value !== recalled[recalled.length - 1 - recallIndex]) recallIndex = -1;
+    if (!slashOpen() && recalled.length && arrow && (!el.promptInput.value || recallIndex >= 0)) {
       if (recallIndex >= 0 && el.promptInput.value.includes("\n")) {
         const input = el.promptInput;
         if ((e.key === "ArrowUp" && input.value.slice(0, input.selectionStart).includes("\n")) ||

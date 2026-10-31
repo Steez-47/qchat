@@ -1,7 +1,7 @@
 // Chat-window UX regressions driven through the mock backend in an isolated,
 // invisible Edge profile. No account, site access or OS-level input.
 import { createServer } from 'node:http';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -168,6 +168,28 @@ try {
   check('edit works during held stream without sending',await value()==='live prompt' && await count('chat_send')===sent && (await state()).draft==='live prompt');
   await setup(seed([],{lastPrompt:'',lastResponse:''})); await send('/temp'); await sleep(150); await evalJS(`__mock.hold=true`); await send('temporary prompt'); await waitFor(`__mock.last('chat_send')`); await press('ArrowUp');
   check('temporary chat recalls its prompt',await value()==='temporary prompt');
+  { const other=chatSeed('other',{draft:'keep this draft'}); await setup({v:1,current:{...chatSeed('current',{transcript:[user('u1','recall me')]}),transcript:[user('u1','recall me')]},recent:[other]});
+    await press('ArrowUp'); check('recall precondition',await value()==='recall me');
+    await evalJS(`document.querySelector('#tabs [data-key="other"]').click()`); await sleep(200);
+    check('switch restores draft',await value()==='keep this draft');
+    await press('ArrowUp'); await press('ArrowDown');
+    check('arrows after a chat switch keep its draft',await value()==='keep this draft'); }
+  const toolsCheck = async (name, row) => {
+    const r = await evalJS(`(()=>{const b=document.querySelector('${row} .bubble-user');if(!b)return null;const r=b.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
+    check(name+': user bubble rendered',!!r);
+    if (!r) return;
+    await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:r.x,y:r.y}); await sleep(250);
+    const g = await evalJS(`(()=>{const t=document.querySelector('${row} .bubble-tools'),c=document.querySelector('${row} .turn-content'),a=t.getBoundingClientRect(),b=c.getBoundingClientRect();const hit=[...t.querySelectorAll('button:not([hidden])')].every(x=>{const q=x.getBoundingClientRect();return x.contains(document.elementFromPoint(q.left+q.width/2,q.top+q.height/2))});return {opacity:getComputedStyle(t).opacity,overlap:a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top,hit}})()`);
+    check(name+': tools visible, clickable, not over the prompt',g.opacity==='1'&&!g.overlap&&g.hit,JSON.stringify(g));
+    if (process.env.QCHAT_SHOT) await writeFile(process.env.QCHAT_SHOT, Buffer.from((await cdp('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:1,y:1});
+  };
+  await cdp('Emulation.setDeviceMetricsOverride',{width:760,height:800,deviceScaleFactor:1,mobile:false});
+  await setup(seed([user('s1','Shot prompt to edit'),assistant('s2','A reply')])); await history(); await sleep(400);
+  await toolsCheck('history','.history-row[data-role="user"]');
+  await setup(seed([user('s1','Shot prompt to edit'),assistant('s2','A reply')])); await history(); await sleep(400);
+  await evalJS(`document.querySelector('.history-row[data-role="user"] [data-action="edit-prompt"]').click()`); await sleep(100);
+  check('tools action still works after move',await value()==='Shot prompt to edit');
   check('no runtime errors',problems.length===0,problems.slice(0,3).join(' | '));
 } catch (e) {
   console.error(e);
