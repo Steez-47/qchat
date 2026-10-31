@@ -198,16 +198,34 @@ try {
     check('chat switch restores its own selection draft', saved().current.key===oldKey && chips().length===1 && $('prompt-input').value==='Draft to restore');
     (test.handlers['qchat://selection-error'] || []).forEach(fn=>fn({payload:'Could not copy selected text.'}));
     check('capture failure is visible without losing draft', !$('global-error').hidden && $('global-error-text').textContent.includes('Could not copy') && chips().length===1);
-    selection('Final screenshot context');
+    await reset();
+    const originalSet=Storage.prototype.setItem;
+    Storage.prototype.setItem=function(key,value){if(key==='qchat.chats' && value.length>130000) throw new DOMException('quota','QuotaExceededError'); return originalSet.call(this,key,value);};
+    const large='Large private context '+ 'x'.repeat(120000);
+    input('Large selection question'); selection(large);
+    $('btn-send').click();
+    await until(()=>$('attachments').hidden);
+    await wait(80);
+    check('storage pressure still sends the complete selection',sends().at(-1).args.prompt.includes(large));
+    check('storage fallback persists the latest question and bounded context',saved().current.lastPrompt==='Large selection question' && saved().current.transcript[0].selectionTexts[0].length<=40000 && !!saved().current.transcript[0].selectionMatch);
+    test.largeWire=sends().at(-1).args.prompt;
+    Storage.prototype.setItem=originalSet;
     return results;
   })()`);
 
   for (const {name,ok} of results) { console.log((ok?'PASS ':'FAIL ')+name); if(!ok) failed++; }
+  const largeWire=await evalJS('test.largeWire');
   await cdp('Page.reload');
-  await sleep(250);
-  for(let i=0;i<100;i++) { if(await evalJS(`!!test?.handlers['qchat://selection'] && document.querySelectorAll('#attachments .selection-chip').length===2`)) break; await sleep(50); }
-  const restored=await evalJS(`document.getElementById('prompt-input').value==='Draft to restore' && document.querySelectorAll('#attachments .selection-chip').length===2 && !document.body.textContent.includes('Draft private context')`);
-  console.log((restored?'PASS ':'FAIL ')+'reload restores hidden context and question'); if(!restored) failed++;
+  await sleep(300);
+  await evalJS(`test.emit({type:'transcript',conversationId:'conv-1',complete:true,messages:[{role:'user',text:${JSON.stringify(largeWire)}},{role:'assistant',text:'Restored answer'}]})`);
+  await sleep(100);
+  await evalJS(`document.getElementById('btn-history').click()`);
+  const restored=await evalJS(`(()=>{const s=JSON.parse(localStorage.getItem('qchat.chats'));return s.current.lastPrompt==='Large selection question' && s.current.transcript[0].text==='Large selection question' && document.querySelector('#history-panel .selection-chip') && !document.body.textContent.includes('Large private context');})()`);
+  console.log((restored?'PASS ':'FAIL ')+'quota fallback reload keeps account selection collapsed'); if(!restored) failed++;
+  await evalJS(`document.getElementById('btn-history').click(); const i=document.getElementById('prompt-input');i.value='Draft to restore';i.dispatchEvent(new Event('input'));for(const fn of test.handlers['qchat://selection']) fn({payload:'Draft private context'});`);
+  await cdp('Page.reload'); await sleep(250);
+  const draftRestored=await evalJS(`document.getElementById('prompt-input').value==='Draft to restore' && document.querySelectorAll('#attachments .selection-chip').length===1 && !document.body.textContent.includes('Draft private context')`);
+  console.log((draftRestored?'PASS ':'FAIL ')+'reload restores hidden context and question'); if(!draftRestored) failed++;
   await cdp('Emulation.setDeviceMetricsOverride',{width:580,height:600,deviceScaleFactor:1,mobile:false});
   await sleep(150);
   const shot=await cdp('Page.captureScreenshot',{format:'png'});

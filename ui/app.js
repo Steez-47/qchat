@@ -468,6 +468,16 @@
   const cleanSelections = (items) => (Array.isArray(items) ? items : []).filter(text => typeof text === "string" && text.trim());
   const hasTurnContent = (item) => Boolean(item.text || item.hasMedia || (item.role === "user" && item.selectionTexts?.length));
   const wirePrompt = (prompt, selections) => [prompt, ...selections.map(text => text.replace(/\r\n?/g, "\n").split("\n").map(line => "> " + line).join("\n"))].filter(Boolean).join("\n\n");
+  // Keep the original account-message match even if storage pressure trims local context.
+  function selectionMatch(prompt) {
+    const text = comparable(prompt);
+    let a = 2166136261, b = 3339675911;
+    for (let i = 0; i < text.length; i++) {
+      a = Math.imul(a ^ text.charCodeAt(i), 16777619);
+      b = Math.imul(b ^ text.charCodeAt(i), 2246822519);
+    }
+    return `${text.length}:${a >>> 0}:${b >>> 0}`;
+  }
 
   function selectionChip(removable = false, index = 0) {
     const chip = make("span", "attachment-chip selection-chip" + (removable ? " glass glass-tiny" : ""));
@@ -525,7 +535,7 @@
       typeof item.id === "string" && (item.role === "user" || item.role === "assistant") && typeof item.text === "string")
       .map(item => {
         const snapshot = item.role === "user" ? { text: item.text, hasMedia: Boolean(item.hasMedia) } : completedSnapshot(item.text, item.hasMedia);
-        return { id: item.id, role: item.role, text: snapshot.text, selectionTexts: cleanSelections(item.selectionTexts), hasMedia: snapshot.hasMedia, media: cleanStoredMedia(item.media), hadAttachments: Boolean(item.hadAttachments), stopped: item.role === "assistant" && Boolean(item.stopped), sources: cleanSources(item.sources) };
+        return { id: item.id, role: item.role, text: snapshot.text, selectionTexts: cleanSelections(item.selectionTexts), selectionMatch: typeof item.selectionMatch === "string" ? item.selectionMatch : undefined, hasMedia: snapshot.hasMedia, media: cleanStoredMedia(item.media), hadAttachments: Boolean(item.hadAttachments), stopped: item.role === "assistant" && Boolean(item.stopped), sources: cleanSources(item.sources) };
       });
     // Older versions saved only the latest exchange; earlier turns are unavailable.
     const transcript = [];
@@ -542,6 +552,7 @@
       role: turn.role,
       text: snapshot.text,
       selectionTexts: cleanSelections(turn.selectionTexts),
+      selectionMatch: turn.selectionMatch,
       hasMedia: snapshot.hasMedia,
       hadAttachments: Boolean(turn.hadAttachments),
       sources: cleanSources(turn.sources),
@@ -872,12 +883,12 @@
       const known = new Map();
       for (const item of local) {
         if (!hasTurnContent(item)) continue;
-        const key = `${item.role}:${comparable(item.role === "user" ? wirePrompt(item.text, item.selectionTexts || []) : item.text)}`;
+        const key = `${item.role}:${item.selectionMatch || selectionMatch(item.role === "user" ? wirePrompt(item.text, item.selectionTexts || []) : item.text)}`;
         if (!known.has(key)) known.set(key, []);
         known.get(key).push(item);
       }
       chat.transcript = older.map(item => {
-        const mine = known.get(`${item.role}:${comparable(item.text)}`)?.shift();
+        const mine = known.get(`${item.role}:${selectionMatch(item.text)}`)?.shift();
         return mine ? { ...mine, text: item.role === "user" && mine.selectionTexts?.length ? mine.text : item.text || mine.text, media: item.media, sources: item.sources?.length ? item.sources : mine.sources, hasMedia: item.hasMedia || mine.hasMedia } : item;
       });
       if (chat === chats.current) refreshAfterRecord(chat);
@@ -889,8 +900,8 @@
     if (local.length) {
       const anchor = local.find(item => item.role === "user" && hasTurnContent(item));
       if (!anchor) return;
-      const key = comparable(wirePrompt(anchor.text, anchor.selectionTexts || []));
-      const isAnchor = item => item.role === "user" && comparable(wirePrompt(item.text, item.selectionTexts || [])) === key;
+      const key = anchor.selectionMatch || selectionMatch(wirePrompt(anchor.text, anchor.selectionTexts || []));
+      const isAnchor = item => item.role === "user" && (item.selectionMatch || selectionMatch(wirePrompt(item.text, item.selectionTexts || []))) === key;
       // A repeated prompt: count back from the end, as the local copy is the tail.
       const matches = older.flatMap((item, index) => isAnchor(item) ? [index] : []);
       end = matches[matches.length - local.filter(isAnchor).length] ?? -1;
@@ -1033,12 +1044,18 @@
 
   function storedChat(chat, capped = false) {
     if (!capped) return chat;
+    const selections = (items) => {
+      const texts = cleanSelections(items).slice(0, 20);
+      const budget = Math.floor(MAX_STORED_TEXT / Math.max(1, texts.length));
+      return texts.map(text => text.slice(0, budget));
+    };
     return {
       ...chat,
       lastPrompt: capText(chat.lastPrompt),
       lastResponse: capText(chat.lastResponse),
       draft: capText(chat.draft),
-      transcript: (chat.transcript || []).map(item => ({ ...item, text: capText(item.text) }))
+      selectionTexts: selections(chat.selectionTexts),
+      transcript: (chat.transcript || []).map(item => ({ ...item, text: capText(item.text), selectionTexts: selections(item.selectionTexts) }))
     };
   }
 
@@ -1065,6 +1082,7 @@
     recent = recent.map(chat => storedChat(chat, true));
     try { write(); return; } catch (_) {}
     current = {...current, draft:"", transcript:current.transcript.slice(-2)};
+    recent = [];
     try { write(); } catch (_) {}
 
   }
@@ -2274,7 +2292,7 @@
     dismissExchange();
     sentThisSession = true;
 
-    const userTurn = { id: crypto.randomUUID(), role: "user", text: prompt, selectionTexts, status: "done", chatKey: chat.key, attachments: files.map((f) => ({ name: f.file.name, size: f.file.size, previewURL: imagePreview(f.file) })) };
+    const userTurn = { id: crypto.randomUUID(), role: "user", text: prompt, selectionTexts, selectionMatch: selectionTexts.length ? selectionMatch(wirePrompt(prompt, selectionTexts)) : undefined, status: "done", chatKey: chat.key, attachments: files.map((f) => ({ name: f.file.name, size: f.file.size, previewURL: imagePreview(f.file) })) };
     const assistantTurn = { id: crypto.randomUUID(), role: "assistant", text: "", status: "streaming", prompt, selectionTexts, hadAttachments: files.length > 0, chatKey: chat.key };
     if (IMAGE_PROMPT.test(prompt)) assistantTurn.imageProgress = { state: "generating", phase: "preparing" };
 
@@ -3318,6 +3336,7 @@
   listen("qchat://selection", ({ payload }) => {
     if (typeof payload !== "string" || !payload.trim()) return;
     chats.current.selectionTexts.push(payload);
+    chats.current.draft = el.promptInput.value;
     hideGlobalError();
     saveChats();
     renderAttachments();
