@@ -33,3 +33,5 @@
 - 2026-10-31 | Reasoning cross-family review | antigravity/claude-sonnet-5-5 medium | unavailable: quota exhausted for 6 days 1 hour | no review returned; parent reviewing
 - 2026-10-31 | Reasoning final integration | parent | done | live Power slider recovered and verified, default persists across restart; release hash verified and PID26764 responsive; baseline guest Stop assertion also fails on old build
 - 2026-10-31 | Merge all work into main | parent | done | Snapshot + reasoning conflict resolution, 340px combined composer fit, UI/bridge/Rust19/native Snapshot/persistence suites and release/hash PASS; no delegation
+- 2026-10-31 | Reasoning picker toggle + close animation | parent | done | opener-aware pointer-down stops the flash; t2 fade/collapse close; reasoning31, feature, history and animation suites PASS
+- 2026-10-31 | Reasoning toggle release build | parent | done | npm run build PASS; dist/QChat.exe SHA256 2773EB51..., v0.1.1, launched PID 33096 from the worktree with the saved profile
