@@ -124,12 +124,16 @@
     return html.replace(/\uE000(\d+)\uE001/g, (token, index) => formulas[Number(index)]?.html ?? "");
   }
 
-  function renderMarkdownSafe(markdownText, sources = []) {
+  function replyMarkdown(markdownText, sources = []) {
     const citation = refs => refs.split(/[,;\s]+/).map(ref => {
       const source = sources.find(item => item.id === ref);
       return source ? `[${sources.indexOf(source) + 1}](<${source.url}>)` : "";
     }).filter(Boolean).join(" ");
-    const src = window.QResponseTags.toMarkdown(markdownText, { citation });
+    return window.QResponseTags.toMarkdown(markdownText, { citation });
+  }
+
+  function renderMarkdownSafe(markdownText, sources = []) {
+    const src = replyMarkdown(markdownText, sources);
     if (!src) return "";
     const prepared = window.QMath?.prepare(src);
     const html = window.marked ? window.marked.parse(prepared ? prepared.text : src) : `<p>${escapeHtml(src)}</p>`;
@@ -470,7 +474,7 @@
   const hasContent = (chat) => Boolean(chat.transcript?.length || chat.lastPrompt || chat.lastResponse || chat.lastHasMedia || chat.conversationId || chat.selectionTexts?.length);
 
   const cleanSelections = (items) => (Array.isArray(items) ? items : []).filter(text => typeof text === "string" && text.trim());
-  const hasTurnContent = (item) => Boolean(item.text || item.hasMedia || (item.role === "user" && item.selectionTexts?.length));
+  const hasTurnContent = (item) => Boolean(item.text || item.hasMedia || item.hadAttachments || item.media?.length || (item.role === "user" && item.selectionTexts?.length));
   const wirePrompt = (prompt, selections) => [prompt, ...selections.map(text => text.replace(/\r\n?/g, "\n").split("\n").map(line => "> " + line).join("\n"))].filter(Boolean).join("\n\n");
   // Keep the original account-message match even if storage pressure trims local context.
   function selectionMatch(prompt) {
@@ -573,12 +577,12 @@
     else transcript[index] = { ...item, media: transcript[index].media };
   }
 
-  function historyItems() {
+  function historyItems(fullText = false) {
     const items = chats.current.transcript.slice();
     for (const turn of turns) {
       if (turn.chatKey && turn.chatKey !== chats.current.key) continue;
       const entry = turnNodes.get(turn.id);
-      const visible = turn.status === "streaming" && entry?.reveal ? entry.reveal.visible : turn.text;
+      const visible = !fullText && turn.status === "streaming" && entry?.reveal ? entry.reveal.visible : turn.text;
       const item = snapshotTurn(turn, visible);
       const index = items.findIndex(existing => existing.id === item.id);
       if (index < 0) items.push(item);
@@ -2213,6 +2217,7 @@
   }
 
   function dismissExchange(immediate = false) {
+    hideCommandFeedback();
     clearTimeout(autoDismissTimer);
     autoDismissTimer = null;
     userScrolledUp = false;
@@ -2620,6 +2625,7 @@
     { name: "hide", icon: GLYPH.hide, desc: () => "Hide QChat", run: () => invoke("hide_main").catch(() => {}) }
   ];
   COMMANDS.push(
+    { name: "copy", icon: GLYPH.copy, desc: () => "Copy conversation", run: copyConversation },
     {name:"chatgpt", icon:GLYPH.account, desc:()=>"Switch to ChatGPT", run:()=>chooseProvider("chatgpt")},
     {name:"gemini", icon:GLYPH.account, desc:()=>"Switch to Gemini", run:()=>chooseProvider("gemini")},
     {name:"startup", icon:GLYPH.settings, desc:()=>"Open at startup", run:async()=>{
@@ -2851,7 +2857,6 @@
   let commandMenu = false;
   function updateSlashMenu() {
     const value = el.promptInput.value;
-    if (commandMenu && value) commandMenu = false;
     const query = commandMenu ? "" : /^\/\S*$/.test(value) ? value.slice(1).toLowerCase() : null;
     let matches = query === null ? [] : COMMANDS.filter((c) => c.name !== activeProvider && c.name.startsWith(query));
     if (commandMenu) matches = COMMANDS.filter(c => c.name !== activeProvider);
@@ -2878,7 +2883,8 @@
   }
 
   function runCommand(cmd) {
-    el.promptInput.value = "";
+    const commandText = /^\/\S*$/.test(el.promptInput.value) && COMMANDS.some(c => c.name.startsWith(el.promptInput.value.slice(1).toLowerCase()));
+    if (!commandMenu || commandText) el.promptInput.value = "";
     closeSlashMenu();
     autoResizePrompt();
     cmd.run();
@@ -3006,18 +3012,91 @@
   // ---------------------------------------------------------------------------
   // 13. Clipboard
   // ---------------------------------------------------------------------------
-  async function copyWithFeedback(text, buttonEl) {
+  async function writeClipboardText(text) {
     try {
       await navigator.clipboard.writeText(String(text ?? ""));
+      return true;
     } catch (_) {
+      const focused = document.activeElement;
+      const start = focused?.selectionStart, end = focused?.selectionEnd;
+      const selection = window.getSelection();
+      const ranges = Array.from({ length: selection?.rangeCount || 0 }, (_, i) => selection.getRangeAt(i).cloneRange());
       const ta = document.createElement("textarea");
       ta.value = String(text ?? "");
       ta.style.position = "fixed";
       ta.style.opacity = "0";
       document.body.appendChild(ta);
       ta.select();
-      try { document.execCommand("copy"); } catch (_) {}
-      document.body.removeChild(ta);
+      let copied = false;
+      try { copied = document.execCommand("copy"); } catch (_) {}
+      finally {
+        ta.remove();
+        if (focused?.isConnected) {
+          focused.focus({ preventScroll: true });
+          if (typeof start === "number") focused.setSelectionRange?.(start, end);
+        }
+        if (typeof start !== "number" && ranges.length && selection) { selection.removeAllRanges(); for (const range of ranges) selection.addRange(range); }
+      }
+      return copied;
+    }
+  }
+
+  const commandFeedback = make("div", "notice glass glass-tiny");
+  commandFeedback.id = "command-feedback";
+  commandFeedback.setAttribute("role", "status");
+  commandFeedback.hidden = true;
+  el.attachments.before(commandFeedback);
+  let commandFeedbackTimer;
+  let copyGeneration = 0;
+  function hideCommandFeedback() {
+    copyGeneration++;
+    clearTimeout(commandFeedbackTimer);
+    commandFeedback.hidden = true;
+    queueSizes();
+  }
+  function showCommandFeedback(message) {
+    clearTimeout(commandFeedbackTimer);
+    commandFeedback.textContent = message;
+    commandFeedback.hidden = false;
+    queueSizes();
+    commandFeedbackTimer = setTimeout(hideCommandFeedback, 2200);
+  }
+
+  async function copyConversation() {
+    hideCommandFeedback();
+    const generation = copyGeneration;
+    if (el.globalErrorText.textContent === "Couldn't copy. Try again.") hideGlobalError();
+    const chatKey = chats.current.key;
+    const items = historyItems(true);
+    if (!chats.current.transcript.length && chats.current.lastPrompt && !items.some(item => item.role === "user")) {
+      items.unshift({role:"user",text:chats.current.lastPrompt,hadAttachments:chats.current.lastHadAttachments});
+    }
+    const messages = items.map(item => {
+      const text = item.role === "user" ? wirePrompt(item.text, item.selectionTexts || []) : replyMarkdown(item.text, item.sources)
+        .replace(/!\[([^\]\n]*)\]\(qchat-web:[\w-]+\)/g, (_, label) => label ? `[Image: ${label}]` : "[Image]");
+      const names = (item.media || []).map(file => file.name).filter(Boolean);
+      const media = names.length ? names.map(name => `[Attachment: ${name.replace(/[\r\n]+/g, " ")}]`).join("\n") : item.hasMedia || item.hadAttachments ? "[Attachment]" : "";
+      const body = [text, media].filter(Boolean).join("\n\n");
+      return body ? `## ${item.role === "user" ? "You" : providerName()}\n\n${body}` : "";
+    }).filter(Boolean).join("\n\n---\n\n");
+    if (!messages) { showCommandFeedback("No messages to copy yet."); return; }
+    const copied = await writeClipboardText(messages);
+    if (chats.current.key !== chatKey || generation !== copyGeneration) return;
+    if (copied) showCommandFeedback("Conversation copied");
+    else showGlobalError(null, "Couldn't copy. Try again.");
+  }
+
+  async function copyWithFeedback(text, buttonEl) {
+    if (!await writeClipboardText(text)) {
+      if (buttonEl?._copyTimer) {
+        clearTimeout(buttonEl._copyTimer); buttonEl._copyTimer = null;
+        const icon = buttonEl.querySelector(".icon"), label = buttonEl.querySelector(".btn-label");
+        if (icon) icon.textContent = GLYPH.copy;
+        if (label) label.textContent = buttonEl._prevLabel;
+        buttonEl.title = buttonEl._prevTitle;
+      }
+      showGlobalError(null, "Couldn't copy. Try again.");
+      return false;
     }
     if (!buttonEl) return;
     const icon = buttonEl.querySelector(".icon");
@@ -3171,6 +3250,7 @@
 
   el.promptInput.addEventListener("input", () => {
     recallIndex = -1;
+    commandMenu = false;
     autoResizePrompt();
     updateSlashMenu();
     updateIdleChips();
@@ -3279,6 +3359,7 @@
       if (historyOpen) { setHistoryOpen(false); return; }
       if (slashOpen()) { closeSlashMenu(); return; }
       if (!el.clearConfirm.hidden) { hideClearConfirm(); el.promptInput.focus(); return; }
+      if (!commandFeedback.hidden) { hideCommandFeedback(); return; }
       if (!isBusy() && (turns.length || !el.globalError.hidden)) {
         hideGlobalError();
         dismissExchange();

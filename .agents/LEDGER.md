@@ -72,3 +72,10 @@
 2026-10-31 | V1.1 release build | parent | done | dist/v1.1.0 local only, not published
 2026-10-31 | V1.2 Gemini images | codex/gpt-6.1-sol medium | done | live guest image loaded; parent fixed guest dialog swallowing Send
 2026-10-31 | V1.2 picker and tab logos | codex/gpt-6.1-sol medium | done | screenshots reviewed by parent
+2026-10-31 | Overnight copy conversation | opencode/deepseek-v4.1-flash-free high | failed before work | Free usage limit reached; exhausted for at least 10 minutes
+2026-10-31 | Overnight copy conversation | opencode/glm-5.3-flash-free high | failed before work | same free usage limit; owner then authorized Terra medium/high and Gemini
+2026-10-31 | Overnight copy tests | codex/gpt-6.1-terra medium | running | tools/conversation-copy-ui-test.mjs only
+2026-10-31 | Overnight review and audit | antigravity/gemini-4-argon medium | running | read-only
+2026-10-31 | Overnight copy tests | codex/gpt-6.1-terra medium | partial | initial 8 pass/3 fail; parent fixed stale success and textarea selection, extended to 25 passing checks
+2026-10-31 | Overnight review and audit | antigravity/gemini-4-argon medium | done | 6 copy findings resolved; next features draft recovery, find, undo local removal
+2026-10-31 | Overnight copy integration | parent | done | copy25, feature/history/tag/provider/UX suites PASS; screenshot inspected; no real clipboard or account writes

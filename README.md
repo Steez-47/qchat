@@ -7,6 +7,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - **Alt+Q** toggles the popup. The tray icon has New chat, Sign in and Quit.
 - Type `/` for commands, or press **Ctrl+K** for the menu. Drag the orb to move QChat.
 - **Ctrl+P** or `/chats` searches every saved chat. Up to 3 recent chats sit as tabs on the bar.
+- `/copy` copies the current conversation as Markdown, including quoted selections and source links. Ctrl+K opens commands while keeping your draft.
 - `/model` picks a ChatGPT model on a signed-in account. `/temp` starts a temporary chat that isn't saved.
 - Hover a reply to copy it, retry it or open it in ChatGPT. Up arrow recalls earlier prompts.
 - **Ctrl+Alt+Q** opens QChat with the text selected in the current app quoted in the box.
@@ -45,6 +46,7 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/settings-presets-test.mjs`: opacity, presets, migration, saved presets and settings search.
 - `node tools/drag-sync-native-test.mjs`: the blur stays up and aligned while the real window moves (skips while a fullscreen app is in front).
 - `node tools/feature-ui-test.mjs`: menus, model picker, chat search, tabs, the shortcuts card and temporary chats.
+- `node tools/conversation-copy-ui-test.mjs`: conversation copying, clipboard failures, draft selection, streaming and provider isolation.
 - `node tools/math-ui-test.mjs`: maths rendering in replies.
 - `node tools/highlight-test.mjs`: code highlighting round trip, token typing and speed. Plain Node, no browser.
 - `node tools/surfaces-native-test.mjs`: blur and click-through surfaces, shortcut validation and autostart. Requires a debug build.

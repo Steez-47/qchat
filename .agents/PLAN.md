@@ -1,3 +1,24 @@
+## Continued overnight iteration (2026-10-31)
+
+Goal: add useful compact features, refine and test each one, commit locally, then continue. Preserve the running app, account/profile and unrelated icon.icns modification. No publication requested. The absent orchestrator playbook was read from git commit 37b5396.
+
+| id | task | model | owns | status |
+|---|---|---|---|---|
+| O1 | Copy full conversation command and focused edge-case UI tests | parent + Terra medium | ui/app.js, tools/conversation-copy-ui-test.mjs | done |
+| O2 | Read-only UX and reliability audit for next increments | Gemini Argon medium | report only | done |
+| O3 | Integrate, independently verify, review and commit O1 | parent | integration, logs | done |
+| O4 | Recover unsent drafts across reload and quit | Terra medium + parent | ui/app.js, tools/draft-ui-test.mjs | next |
+| O5 | Find text in long conversations | Terra high + parent | scoped after O4 | todo |
+| O6 | Reversible local chat removal | Terra medium + parent | scoped after O5 | todo |
+
+Verification uses isolated headless browsers and hidden native profiles. Build to a separate executable; do not replace dist/QChat.exe while the owner's instance is running. Each completed feature gets its own commit. Free provider failures will be recorded; no claims of exhaustive edge-case coverage.
+
+DeepSeek and GLM both returned Free usage limit reached before doing work. Owner then requested Terra medium/high and Gemini. Parent's copy-command implementation passes existing feature tests; focused independent tests and review are next.
+
+O1 verification: conversation-copy UI 25 checks PASS, feature UI, history UI, response-tag UI, provider UI and UX regression suites PASS. Mock screenshot inspected. Copies all received streaming text, resolves citations/layout tags, keeps code/Unicode/selections and named attachment hints, and handles reduced-history metadata, clipboard rejection and async chat switches. Ctrl+K preserves drafts and selection while recognized slash prefixes are consumed. Gemini's six review findings resolved or covered; feedback is intentionally a brief nonmodal notice. No real OS clipboard/account test; running app untouched. Separate local build follows later increments.
+
+Next sequence from audit: draft recovery, then find-in-conversation, then undo local chat removal. Keep each increment separately verified and committed.
+
 ## v1.2.0: one picker, tab logos, Gemini images (2026-10-31, branch feat/v1.2)
 
 Owner asked for the provider button to become the reasoning/model picker, provider logos on recent tabs, and Gemini images, then v1.2.0. Publication authorized. Provider switching stays as the picker's last row plus /gemini and /chatgpt. Gemini's guest menu holds a model list with descriptions and no separate level control; the bridge reads a titled reasoning group generically if a signed-in menu has one, synthetic only.
