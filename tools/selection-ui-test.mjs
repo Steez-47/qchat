@@ -193,7 +193,7 @@ try {
     await reset();
     const tab=[...document.querySelectorAll('#tabs [data-chat-key]')].find(t=>t.dataset.chatKey===oldKey);
     if(tab) tab.click();
-    else { input('/chats'); $('prompt-input').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})); await wait(50); const row=[...document.querySelectorAll('.feature-list button')].find(b=>b.textContent.includes('Untitled')); row?.click(); }
+    else { input('/chats'); $('prompt-input').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})); await wait(50); const row=[...document.querySelectorAll('.feature-list button')].find(b=>b.textContent.includes('Draft to restore')); row?.click(); }
     await wait(50);
     check('chat switch restores its own selection draft', saved().current.key===oldKey && chips().length===1 && $('prompt-input').value==='Draft to restore');
     (test.handlers['qchat://selection-error'] || []).forEach(fn=>fn({payload:'Could not copy selected text.'}));
