@@ -31,7 +31,7 @@ Download `QChat_1.0.0_x64-setup.exe` from the [v1.0.0 release](https://github.co
 ```
 npm install
 npm run build          # regenerates assets/icon.svg icons and writes dist/QChat.exe
-npm run build:installer # NSIS setup, portable exe, notices and checksums in dist/v1.0.0/
+npm run build:installer # NSIS setup, portable exe, notices and checksums in dist/v<version>/
 # or for development:
 cd src-tauri && cargo build && target/debug/qchat.exe
 ```

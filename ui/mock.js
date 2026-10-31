@@ -145,6 +145,7 @@
           case "media_save": return "Demo image.png";
           case "image_copy": return null;
           case "chat_models":
+            if (params.get("mock") === "silent-models") return null;
             emitMock("bridge", { type: "models", models: params.get("mock") === "no-models" ? [] : [{ id: "0", label: "Mock model", selected: true }, { id: "1", label: "Mock alternate", selected: false }] }); return null;
           case "chat_model_choose":
             emitMock("bridge", { type: "model-chosen", model: { id: args.id, label: args.id === "0" ? "Mock model" : "Mock alternate" } }); return null;

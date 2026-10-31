@@ -541,7 +541,7 @@ fn chat_stop(app: tauri::AppHandle) -> Result<(), String> {
     eval(&app, "window.__qchat && window.__qchat.stop()")
 }
 #[tauri::command]
-fn chat_models(app: tauri::AppHandle) -> Result<(), String> { eval(&app, "window.__qchat && window.__qchat.listModels()") }
+fn chat_models(app: tauri::AppHandle) -> Result<(), String> { eval(&app, "if (window.__qchat) window.__qchat.listModels(); else if (window.__QCHAT_EMIT__) window.__QCHAT_EMIT__({type:'models',models:[],error:'unavailable'});") }
 #[tauri::command]
 fn chat_model_choose(app: tauri::AppHandle, id: String) -> Result<(), String> { eval(&app, &format!("window.__qchat && window.__qchat.chooseModel({})", serde_json::to_string(&id).map_err(|e|e.to_string())?)) }
 #[tauri::command]
@@ -570,7 +570,15 @@ fn chat_list_conversations(app: tauri::AppHandle, offset: u32) -> Result<(), Str
 }
 #[tauri::command]
 fn chat_status(app: tauri::AppHandle) -> Result<(), String> {
-    eval(&app, "window.__qchat && window.__qchat.status()")
+    for provider in ["chatgpt", "gemini"] {
+        if let Some(w) = app.get_webview_window(provider) {
+            let _ = w.eval("if (window.__qchat) window.__qchat.status(); else if (window.__QCHAT_EMIT__) window.__QCHAT_EMIT__({type:'status',ready:false,loggedIn:false});");
+        } else {
+            let event = serde_json::json!({"type":"status","provider":provider,"ready":false,"loggedIn":false});
+            for label in ["main", "settings"] { if let Some(w) = app.get_webview_window(label) { let _ = w.emit("bridge", &event); } }
+        }
+    }
+    Ok(())
 }
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {

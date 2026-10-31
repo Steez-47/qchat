@@ -6,7 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const commandCount = [...readFileSync(path.join(root,'ui/app.js'),'utf8').matchAll(/\{ name: "[^"]+", icon:/g)].length;
+// Every command except the provider already in use, which is hidden.
+const commandCount = [...readFileSync(path.join(root,'ui/app.js'),'utf8').matchAll(/{ ?name: ?"[^"]+", ?icon:/g)].length - 1;
 const profile = mkdtempSync(path.join(tmpdir(), 'qchat-settings-'));
 const port = 9346;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -51,7 +52,7 @@ const settingsPage = async () => (await pages()).find(p => p.url.includes('tauri
 const slash = `(()=>{const i=document.getElementById('prompt-input');i.value='/settings';i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));return i.value===''})()`;
 try {
   if ((await pages()).length) throw Error('Test debug port already in use');
-  app = spawn(process.env.QCHAT_SURFACES_EXE || path.join(root, 'src-tauri/target-surfaces-test/debug/qchat.exe'), [], {
+  app = spawn(process.env.QCHAT_SURFACES_EXE || path.join(root, 'src-tauri/target/debug/qchat.exe'), [], {
     env: { ...process.env, QCHAT_DEBUG_PORT: String(port), QCHAT_TEST_MODE: '1', QCHAT_TEST_PROFILE: profile, QCHAT_TEST_SHOW_SETTINGS: visible ? '1' : '0' },
     stdio: 'ignore', windowsHide: true,
   });
@@ -65,7 +66,7 @@ try {
   check('/settings consumes command', await evaluate(slash));
   const first = await until(settingsPage, 'native settings webview');
   let settings = await connect(first);
-  await until(() => settings(`document.querySelectorAll('.section').length===11`), 'settings content');
+  await until(() => settings(`document.querySelectorAll('.section').length===12`), 'settings content');
   await until(() => settings(`document.visibilityState==='visible'`), 'settings shown by native window');
   check('native settings window is shown', true);
   if (visible) {
@@ -83,7 +84,7 @@ try {
   check('/settings works after closing', await evaluate(slash));
   const reopened = await until(settingsPage, 'settings reopen');
   settings = await connect(reopened);
-  await until(() => settings(`document.querySelectorAll('.section').length===11`), 'reopened controls');
+  await until(() => settings(`document.querySelectorAll('.section').length===12`), 'reopened controls');
   check('settings reopens with functioning controls', await settings(`!!document.getElementById('btn-close') && !!QSettings.settings`));
   await settings(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
   await until(async () => !(await settingsPage()), 'Escape close');

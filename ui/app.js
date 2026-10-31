@@ -1065,6 +1065,8 @@
       // Each site keeps its own page, so returning must remember which chat that page still holds.
       pageByProvider[activeProvider] = page;
       activeProvider = provider;
+      setModelLabel("");
+      cancelModelRequest();
       page = pageByProvider[provider] || {key:null, conv:null, pristine:true};
       Object.assign(accountChats, {items:[], loading:false, loaded:false, at:0});
       updateStatusHeader(providerStates[provider] || {ready:false, loggedIn:false});
@@ -1809,7 +1811,8 @@
     retryBtn.title = "Retry"; retryBtn.setAttribute("aria-label", "Retry");
     const openBtn = make("button", "tool-btn");
     openBtn.append(makeIcon("\uE8A7"));
-    openBtn.type = "button"; openBtn.title = `Open in ${providerName()}`; openBtn.setAttribute("aria-label", openBtn.title);
+    openBtn.type = "button"; openBtn.dataset.action = "open-external";
+    openBtn.title = `Open in ${providerName()}`; openBtn.setAttribute("aria-label", openBtn.title);
     openBtn.addEventListener("click", () => { if (chats.current.conversationId) invoke("open_external", { url: `${activeProvider === "gemini" ? "https://gemini.google.com/app/" : "https://chatgpt.com/c/"}${chats.current.conversationId}` }).catch(() => {}); });
     tools.append(copyBtn, retryBtn, openBtn, closeBtn);
 
@@ -1902,7 +1905,8 @@
     entry.row.dataset.status = turn.status;
     const retryTool = entry.row.querySelector('[data-action="retry-reply"]');
     if (retryTool) retryTool.hidden = turn.status !== "done" || (!turn.prompt && !turn.selectionTexts?.length) || turn.hadAttachments;
-    const openTool = entry.row.querySelector(`[aria-label="Open in ${providerName()}"]`);
+    const openTool = entry.row.querySelector('[data-action="open-external"]');
+    if (openTool) { openTool.title = `Open in ${providerName()}`; openTool.setAttribute("aria-label", openTool.title); }
     if (openTool) openTool.hidden = !chats.current.conversationId;
     const activity = entry.activity;
     activity.hidden = turn.status !== "streaming" || turn.backendDone || turn.activity?.state !== "running";
@@ -2474,6 +2478,7 @@
     chats.current = freshChat();
     renderAttachments();
     setModeLabel("");
+    setModelLabel("");
     setHistoryOpen(false);
     renderHistory();
     saveChats();
@@ -2573,6 +2578,8 @@
     chats.recent = chats.recent.slice(0, MAX_RECENT);
     target.lastActive = now;
     chats.current = target;
+    setModeLabel(target.temporary ? "Temporary" : "");
+    setModelLabel("");
     renderAttachments();
     el.promptInput.value = target.draft || "";
     autoResizePrompt();
@@ -2624,12 +2631,13 @@
         ]);
       } catch (_) { showGlobalError(null,"Couldn't read open at startup."); }
     }},
-    { name: "model", icon: GLYPH.settings, desc: () => "Model", run: () => { showFeatureList("Loading models…", []); invoke("chat_models").catch(() => showModels({ error: "unavailable" })); } },
+    { name: "model", icon: GLYPH.settings, desc: () => "Model", run: requestModels },
     { name: "temp", icon: GLYPH.newChat, desc: () => "Temporary chat", run: async () => { await startNewChat(false); chats.current.temporary = true; setModeLabel("Temporary"); pageSync = freshInPage(chats.current); } },
     { name: "chats", icon: GLYPH.clock, desc: () => "Chats", run: showChatList },
     { name: "keys", icon: GLYPH.settings, desc: () => "Keyboard shortcuts", run: async () => {
       let hotkey = "Alt+Q"; try { hotkey = await invoke("get_hotkey") || hotkey; } catch (_) {}
-      const shortcuts = [[hotkey, "Show QChat"], [QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter", "Send"], ["Shift+Enter", "New line"], ["Esc", "Close"], ["Ctrl+N", "New chat"], ["Ctrl+K", "Menu"], ["Ctrl+P", "Chats"], ["Ctrl+.", "Stop"], ["ArrowUp / ArrowDown", "Recall prompts"], ["Paste / drop", "Attach files"]];
+      let selectionKey = "Ctrl+Alt+Q"; try { selectionKey = await invoke("get_selection_hotkey"); } catch (_) {}
+      const shortcuts = [[selectionKey || "Disabled", "Ask about selection"], [hotkey, "Show QChat"], [QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter", "Send"], ["Shift+Enter", "New line"], ["Esc", "Close"], ["Ctrl+N", "New chat"], ["Ctrl+K", "Menu"], ["Ctrl+P", "Chats"], ["Ctrl+.", "Stop"], ["ArrowUp / ArrowDown", "Recall prompts"], ["Paste / drop", "Attach files"]];
       showFeatureList("Keyboard shortcuts", shortcuts.map(([key, action]) => ({ keys: key, title: action })));
     } }
   );
@@ -2638,6 +2646,16 @@
   // The control that opened the list. A pointer-down on it must not close the
   // list, or its click would reopen it and the panel would flash.
   let featureListAnchor = null;
+  let modelRequest = null;
+  function cancelModelRequest() { if (modelRequest) clearTimeout(modelRequest.timer); modelRequest = null; }
+  function requestModels() {
+    showFeatureList("Loading models…", []);
+    const request = { provider: activeProvider };
+    modelRequest = request;
+    const finish = event => { if (modelRequest !== request) return; cancelModelRequest(); showModels(event); };
+    request.timer = setTimeout(() => finish({ error: "unavailable" }), 6000);
+    invoke("chat_models").catch(() => finish({ error: "unavailable" }));
+  }
   let featureListHideTimer = null;
   function hideFeatureList() {
     clearTimeout(featureListHideTimer);
@@ -2649,6 +2667,7 @@
     queueSizes();
   }
   function closeFeatureList() {
+    cancelModelRequest();
     featureListAnchor = null;
     if (featureList.hidden || featureList.hasAttribute("data-leaving")) return;
     clearTimeout(featureListHideTimer);
@@ -2663,6 +2682,7 @@
     el.promptInput.focus();
   }
   function showFeatureList(title, rows, searchable = false, anchor = null) {
+    cancelModelRequest();
     closeSlashMenu();
     clearTimeout(featureListHideTimer);
     featureListHideTimer = null;
@@ -2675,9 +2695,9 @@
     const getRows = typeof rows === "function" ? rows : () => rows;
     const field = make("input", "feature-search"); field.placeholder = "Search chats"; field.setAttribute("aria-label", "Search chats");
     if (searchable) featureList.append(field); else featureList.append(make("div", "feature-heading", title));
-    const results = make("div", "feature-results"); featureList.append(results);
+    const results = make("div", "feature-results"); results.setAttribute("role", "listbox"); results.setAttribute("aria-label", title); featureList.append(results);
     let lines = [], selected = 0;
-    const mark = () => lines.forEach((entry, i) => { if (i === selected) entry.line.dataset.selected = ""; else delete entry.line.dataset.selected; });
+    const mark = () => lines.forEach((entry, i) => { entry.line.setAttribute("role", "option"); entry.line.setAttribute("aria-selected", String(i === selected)); if (i === selected) entry.line.dataset.selected = ""; else delete entry.line.dataset.selected; });
     const paint = () => {
       results.replaceChildren(); lines = []; selected = 0;
       const query = `${field.value}`.toLowerCase();
@@ -2692,6 +2712,7 @@
           const button = make("button", "feature-choice"); button.type = "button";
           button.append(make("span", "feature-title", row.title), make("span", "feature-meta", row.meta || ""));
           button.onclick = () => { closeFeatureList(); row.run(); };
+          button.addEventListener("focus", () => { selected = lines.findIndex(entry => entry.line === line); mark(); });
           line.append(button); lines.push({ line, row });
         } else {
           line.append(make("kbd", "key", row.keys), make("span", "feature-title", row.title));
@@ -2707,7 +2728,7 @@
     featureList.onkeydown = e => {
       if (e.key === "Escape") { e.stopPropagation(); closeFeatureList(); }
       else if (keysCard) { if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key !== "Shift" && e.key !== "Control" && e.key !== "Alt" && e.key !== "Meta") { e.preventDefault(); closeFeatureList(); } }
-      else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); selected = (selected + (e.key === "ArrowDown" ? 1 : -1) + lines.length) % lines.length; mark(); }
+      else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); selected = (selected + (e.key === "ArrowDown" ? 1 : -1) + lines.length) % lines.length; mark(); lines[selected]?.line.scrollIntoView({ block: "nearest" }); }
       else if (e.key === "Enter") { e.preventDefault(); const entry = lines[selected] || lines[0]; if (entry) { closeFeatureList(); entry.row.run(); } }
     };
     paint(); queueSizes(); (searchable ? field : featureList).focus();
@@ -2716,7 +2737,7 @@
     const models = event.models || [];
     showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? models.map(model => ({ title: model.label, selected: Boolean(model.selected), run: () => invoke("chat_model_choose", { id: model.id }).catch(() => {}) })) : [{ title: event.error ? `Open ${providerName()}` : "Sign in", run: openSignin }]);
   }
-  listen("bridge", ({ payload }) => { if ((payload.provider || "chatgpt") !== activeProvider) return; if (payload.type === "models") showModels(payload); else if (payload.type === "model-chosen") setModelLabel(payload.model.label); });
+  listen("bridge", ({ payload }) => { if ((payload.provider || "chatgpt") !== activeProvider) return; if (payload.type === "models") { if (modelRequest?.provider === activeProvider) { cancelModelRequest(); showModels(payload); } } else if (payload.type === "model-chosen") setModelLabel(payload.model.label); });
   // Every chat on the account, read through the signed-in page, with this PC's chats first.
   const accountChats = { items: [], loading: false, loaded: false, at: 0 };
 
@@ -2747,7 +2768,7 @@
   }
 
   function chatRows() {
-    const local = chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { chats.recent = chats.recent.filter(c => c.key !== chat.key); saveChats(); renderTabs(); featureList._repaint?.(); } }));
+    const local = chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: (chat.provider !== activeProvider ? `${providerName(chat)} · ` : "") + elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { chats.recent = chats.recent.filter(c => c.key !== chat.key); saveChats(); renderTabs(); featureList._repaint?.(); } }));
     const known = new Set([chats.current.conversationId, ...chats.recent.filter(chat => chat.provider === activeProvider).map(chat => chat.conversationId)]);
     const account = accountChats.items.filter(item => !known.has(item.id)).map(item => ({ title: item.title || "Untitled chat", meta: item.updated ? elapsedLabel(item.updated) : "", run: () => openAccountChat(item) }));
     return [...local, ...account];
@@ -2799,9 +2820,10 @@
   let commandMenu = false;
   function updateSlashMenu() {
     const value = el.promptInput.value;
+    if (commandMenu && value) commandMenu = false;
     const query = commandMenu ? "" : /^\/\S*$/.test(value) ? value.slice(1).toLowerCase() : null;
-    let matches = query === null ? [] : COMMANDS.filter((c) => c.name.startsWith(query));
-    if (commandMenu) { const order = ["new", "chats", "model", "temp", "settings", "signin", "clear", "keys", "hide"]; matches = order.map(name => COMMANDS.find(c => c.name === name)); }
+    let matches = query === null ? [] : COMMANDS.filter((c) => c.name !== activeProvider && c.name.startsWith(query));
+    if (commandMenu) matches = COMMANDS.filter(c => c.name !== activeProvider);
     if (!matches.length) { if (slashOpen()) closeSlashMenu(); return; }
     const wasOpen = slashOpen();
     const previous = slashMatches.map((c) => c.name).join(",");
@@ -2831,6 +2853,10 @@
     cmd.run();
   }
 
+  document.addEventListener("pointerdown", e => { if (!el.clearConfirm.hidden && !el.clearConfirm.contains(e.target)) hideClearConfirm(); });
+  el.clearConfirm.addEventListener("keydown", e => {
+    if (["ArrowLeft", "ArrowRight"].includes(e.key)) { e.preventDefault(); (document.activeElement === el.btnClearYes ? el.btnClearNo : el.btnClearYes).focus(); }
+  });
   function showClearConfirm() {
     el.clearConfirm.hidden = false;
     syncMenuFlag();

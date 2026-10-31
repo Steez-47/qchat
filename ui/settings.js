@@ -177,6 +177,15 @@
     return row;
   }
 
+  const shortcutRefreshers = [];
+  function dynamicShortcut(label, command) {
+    const nodes = shortcut(label, "Loading…");
+    const refresh = () => invoke(command).then(key => {
+      const replacement = shortcut(label, ...(key ? key.split("+") : ["Disabled"]));
+      nodes.replaceChildren(...replacement.childNodes);
+    }).catch(() => {});
+    shortcutRefreshers.push(refresh); refresh(); return nodes;
+  }
   function arrowNavigate(group, buttons, select) {
     group.addEventListener("keydown", (e) => {
       const index = buttons.indexOf(document.activeElement);
@@ -191,6 +200,7 @@
       for (const button of buttons) button.tabIndex = -1;
       buttons[next].tabIndex = 0;
       buttons[next].focus();
+      select(buttons[next]);
     });
   }
 
@@ -241,7 +251,7 @@
   const accountStatus = make("small");
   accountStatus.id = "account-status";
   accountStatus.dataset.state = "connecting";
-  accountStatus.textContent = "Connecting…";
+  accountStatus.textContent = "Not connected yet";
   const accountButton = make("button", "pill-btn pill-accent", "Sign in");
   accountButton.type = "button";
   accountButton.id = "btn-signin";
@@ -375,7 +385,10 @@
         [() => {
           const list = make("dl", "shortcut-list");
           list.append(
-            shortcut("Show or hide QChat", "Alt", "Q"),
+            dynamicShortcut("Show or hide QChat", "get_hotkey"),
+            dynamicShortcut("Ask about selection", "get_selection_hotkey"),
+            shortcut("Commands menu", "Ctrl", "K"),
+            shortcut("All chats", "Ctrl", "P"),
             shortcut("New chat", "Ctrl", "N"),
             shortcut("Stop generating", "Ctrl", "."),
             shortcut("Commands", "/"),
@@ -472,10 +485,10 @@
       e.preventDefault(); e.stopPropagation();
       if (e.key === "Escape") { delete button.dataset.recording; sync(); return; }
       if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return;
-      if (kind === "selection" && e.key === "Backspace") { await invoke("set_selection_hotkey", {accelerator: ""}); current = ""; delete button.dataset.recording; sync(); return; }
+      if (kind === "selection" && e.key === "Backspace") { await invoke("set_selection_hotkey", {accelerator: ""}); current = ""; shortcutRefreshers.forEach(refresh => refresh()); delete button.dataset.recording; sync(); return; }
       if (!e.ctrlKey && !e.altKey && !e.metaKey) { hint.textContent = "Include Ctrl, Alt or Windows"; return; }
       const accelerator = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super", e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join("+");
-      try { await invoke("set_" + command, {accelerator}); current = accelerator; sync(); hint.textContent = ""; delete button.dataset.recording; } catch (err) { hint.textContent = String(err.message || err); }
+      try { await invoke("set_" + command, {accelerator}); current = accelerator; shortcutRefreshers.forEach(refresh => refresh()); sync(); hint.textContent = ""; delete button.dataset.recording; } catch (err) { hint.textContent = String(err.message || err); }
     });
     return row;
   }
@@ -634,8 +647,8 @@
 
   listen("bridge", ({ payload: evt }) => {
     if (!evt || typeof evt !== "object") return;
-    if ((evt.provider || "chatgpt") === "gemini") { if (evt.type === "status") { geminiStatus.textContent = evt.loggedIn ? "Signed in" : evt.ready ? "Guest" : "Not connected yet"; geminiButton.textContent = evt.loggedIn ? "Manage account" : "Sign in"; } return; }
-    if (evt.type === "status") updateAccount({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
+    if ((evt.provider || "chatgpt") === "gemini") { if (evt.type === "error" && evt.code === "auth") { geminiStatus.textContent = "Signed out"; geminiButton.textContent = "Sign in"; } if (evt.type === "status") { geminiStatus.textContent = evt.loggedIn ? "Signed in" : evt.ready ? "Guest" : "Not connected yet"; geminiButton.textContent = evt.loggedIn ? "Manage account" : "Sign in"; } return; }
+    if (evt.type === "status") { updateAccount({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) }); if (!evt.ready && !evt.loggedIn) accountStatus.textContent = "Not connected yet"; }
     else if (evt.type === "error" && evt.code === "auth") updateAccount({ ready: true, loggedIn: false, signedOut: true });
   });
 
