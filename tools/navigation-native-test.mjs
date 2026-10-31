@@ -80,6 +80,7 @@ try {
     await until("/Ready|Guest/.test(document.getElementById('status-label').textContent)");
     await evaluate('document.fonts.ready');
     const switchTo=async key=>{await until(`!!document.querySelector('#tabs .tab[data-key="${key}"]')`);await evaluate(`document.querySelector('#tabs .tab[data-key="${key}"]').click()`);await until(`JSON.parse(localStorage.getItem('qchat.chats')).current.key===${JSON.stringify(key)}`);await sleep(100)};
+    const nativeKey=async(value,code,virtual,modifiers=0)=>{await command('Input.dispatchKeyEvent',{type:'keyDown',key:value,code,windowsVirtualKeyCode:virtual,modifiers});await command('Input.dispatchKeyEvent',{type:'keyUp',key:value,code,windowsVirtualKeyCode:virtual,modifiers})};
     const anchorExpression="(()=>{const panel=document.getElementById('history-panel'),top=panel.getBoundingClientRect().top,row=[...panel.children].find(row=>row.dataset.id&&row.getBoundingClientRect().bottom>top);return row?{id:row.dataset.id,offset:top-row.getBoundingClientRect().top}:null})()";
     await evaluate("document.getElementById('btn-history').click()");await until("!document.getElementById('history-panel').hidden&&document.querySelectorAll('#history-panel [data-id]').length>=30");
     await evaluate("(()=>{const panel=document.getElementById('history-panel');panel.scrollTop=panel.scrollHeight*.35;panel.dispatchEvent(new WheelEvent('wheel',{deltaY:-1,bubbles:true}))})()");await sleep(100);
@@ -105,12 +106,48 @@ try {
     check('reading state stays out of saved chat metadata',await evaluate("Object.keys(JSON.parse(localStorage.getItem('qchat.chats')).current).every(key=>!/reading|scroll|anchor/i.test(key))"));
 
     if(!process.argv.includes('--reading-only')){
+      const draft='First native line\nSecond line 🦊\nLast line';
+      const holdReply=()=>evaluate(`(()=>{const scroller=${scroller};scroller.scrollTop=0;scroller.dispatchEvent(new WheelEvent('wheel',{deltaY:-1,bubbles:true}))})()`);
+      const atBottom=()=>evaluate(`(()=>{const scroller=${scroller};return scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<3})()`);
+      await holdReply();
+      await evaluate(`(()=>{const input=document.getElementById('prompt-input');input.value=${JSON.stringify(draft)};input.dispatchEvent(new Event('input'));input.focus();input.setSelectionRange(3,3)})()`);
+      await nativeKey('End','End',35,2);
+      check('native Ctrl+End first moves the composer caret without jumping',await evaluate(`document.activeElement.id==='prompt-input'&&document.activeElement.selectionStart===${draft.length}&&document.activeElement.selectionEnd===${draft.length}&&(${scroller}).scrollTop<3`));
+      await nativeKey('End','End',35,2);
+      check('native Ctrl+End at the composer end jumps and keeps the draft',await atBottom()&&await evaluate(`document.activeElement.id==='prompt-input'&&document.activeElement.value===${JSON.stringify(draft)}`));
+      await holdReply();await evaluate("document.getElementById('prompt-input').setSelectionRange(3,3)");
+      await nativeKey('End','End',35,10);
+      check('native Ctrl+Shift+End selects draft text without jumping',await evaluate(`document.activeElement.selectionStart===3&&document.activeElement.selectionEnd===${draft.length}&&document.activeElement.value===${JSON.stringify(draft)}&&(${scroller}).scrollTop<3`));
+      await evaluate("(()=>{const input=document.getElementById('prompt-input');input.value='';input.dispatchEvent(new Event('input'))})()");
+      await nativeKey('End','End',35,2);
+      check('native Ctrl+End in an empty composer jumps to the latest reply',await atBottom());
+      await evaluate("document.getElementById('btn-history').click()");await until("!document.getElementById('history-panel').hidden");
+      await evaluate("(()=>{const panel=document.getElementById('history-panel');panel.scrollTop=0;panel.dispatchEvent(new WheelEvent('wheel',{deltaY:-1,bubbles:true}));document.getElementById('prompt-input').focus()})()");
+      await nativeKey('End','End',35,2);
+      check('native Ctrl+End jumps History while keeping it open',await evaluate("(()=>{const panel=document.getElementById('history-panel');return !panel.hidden&&panel.scrollHeight-panel.scrollTop-panel.clientHeight<3})()"));
+      await key('f',{ctrlKey:true});await until("document.activeElement.id==='find-input'");
+      await evaluate("(()=>{const input=document.getElementById('find-input');input.value='Paragraph';input.dispatchEvent(new Event('input'));input.setSelectionRange(0,0)})()");await sleep(100);
+      await evaluate("(()=>{const panel=document.getElementById('history-panel');panel.scrollTop=0;panel.dispatchEvent(new WheelEvent('wheel',{deltaY:-1,bubbles:true}))})()");
+      await nativeKey('End','End',35,2);
+      check('native Ctrl+End keeps Find editing and its History position',await evaluate("document.activeElement.id==='find-input'&&document.activeElement.selectionStart===9&&document.activeElement.value==='Paragraph'&&document.getElementById('history-panel').scrollTop<3"));
+      await evaluate("document.getElementById('find-close').click()");await key('k',{ctrlKey:true});await evaluate("document.querySelector('#slash-menu [data-command=rename]').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))");
+      await until("!document.getElementById('rename-chat').hidden");
+      await evaluate("document.activeElement.setSelectionRange(0,0)");await nativeKey('End','End',35,2);
+      check('native Ctrl+End keeps Rename editing without saving',await evaluate("!document.getElementById('rename-chat').hidden&&document.activeElement.tagName==='INPUT'&&document.activeElement.selectionStart===document.activeElement.value.length&&JSON.parse(localStorage.getItem('qchat.chats')).current.title==='nav-a'"));
+      await nativeKey('Escape','Escape',27);await evaluate("document.getElementById('btn-history').click()");await until("document.getElementById('history-panel').hidden");
+      await holdReply();await evaluate("document.querySelector('#tabs .tab').focus()");
+      const focusedTab=await evaluate('document.activeElement.dataset.key');await nativeKey('End','End',35,2);
+      check('native Ctrl+End from multiple recent tabs keeps the focused tab',await atBottom()&&await evaluate(`document.querySelectorAll('#tabs .tab').length>1&&document.activeElement.dataset.key===${JSON.stringify(focusedTab)}&&JSON.parse(localStorage.getItem('qchat.chats')).current.key==='nav-a'`));
+      check('native jump shortcuts send no provider messages',await siteEvaluate('window.__navigationSendCount===0'));
+      await evaluate("(()=>{const input=document.getElementById('prompt-input');input.value='Draft nav-a';input.dispatchEvent(new Event('input'));input.focus()})()");
+    }
+
+    if(!process.argv.includes('--reading-only')){
       await evaluate("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{}}});window.nativeNavigationExec=document.execCommand;document.execCommand=function(command,...args){return command==='copy'?false:nativeNavigationExec.call(document,command,...args)}");
       await key('k',{ctrlKey:true});await evaluate("document.querySelector('#slash-menu [data-command=copy]').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))");
       await until("!document.getElementById('command-feedback').hidden");
       await evaluate("document.querySelector('#tabs .tab').focus()");
       const tabKeys=await evaluate("[...document.querySelectorAll('#tabs .tab')].map(tab=>tab.dataset.key)");
-      const nativeKey=async(value,code,virtual)=>{await command('Input.dispatchKeyEvent',{type:'keyDown',key:value,code,windowsVirtualKeyCode:virtual});await command('Input.dispatchKeyEvent',{type:'keyUp',key:value,code,windowsVirtualKeyCode:virtual})};
       await nativeKey('ArrowRight','ArrowRight',39);
       check('native arrows focus visible recent tabs while copy feedback shows',await evaluate(`document.activeElement?.dataset.key===${JSON.stringify(tabKeys[1])}&&document.activeElement.getClientRects().length>0&&JSON.parse(localStorage.getItem('qchat.chats')).current.key==='nav-a'`));
       await nativeKey('Home','Home',36);const atHome=await evaluate(`document.activeElement?.dataset.key===${JSON.stringify(tabKeys[0])}`);
@@ -139,6 +176,14 @@ try {
       const providerSendCount=await siteEvaluate('window.__navigationSendCount');
       check('native busy tabs retain keyboard focus but cannot activate',busyState.focused&&busyState.aria==='true'&&busyState.current===busyKey&&busyState.mode==='stop'&&providerSendCount===1,JSON.stringify({...busyState,providerSendCount}));
       await evaluate("document.getElementById('btn-send').click()");await until("document.getElementById('btn-send').dataset.mode==='send'");
+      const recallPrompt="(()=>{const chat=JSON.parse(localStorage.getItem('qchat.chats')).current;return chat.transcript.filter(item=>item.role==='user'&&item.text?.trim()).at(-1)?.text||chat.lastPrompt})()";
+      const ownPrompt=await evaluate(recallPrompt);
+      await evaluate("(()=>{const input=document.getElementById('prompt-input');input.value='';input.dispatchEvent(new Event('input'));input.focus()})()");await nativeKey('ArrowUp','ArrowUp',38);
+      check('native recall uses the current chat after a cancelled send',await evaluate(`document.getElementById('prompt-input').value===${JSON.stringify(ownPrompt)}`));
+      const nextChat=fixtures.find(chat=>chat.key!==busyKey).key;await switchTo(nextChat);
+      const nextPrompt=await evaluate(recallPrompt);
+      await evaluate("(()=>{const input=document.getElementById('prompt-input');input.value='';input.dispatchEvent(new Event('input'));input.focus()})()");await nativeKey('ArrowUp','ArrowUp',38);
+      check('native recall stays in the selected chat after switching',await evaluate(`document.getElementById('prompt-input').value===${JSON.stringify(nextPrompt)}`));
       const shots=path.join(root,'.tmp','navigation-shots');await mkdir(shots,{recursive:true});await writeFile(path.join(shots,'native-navigation.png'),Buffer.from((await command('Page.captureScreenshot',{format:'png'})).data,'base64'));
     }
     check('native navigation has no runtime exceptions',problems.length===0,problems.join(' | '));
