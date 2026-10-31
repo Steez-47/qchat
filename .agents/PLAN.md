@@ -25,7 +25,7 @@ Current portable checkpoint: dist/overnight/20261101-034957-18cf484/QChat.exe (s
 | O17 | Save the open conversation as Markdown | Terra high + root, companion Claude review | UI/native export and tests | done - final UI20/native19/Rust31 PASS; Copy25/17 UI regressions/native24+9+6+guest10 verified; reviewed, release staging next |
 | O18 | Recall, attachment Undo and keyboard interactions | companion Claude after Terra audit, root review/native | UI and interaction tests | done - 6ab3e48 integrated; identity regression reproduced and fixed;15 companion +9 root UI suites and native24 PASS |
 | O19 | Retry file preparation without reattaching | Terra high + root, Claude cross-family review | UI/mock/staging regressions and native harness | done - UI42/native18 PASS; cleanup/quota review findings reproduced/fixed, related suites PASS; release awaits O20 |
-| O20 | Preserve edits made during a pending provider change | Terra medium + root | provider draft lifecycle/tests | starting - root probe reproduces4 failures: newer text/caret, deletion, New chat reset and new quoted context; isolated implementation next |
+| O20 | Preserve edits made during a pending provider change | Terra medium + root | provider draft lifecycle/tests | running - root mock and native baselines each reproduce4 failures; worker prototype needs focused tests and serial acceptance before integration |
 
 Verification uses isolated headless browsers and hidden native profiles. Build to a separate executable; do not replace dist/QChat.exe while the owner's instance is running. Each completed feature gets its own commit. Free provider failures will be recorded; no claims of exhaustive edge-case coverage.
 
