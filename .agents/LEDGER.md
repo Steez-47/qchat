@@ -84,3 +84,19 @@
 2026-10-31 | Draft recovery retry | codex/gpt-6.1-terra high | implemented | browser draft/UX/copy checks PASS; parent native restart and cross-family review next
 2026-10-31 | Draft recovery review | antigravity/gemini-4-argon medium | done | 3 low findings; parent fixed timer cleanup and startup filtering and extended lifecycle/stop tests
 2026-10-31 | Draft recovery integration | parent | done | draft29, native persistence6, copy25, UX/provider PASS; rebuilt debug native; PID34592 untouched
+2026-10-31 | Find in conversation | codex/gpt-6.1-terra high | running | ui/app.js, ui/app.css, tools/find-ui-test.mjs reserved; external merges must wait for this increment
+2026-10-31 | Find first attempt | codex/gpt-6.1-terra high | incomplete, 0 edits | inspected only; route bounded UI implementation to authorized Gemini Argon
+2026-10-31 | O6 integration | companion Claude + parent | done | 584a441 and 6e84bdb fast-forwarded by companion; parent chat-undo22 PASS; Find worker steered to preserve undo and prioritize Find Escape
+2026-10-31 | Independent baseline checks | parent | pass | Rust26 (1 ignored), auth17, stream-media75, stream-text, response-tags, highlight and interactive unit checks; UI-only edits do not invalidate unchanged inputs
+2026-10-31 | O6 undo chat removal (Claude thread) | codex/gpt-6.1-terra high | done after one re-brief | first run 0 edits; parent fixed Ctrl+Z in search fields; chat-undo, feature, ux, copy, history, draft PASS
+2026-10-31 | Audit (Claude thread) | opencode/deepseek-v4.1-flash-free high | failed at start, about 1s, no report | rerouted to antigravity/gemini-4-argon medium, done: 6 bugs, 4 features
+2026-10-31 | O7 audit bug fixes (Claude thread) | codex/gpt-6.1-terra high | done | parent found the cancelled-turn fix was undone by retireTurn and the test missed it; fixed, test proven failing on the old code
+2026-10-31 | Find UI attempt | antigravity/gemini-4-argon medium | failed: Usage Limit Reached | tool reported reset in 5 days 18 hours; no retry in that window
+2026-10-31 | Search test-quality review | codex/gpt-6.1-terra medium | done | parent fixed wired-prompt fixture, real CDP editing/undo coverage, CSS paint claim and CDP endpoint ownership validation
+2026-10-31 | O8 paste anywhere (Claude thread) | codex/gpt-6.1-terra medium | done after one re-brief | first run left code uncommitted and no test; 17 checks, media, draft, feature, ux PASS; branch t3/paste-anywhere-popup 1ceada0, merge waits for O5
+2026-10-31 | Routing note | codex/gpt-6.1-terra | pattern | 3 of 4 first runs in this lane plus 1 in the other ended early with partial status and no blocker; a direct follow-up in the same child thread completed each one so far. Always check for a commit before trusting status
+2026-11-01 | Search matcher | codex/gpt-6.1-terra high | done | ui/find-text.js and Node literal/Unicode index checks
+2026-11-01 | Search UI integration | parent | implemented | find45 and native8 PASS; dark/light/narrow and native screenshots inspected; serial regressions in progress
+2026-11-01 | Search implementation review | codex/gpt-6.1-terra medium | done | sole hidden-display finding disproved by existing glass.css [hidden] !important; added actual computed-display/rect checks
+2026-11-01 | Search final integration | parent | done | matcher, find47, native8, nine serial regression suites PASS; sibling-boundary optimization measured 38ms on 3500-paragraph fixture
+2026-11-01 | Shared audit fixes | companion Claude | integrated | 651f337 and 17a552b preserved; browser test count updated for Copy/Find, no assertion weakened

@@ -8,8 +8,10 @@ Goal: add useful compact features, refine and test each one, commit locally, the
 | O2 | Read-only UX and reliability audit for next increments | Gemini Argon medium | report only | done |
 | O3 | Integrate, independently verify, review and commit O1 | parent | integration, logs | done |
 | O4 | Recover unsent drafts across reload and quit | Terra high + parent, Argon review | ui/app.js, tools/draft-ui-test.mjs, tools/persist-e2e.mjs | done |
-| O5 | Find text in long conversations | Terra high + parent | ui/app.js, ui/app.css, tools/find-ui-test.mjs | next |
-| O6 | Reversible local chat removal | companion Claude thread | separate worktree/branch | external lane |
+| O5 | Find text in long conversations | Terra matcher, parent UI/integration, Terra review | ui/find*.js, ui/app.*, ui/index.html, tools/find* | done |
+| O6 | Reversible local chat removal | companion Claude thread | ui/app.js, tools/chat-undo-ui-test.mjs | done - integrated 6e84bdb |
+| O7 | Paste anywhere in popup | companion Claude thread | branch t3/paste-anywhere-popup, 1ceada0 | peer verified; waiting to integrate after O5 |
+| O8 | Edit and resend messages | companion Claude thread | separate worktree | in progress per coordination note |
 
 Verification uses isolated headless browsers and hidden native profiles. Build to a separate executable; do not replace dist/QChat.exe while the owner's instance is running. Each completed feature gets its own commit. Free provider failures will be recorded; no claims of exhaustive edge-case coverage.
 
@@ -18,6 +20,10 @@ DeepSeek and GLM both returned Free usage limit reached before doing work. Owner
 O1 verification: conversation-copy UI 25 checks PASS, feature UI, history UI, response-tag UI, provider UI and UX regression suites PASS. Mock screenshot inspected. Copies all received streaming text, resolves citations/layout tags, keeps code/Unicode/selections and named attachment hints, and handles reduced-history metadata, clipboard rejection and async chat switches. Ctrl+K preserves drafts and selection while recognized slash prefixes are consumed. Gemini's six review findings resolved or covered; feedback is intentionally a brief nonmodal notice. No real OS clipboard/account test; running app untouched. Separate local build follows later increments.
 
 O4 verification: draft UI 29 checks PASS; native persistence 6 checks PASS on a freshly rebuilt debug app, including real Quit/restart of an isolated WebView2 profile with multiline Unicode draft and restored height. UX/copy/provider suites PASS. Argon review found timer cleanup, startup fallback slash filtering and coverage gaps; all fixed or tested. Draft writes coalesce at 250ms, lifecycle events flush, sends clear saved drafts, and early failures/stops restore only if no newer edit/deletion. Temporary and history-disabled privacy tested. Unrelated running PID34592 and dist/QChat.exe preserved. Immediate crashes inside the debounce interval are not a durability guarantee.
+
+O5 verification: find UI 47 checks and native WebView2 8 checks PASS, plus matcher unit checks. History, draft, copy, undo, features, UX, glass, animation and ui-bugfix suites all PASS sequentially. Updated the glass suite's explicit command list for Copy/Find while retaining all geometry assertions. All/current CSS ranges resolve citations-free visible text across inline formatting/code, preserve DOM/selection and streaming scroll, and survive account refresh/provider/menu changes. Escape/native text undo coexist with O6. Native endpoint ownership is verified before CDP attaches; no account messages or OS clipboard/input used. Dark/light narrow and native screenshots inspected. Large 3500-paragraph fixture searched in 38ms after removing quadratic sibling scans; pending-mutation navigation regression fixed. Terra implementation review's sole hidden-display concern was disproved by glass.css line 31 and reinforced with actual computed display/rect assertions. Production EXE build remains for the integrated batch.
+
+Coordination: 651f337 and 17a552b audit fixes are already on the shared branch and preserved. Root keeps O4/O5; companion owns O6 onward. Browser/native suites now run one at a time, per owner instruction. O5 leaves app.js clean after its commit so the companion can rebase and integrate O7/O8 safely.
 
 Next sequence in this checkout: draft recovery, then find-in-conversation. Owner's coordination note assigns O6 and later increments to the companion Claude thread in a separate worktree; do not duplicate O6 or touch that worktree. Integrate its verified commits only with clean affected files. Keep each increment separately verified and committed.
 
@@ -391,3 +397,9 @@ Native worker owned surfaces.rs; parent owns UI/settings and integration. Focuse
 Selection verification: focused browser27, native IPC/settings9, Rust21 (one desktop fixture ignored), media, Snapshot, animation, history, feature, glass, presets and UX suites PASS. Selection screenshot inspected. Fresh reviewer found uncapped selection arrays in storage recovery; capped them and preserved original account-message matching with regression coverage. UX migration checks now compare with QSettings.VERSION after concurrent schema-v5 change. Explicit Ctrl+C fixture safely SKIPPED because the current clipboard has unmaterializable OLE virtual-file data; no input/clipboard writes were performed. Global cross-app hotkey/elevated-app capture remains unverified. Existing process PID3616/profile preserved.
 
 Selection release: npm run build PASS; dist/QChat.exe SHA256 DBDEFC4A6A6A9FF581DAA51155008E14858BAD2B5B1EB059DA9F3C46B8FD5A7D matches compiled release. PID3616 remains running with its original session; quit from tray and reopen dist/QChat.exe to load the update. No account messages sent.
+
+## Parallel lane (Claude thread, 2026-10-31)
+
+Owner asked this thread to work with the Overnight App Feature Polishing thread under the same rules. That thread keeps O4 and O5 in the root checkout; this one uses worktrees and fast-forwards feat/overnight-iteration.
+O6 undo for chat removal and /clear: done (6e84bdb). O7 audit bug fixes: done; stop before first token, Retry on attachment turns (the dead button is no longer shown), multiline recall, History media, reply after DOM fallback open, settings section search. Headless browser suites only; live WebView2 not exercised. Suites flake when several Edge instances run at once, so run them one at a time.
+Next: O8 paste anywhere; O9 edit and resend.

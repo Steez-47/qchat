@@ -681,6 +681,18 @@ html[data-motion="off"] .bubble-response { transition: none; }
 /* History: the live bubbles, continued upwards. The panel bleeds into the window
    gutters so shadows are never clipped and bubbles keep their exact live position. */
 .history-controls { position: relative; z-index: 3; display: flex; justify-content: center; gap: 6px; pointer-events: none; }
+.history-controls[data-finding] > :not(.find-bar) { display: none; }
+.find-bar { display: flex; align-items: center; gap: 4px; box-sizing: border-box; width: min(var(--bar-w), 100%); min-width: 0; padding: 3px 6px; border-radius: 999px; pointer-events: auto; }
+#find-input { flex: 1; min-width: 0; width: 0; height: 26px; padding: 0 5px; border: 0; outline: none; border-radius: 8px; background: transparent; color: var(--text-1); font: inherit; font-size: 12px; }
+#find-input::placeholder { color: var(--text-3); }
+#find-input::-webkit-search-cancel-button { display: none; }
+#find-count { flex: none; min-width: 26px; color: var(--text-2); font-size: 11px; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
+.find-nav { flex: none; display: inline-flex; justify-content: center; align-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-2); font: inherit; font-size: 16px; cursor: pointer; }
+.find-nav:hover:not(:disabled), .find-nav:active:not(:disabled) { background: var(--fill-2); color: var(--text-1); }
+.find-nav:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
+.find-nav:disabled { opacity: .4; cursor: default; }
+::highlight(qchat-find) { background-color: rgb(var(--accent-rgb) / .22); color: var(--text-1); }
+::highlight(qchat-find-current) { background-color: rgb(var(--accent-rgb) / .55); color: var(--text-1); text-decoration: underline; }
 .stack:not([data-history]) #btn-all-chats { display: none; }
 .stack[data-history] > .history-controls { position: absolute; top: 4px; left: 0; right: 0; }
 .history-button {

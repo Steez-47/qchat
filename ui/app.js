@@ -420,6 +420,13 @@
   const isStreaming = () => turns.some((t) => t.status === "streaming");
   const isBusy = () => sending || isStreaming() || switchingProvider;
   const stopBackend = () => invoke("chat_stop").catch(() => {});
+  const finder = window.QFind.create({
+    panel: el.historyPanel, controls: el.historyControls,
+    onOpen: () => { setHistoryOpen(true); historyHeld = true; },
+    onClose: () => el.promptInput.focus({ preventScroll: true }),
+    onHold: () => { historyHeld = true; },
+    onLayout: queueSizes
+  });
 
   function make(tag, className, text) {
     const node = document.createElement(tag);
@@ -775,6 +782,7 @@
   }
 
   function setHistoryOpen(open) {
+    if (!open) finder.close({ focus: false });
     if (open === historyOpen) return;
     const panel = el.historyPanel;
     el.historyButton.setAttribute("aria-expanded", String(open));
@@ -2236,6 +2244,7 @@
   }
 
   function dismissExchange(immediate = false) {
+    finder.close({ focus: false, reset: true });
     hideCommandFeedback();
     clearTimeout(autoDismissTimer);
     autoDismissTimer = null;
@@ -2680,6 +2689,7 @@
     { name: "hide", icon: GLYPH.hide, desc: () => "Hide QChat", run: () => invoke("hide_main").catch(() => {}) }
   ];
   COMMANDS.push(
+    { name: "find", icon: GLYPH.clock, desc: () => "Find in conversation", run: openFind },
     { name: "copy", icon: GLYPH.copy, desc: () => "Copy conversation", run: copyConversation },
     {name:"chatgpt", icon:GLYPH.account, desc:()=>"Switch to ChatGPT", run:()=>chooseProvider("chatgpt")},
     {name:"gemini", icon:GLYPH.account, desc:()=>"Switch to Gemini", run:()=>chooseProvider("gemini")},
@@ -2700,6 +2710,7 @@
       let hotkey = "Alt+Q"; try { hotkey = await invoke("get_hotkey") || hotkey; } catch (_) {}
       let selectionKey = "Ctrl+Alt+Q"; try { selectionKey = await invoke("get_selection_hotkey"); } catch (_) {}
       const shortcuts = [[selectionKey || "Disabled", "Ask about selection"], [hotkey, "Show QChat"], [QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter", "Send"], ["Shift+Enter", "New line"], ["Esc", "Close"], ["Ctrl+N", "New chat"], ["Ctrl+K", "Menu"], ["Ctrl+P", "Chats"], ["Ctrl+.", "Stop"], ["ArrowUp / ArrowDown", "Recall prompts"], ["Paste / drop", "Attach files"]];
+      shortcuts.splice(8, 0, ["Ctrl+F", "Find in conversation"], ["F3 / Shift+F3", "Next / previous match"]);
       showFeatureList("Keyboard shortcuts", shortcuts.map(([key, action]) => ({ keys: key, title: action })));
     } }
   );
@@ -2747,6 +2758,7 @@
     el.promptInput.focus();
   }
   function showFeatureList(title, rows, searchable = false, anchor = null) {
+    finder.close({ focus: false });
     cancelModelRequest();
     closeSlashMenu();
     clearTimeout(featureListHideTimer);
@@ -2877,12 +2889,22 @@
     closeFeatureList();
   });
   window.addEventListener("keydown", e => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") { e.preventDefault(); e.stopImmediatePropagation(); openFind(); return; }
+    if (finder.isOpen && e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); finder.close(); return; }
+    if (finder.isOpen && e.key === "F3") { e.preventDefault(); e.stopImmediatePropagation(); finder.move(e.shiftKey ? -1 : 1); return; }
     if (!e.isComposing && e.keyCode !== 229 && e.key === "Escape" && pendingChatUndo.length) { e.stopImmediatePropagation(); e.preventDefault(); dismissChatUndo(); return; }
-    if (!e.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "z" && pendingChatUndo.length && !(document.activeElement?.matches("input, textarea") && document.activeElement.value)) { e.preventDefault(); e.stopImmediatePropagation(); void undoChatChange(); return; }
+    if (!e.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "z" && pendingChatUndo.length && document.activeElement !== finder.input && !(document.activeElement?.matches("input, textarea") && document.activeElement.value)) { e.preventDefault(); e.stopImmediatePropagation(); void undoChatChange(); return; }
     if (e.key === "Escape" && !featureList.hidden) { e.stopImmediatePropagation(); e.preventDefault(); closeFeatureList(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); showChatList(); }
   }, true);
   let slashMatches = [];
+  function openFind() {
+    if (!historyItems().some(item => String(item.text || "").trim())) { showCommandFeedback("No messages to search yet."); return; }
+    closeSlashMenu(); hideClearConfirm();
+    if (!featureList.hidden) closeFeatureList();
+    finder.open();
+  }
   let slashIndex = 0;
 
   const slashOpen = () => !el.slashMenu.hidden;
@@ -2918,6 +2940,7 @@
     let matches = query === null ? [] : COMMANDS.filter((c) => c.name !== activeProvider && c.name.startsWith(query));
     if (commandMenu) matches = COMMANDS.filter(c => c.name !== activeProvider);
     if (!matches.length) { if (slashOpen()) closeSlashMenu(); return; }
+    finder.close({ focus: false });
     const wasOpen = slashOpen();
     const previous = slashMatches.map((c) => c.name).join(",");
     slashMatches = matches;
@@ -3297,7 +3320,7 @@
   el.btnAllChats.addEventListener("click", () => showChatList(el.btnAllChats));
   el.historyPanel.addEventListener("scroll", () => {
     syncHistoryEdge();
-    if (el.historyPanel.scrollHeight - el.historyPanel.scrollTop - el.historyPanel.clientHeight <= 2) historyHeld = false;
+    if (!finder.isOpen && el.historyPanel.scrollHeight - el.historyPanel.scrollTop - el.historyPanel.clientHeight <= 2) historyHeld = false;
   }, { passive: true });
   el.historyPanel.addEventListener("wheel", (e) => { if (e.deltaY < 0) historyHeld = true; }, { passive: true });
   el.historyPanel.addEventListener("pointerdown", () => { historyHeld = true; });

@@ -8,6 +8,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - Type `/` for commands, or press **Ctrl+K** for the menu. Drag the orb to move QChat.
 - **Ctrl+P** or `/chats` searches every saved chat. Up to 3 recent chats sit as tabs on the bar.
 - `/copy` copies the current conversation as Markdown, including quoted selections and source links. Ctrl+K opens commands while keeping your draft.
+- **Ctrl+F** or `/find` searches the whole open conversation. Enter or F3 moves to the next match; add Shift to move back. Escape closes search and keeps the conversation open.
 - Unsent drafts recover after a reload or restart when local history is enabled. Temporary chats keep their drafts out of saved history.
 - `/model` picks a ChatGPT model on a signed-in account. `/temp` starts a temporary chat that isn't saved.
 - Hover a reply to copy it, retry it or open it in ChatGPT. Up arrow recalls earlier prompts.
@@ -49,6 +50,8 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/feature-ui-test.mjs`: menus, model picker, chat search, tabs, the shortcuts card and temporary chats.
 - `node tools/conversation-copy-ui-test.mjs`: conversation copying, clipboard failures, draft selection, streaming and provider isolation.
 - `node tools/draft-ui-test.mjs`: draft recovery, send failures, privacy and pending writes across chat/provider changes.
+- `node tools/find-text-test.mjs` and `node tools/find-ui-test.mjs`: literal Unicode search, inline/code ranges, keyboard navigation, streaming and menu/undo interactions.
+- `node tools/find-native-test.mjs`: search and highlight rendering in an isolated hidden native app. Requires a debug build.
 - `node tools/math-ui-test.mjs`: maths rendering in replies.
 - `node tools/highlight-test.mjs`: code highlighting round trip, token typing and speed. Plain Node, no browser.
 - `node tools/surfaces-native-test.mjs`: blur and click-through surfaces, shortcut validation and autostart. Requires a debug build.
