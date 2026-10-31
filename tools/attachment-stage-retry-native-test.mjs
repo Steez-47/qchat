@@ -129,6 +129,16 @@ try{
   check('native provider switch keeps the in-flight retrying file',await main.evaluate("!!document.querySelector('[aria-label=\"Remove portable-retry.bin\"]')&&document.getElementById('prompt-input').value==='Native busy fixture only'")&&(await uploads()).some(file=>file.id===portableId));
   await release(true);await waitFor(ready,'portable Retry ready');files=await uploads();
   check('native Retry completes exact bytes after switching providers',files.length===1&&files[0].id===portableId&&files[0].name==='portable-retry.bin'&&files[0].bytes.equals(expected));
+  await main.evaluate("document.querySelector('#attachments .attachment-chip:not(.selection-chip) button[aria-label^=Remove]').click()");await waitFor(async()=>(await uploads()).length===0,'portable file removed');
+  await main.evaluate("(async()=>{const invoke=window.__TAURI__.core.invoke;const generation=(await invoke('launch_info')).uploadGeneration;window.__quotaIds=[];for(let i=0;i<32;i++){const file=await invoke('attachment_begin',{name:'quota-'+i+'.bin',mime:'application/octet-stream',size:1,uploadGeneration:generation});__quotaIds.push(file.id);await invoke('attachment_chunk',{id:file.id,offset:0,data:'AA=='});await invoke('attachment_finish',{id:file.id})}})()");
+  await addFile('quota.bin',1);
+  await waitFor(()=>main.evaluate("!!document.querySelector('#attachments [data-state=error]')&&document.getElementById('command-feedback').textContent.includes('Attachment cache is full. Start a new chat to clear it.')"),'native quota guidance');
+  check('native full staging quota gives the specific recovery guidance',(await uploads()).length===32);
+  await writeFile(path.join(shots,'native-cache-full340.png'),Buffer.from((await main.send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+  await main.evaluate("window.__TAURI__.core.invoke('attachment_remove',{id:window.__quotaIds[0]})");
+  await main.evaluate(`(${retry}).click()`);await waitFor(ready,'Retry after freeing quota');files=await uploads();
+  const quotaFile=files.find(file=>file.name==='quota.bin');
+  check('native preparation Retry recovers when capacity becomes available',files.length===32&&quotaFile?.bytes.length===1&&quotaFile.bytes[0]===0);
   check('native file preparation Retry has no runtime exceptions',problems.length===0,problems.join(' | '));
 }catch(error){console.error('FAIL harness ::',error.message);failed++}
 finally{

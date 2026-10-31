@@ -140,6 +140,22 @@ try {
   await setup();await fault('attachment_chunk',{failOn:[2]});await fault('attachment_remove',{failOn:[1],holdOn:[2]});await add('warning.bin',524311);await wait(err);await click(retry);await wait('__mock.attachmentFaults.attachment_remove.release');
   await evalJS(`__mock.emit('qchat://selection-error','Keep this unrelated warning');__mock.attachmentFaults.attachment_remove.release()`);await wait(ready);
   check('successful cleanup preserves a newer unrelated warning',await evalJS(`!document.getElementById('global-error').hidden&&document.getElementById('global-error-text').textContent.includes('Keep this unrelated warning')`));
+  await setup();await fault('attachment_chunk',{failOn:[2]});await fault('attachment_remove',{failOn:[1]});await add('queued-leak.bin',524311);await wait(err);
+  const leakedId=await evalJS(`Array.from(__mock.attachmentFiles.keys())[0]`);await fault('attachment_begin',{holdOn:[1]});await add('leak-blocker.bin',24);await wait('__mock.attachmentFaults.attachment_begin.release');await click(retry);
+  await click(`document.querySelector('[aria-label="Remove queued-leak.bin"]')`);await evalJS('__mock.attachmentFaults.attachment_begin.release()');await add('leak-barrier.bin',26);await wait(`document.querySelectorAll('#attachments [data-state=ready]').length===2`);
+  check('removing a queued retry reattempts failed old cleanup',await evalJS(`!__mock.attachmentFiles.has(${JSON.stringify(leakedId)})&&__mock.count('attachment_remove')===2`));
+  for(const raw of [false,true]) {
+    await setup();await fault('attachment_begin',{failOn:[1],message:'Attachment cache is full. Start a new chat to clear it.',raw});await add('quota.bin',17);await wait(err);
+    check('cache-full '+(raw?'native string':'Error')+' gives recovery guidance',await evalJS(`document.getElementById('command-feedback').textContent.includes('Attachment cache is full. Start a new chat to clear it.')`));
+  }
+  await setup();await fault('attachment_begin',{failOn:[1],message:'UNTRUSTED_NATIVE_DETAIL'});await add('generic-error.bin',17);await wait(err);
+  check('unknown native details stay out of the file error UI',await evalJS(`!document.body.textContent.includes('UNTRUSTED_NATIVE_DETAIL')`));
+  for(const action of ['remove','new']) {
+    await setup();await fault('attachment_begin',{failOn:[1],holdOn:[1],message:'Attachment cache is full. Start a new chat to clear it.',raw:true});await add('late-quota.bin',17);await wait('__mock.attachmentFaults.attachment_begin.release');
+    if(action==='remove')await click(`document.querySelector('[aria-label="Remove late-quota.bin"]')`);else await evalJS(`__mock.emit('qchat://new-chat',{})`);
+    await evalJS('__mock.attachmentFaults.attachment_begin.release()');await add('late-quota-barrier.bin',19);await wait(ready);
+    check(action+' suppresses obsolete cache guidance from a cancelled file',await evalJS(`document.getElementById('command-feedback').hidden||!document.getElementById('command-feedback').textContent.includes('cache is full')`));
+  }
   await setup();await fault('attachment_begin',{failOn:[1],holdOn:[2]});await add('failed-switch.bin',35);await wait(err);await type('keep failed-switch draft');await click(retry);await wait(`__mock.attachmentFaults.attachment_begin.release`);
   await evalJS('__mock.failProvider=true');await key('k',{ctrlKey:true});await evalJS(`document.getElementById('slash-gemini').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))`);await wait(`document.body.textContent.includes("Couldn't switch providers")`);
   await evalJS('__mock.attachmentFaults.attachment_begin.release()');await sleep(80);

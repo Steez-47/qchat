@@ -1349,6 +1349,7 @@
   // 6. Attachments & media
   // ---------------------------------------------------------------------------
   const CHUNK_SIZE = 512 * 1024;
+  const ATTACHMENT_CACHE_FULL = "Attachment cache is full. Start a new chat to clear it.";
   const MAX_BYTES = 512 * 1024 * 1024;
   const fileSize = bytes => bytes < 1048576 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
   function imagePreview(file) {
@@ -1444,11 +1445,17 @@
     el.promptInput.focus();
     el.promptInput.setSelectionRange(start, end, direction);
     stageQueue = stageQueue.then(async () => {
-      if (item.cancelled || !pendingFiles.includes(item)) return;
+      if (item.cancelled || !pendingFiles.includes(item)) {
+        if (item.cancelled) await discardAttachment(item);
+        return;
+      }
       // Preparation is local and can continue through a provider change.
       if (sending || isStreaming()) { item.state = "error"; renderAttachments(); return; }
       await discardAttachment(item);
-      if (item.cancelled || !pendingFiles.includes(item)) return;
+      if (item.cancelled || !pendingFiles.includes(item)) {
+        if (item.cancelled) await discardAttachment(item);
+        return;
+      }
       if (sending || isStreaming() || (item.id && !item.discarded)) { item.state = "error"; renderAttachments(); return; }
       item.id = null; item.offset = 0; item.discarded = false;
       await stageAttachment(item);
@@ -1492,8 +1499,9 @@
         await invoke("attachment_finish", { id: item.id });
         item.state = "ready";
       }
-    } catch (_) {
+    } catch (error) {
       item.state = "error";
+      if (!item.cancelled && pendingFiles.includes(item) && String(error?.message || error || "").includes(ATTACHMENT_CACHE_FULL)) showCommandFeedback(ATTACHMENT_CACHE_FULL);
       await discardAttachment(item);
     } finally {
       if (item.cancelled) await discardAttachment(item);

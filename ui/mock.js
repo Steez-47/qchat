@@ -124,7 +124,10 @@
           if (fault) {
             const n = fault.calls = (fault.calls || 0) + 1;
             if (fault.holdOn?.includes(n)) await new Promise(resolve => { fault.release = resolve; });
-            if (fault.failOn?.includes(n)) throw new Error("Mock attachment failure");
+            if (fault.failOn?.includes(n)) {
+              const message = fault.message || "Mock attachment failure";
+              throw fault.raw ? message : new Error(message);
+            }
           }
         }
         switch (cmd) {
