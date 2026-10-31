@@ -7,9 +7,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const exe = path.join(root, 'src-tauri', 'target', 'debug', 'qchat.exe');
+const exe = process.env.QCHAT_SURFACES_EXE || path.join(root, 'src-tauri', 'target', 'debug', 'qchat.exe');
 const port = 9338;
 const marker = 'qchat_persist_test=1';
+const draft = 'Unsent draft 🌏\nSecond line with Māori text.\n```js\nconst value = 42;\n```';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const profile = mkdtempSync(path.join(tmpdir(), 'qchat-persist-'));
 
@@ -35,7 +36,7 @@ async function evaluate(page, expression) {
   return d.result?.result?.value;
 }
 function start() {
-  return spawn(exe, [], { env: { ...process.env, QCHAT_DEBUG_PORT: String(port), QCHAT_TEST_MODE: '1', QCHAT_TEST_PROFILE: profile }, stdio: 'ignore' });
+  return spawn(exe, [], { env: { ...process.env, QCHAT_DEBUG_PORT: String(port), QCHAT_TEST_MODE: '1', QCHAT_TEST_PROFILE: profile }, stdio: 'ignore', windowsHide: true });
 }
 async function portClosed() {
   for (let i = 0; i < 40; i++) {
@@ -45,9 +46,12 @@ async function portClosed() {
   return false;
 }
 
-let app = start();
+let app;
 let ok = false;
 try {
+  const occupied = await fetch(`http://127.0.0.1:${port}/json`, { signal: AbortSignal.timeout(1000) }).then(() => true, () => false);
+  if (occupied) throw new Error('Persistence test debug port is already in use');
+  app = start();
   let { ui, gpt } = await pages();
   // CDP lists a target before its initial navigation is finished. Writing then
   // can set the cookie on a document that ChatGPT immediately replaces.
@@ -60,11 +64,18 @@ try {
   const written = await evaluate(gpt, `document.cookie = "${marker}; Secure; Path=/; Max-Age=86400"; document.cookie.includes('${marker}')`);
   if (!written) throw new Error('Persistence marker was not written');
   await evaluate(ui, `QSettings.save({...QSettings.settings,defaultReasoning:'high'}); true`);
-  await sleep(1000);
+  const entered = await evaluate(ui, `(()=>{const input=document.getElementById('prompt-input');input.value=${JSON.stringify(draft)};input.dispatchEvent(new Event('input',{bubbles:true}));return input.value===${JSON.stringify(draft)}})()`);
+  let stored = false;
+  for (let i = 0; i < 30 && !stored; i++) {
+    stored = await evaluate(ui, `JSON.parse(localStorage.getItem('qchat.chats')||'null')?.current?.draft===${JSON.stringify(draft)}`);
+    if (!stored) await sleep(100);
+  }
+  console.log(`${entered && stored ? 'PASS' : 'FAIL'} unsent draft reaches native profile storage`);
   const exited = new Promise(r => app.once('exit', r));
   evaluate(ui, `window.__TAURI__.core.invoke('quit_app')`).catch(() => {});
   await Promise.race([exited, sleep(15000)]);
-  console.log(`${app.exitCode === 0 ? 'PASS' : 'FAIL'} Quit exits cleanly (code ${app.exitCode})`);
+  const cleanExit = app.exitCode === 0;
+  console.log(`${cleanExit ? 'PASS' : 'FAIL'} Quit exits cleanly (code ${app.exitCode})`);
   const closed = await portClosed();
   console.log(`${closed ? 'PASS' : 'FAIL'} WebView2 shut down`);
 
@@ -76,13 +87,18 @@ try {
   console.log(`${kept ? 'PASS' : 'FAIL'} profile data survives Quit and restart`);
   const reasoningKept = await evaluate(ui, `QSettings.load().defaultReasoning==='high'`);
   console.log(`${reasoningKept ? 'PASS' : 'FAIL'} default reasoning survives Quit and restart`);
-  ok = kept && reasoningKept && closed;
+  const draftKept = await evaluate(ui, `(()=>{const input=document.getElementById('prompt-input');return input?.value===${JSON.stringify(draft)}&&input.clientHeight>parseFloat(getComputedStyle(input).lineHeight)*2})()`);
+  console.log(`${draftKept ? 'PASS' : 'FAIL'} multiline Unicode draft and composer height survive Quit and restart`);
+  ok = entered && stored && cleanExit && kept && reasoningKept && draftKept && closed;
 } catch (e) {
   console.log('FAIL harness ::', e.message);
 } finally {
-  if (app.pid && app.exitCode === null) spawnSync('taskkill.exe', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  if (app?.pid && app.exitCode === null) spawnSync('taskkill.exe', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
   await sleep(1500);
-  try { rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch {}
+  const resolved = path.resolve(profile);
+  if (path.dirname(resolved) === path.resolve(tmpdir()) && path.basename(resolved).startsWith('qchat-persist-')) {
+    try { rmSync(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch {}
+  }
 }
 console.log(ok ? 'ALL PASS' : 'FAILED');
 process.exit(ok ? 0 : 1);

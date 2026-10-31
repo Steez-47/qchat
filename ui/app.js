@@ -1086,8 +1086,8 @@
     pendingFiles.push(...files);
     renderAttachments();
     chats.current.provider = provider;
-    chats.current.draft = draft;
     el.promptInput.value = draft;
+    chats.current.draft = draftValue();
     saveChats(); autoResizePrompt(); updateComposerMode();
   }
   function switchProviderRows() {
@@ -1113,6 +1113,7 @@
   }
 
   function saveChats() {
+    cancelDraftSave();
     if (!QSettings.settings.keepHistory) {
       try { localStorage.removeItem(CHATS_KEY); } catch (_) {}
       return;
@@ -2321,6 +2322,31 @@
     queueSizes();
   }
 
+  let draftSaveTimer = null;
+  let draftEditRevision = 0;
+  function draftValue() {
+    const value = el.promptInput.value;
+    return /^\/\S*$/.test(value) && COMMANDS.some(c => c.name.startsWith(value.slice(1).toLowerCase())) ? "" : value;
+  }
+  function cancelDraftSave() {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+  }
+  function updateDraft(edited = false) {
+    if (edited) draftEditRevision++;
+    chats.current.draft = draftValue();
+    cancelDraftSave();
+    draftSaveTimer = setTimeout(() => { draftSaveTimer = null; saveChats(); }, 250);
+  }
+  function flushDraft() {
+    if (draftSaveTimer === null) return;
+    cancelDraftSave();
+    saveChats();
+  }
+  window.addEventListener("pagehide", flushDraft);
+  window.addEventListener("blur", flushDraft);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) flushDraft(); });
+
   const IMAGE_PROMPT = /^(?:please\s+)?(?:generate|create|draw|paint|render|make|design)\b[\s\S]{0,100}\b(?:image|picture|photo|illustration|artwork|portrait)\b/i;
 
   async function sendPrompt(rawPrompt, { fromInput = false, selectionTexts = fromInput ? chats.current.selectionTexts.slice() : [] } = {}) {
@@ -2335,8 +2361,11 @@
     sentReasoning = reasoningEffort;
     const generation = chatGeneration;
     const draft = el.promptInput.value;
+    const revision = draftEditRevision;
     const restoreDraft = () => {
-      if (fromInput && !el.promptInput.value) { el.promptInput.value = draft; autoResizePrompt(); }
+      if (fromInput && revision === draftEditRevision && generation === chatGeneration && chats.current === chat && !el.promptInput.value) {
+        el.promptInput.value = draft; autoResizePrompt(); updateDraft(); cancelDraftSave(); saveChats();
+      }
     };
 
     hideGlobalError();
@@ -2349,6 +2378,7 @@
 
     const userTurn = { id: crypto.randomUUID(), role: "user", text: prompt, selectionTexts, selectionMatch: selectionTexts.length ? selectionMatch(wirePrompt(prompt, selectionTexts)) : undefined, status: "done", chatKey: chat.key, attachments: files.map((f) => ({ name: f.file.name, size: f.file.size, previewURL: imagePreview(f.file) })) };
     const assistantTurn = { id: crypto.randomUUID(), role: "assistant", text: "", status: "streaming", prompt, selectionTexts, hadAttachments: files.length > 0, chatKey: chat.key };
+    assistantTurn.restoreDraft = restoreDraft;
     if (IMAGE_PROMPT.test(prompt)) assistantTurn.imageProgress = { state: "generating", phase: "preparing" };
 
     turns.push(userTurn, assistantTurn);
@@ -2370,9 +2400,8 @@
     rememberTurn(userTurn);
     rememberTurn(assistantTurn);
     chat.lastActive = Date.now();
+    if (fromInput) { cancelDraftSave(); el.promptInput.value = ""; chat.draft = ""; autoResizePrompt(); }
     saveChats();
-
-    if (fromInput) { el.promptInput.value = ""; chat.draft = ""; autoResizePrompt(); }
     updateGuestNotice();
     updateIdleChips();
     updateComposerMode();
@@ -2396,7 +2425,7 @@
       if (generation === chatGeneration && assistantTurn.status === "done" && !assistantTurn.text && !assistantTurn.media?.length) dismissExchange();
     } catch (err) {
       if (generation !== chatGeneration) return;
-      restoreDraft();
+      if (!assistantTurn.text && !assistantTurn.media?.length && !assistantTurn.cachedMedia) restoreDraft();
       if (assistantTurn.status === "done" && !assistantTurn.text && !assistantTurn.media?.length) {
         retireTurn(userTurn, true);
         retireTurn(assistantTurn, true);
@@ -2428,7 +2457,7 @@
       if (!t.text && !t.media?.length) {
         // Nothing arrived, so there is no reply to keep: restore the prompt and
         // remove the empty exchange instead of leaving a completed-looking one.
-        if (!el.promptInput.value) { el.promptInput.value = t.prompt || ""; autoResizePrompt(); }
+        t.restoreDraft?.();
         if (t.selectionConsumed) {
           chats.current.selectionTexts.unshift(...t.selectionTexts);
           t.selectionConsumed = false;
@@ -2458,7 +2487,7 @@
 
   async function startNewChat(notifyBackend = true) {
     if (isStreaming()) await stopStreaming();
-    chats.current.draft = el.promptInput.value;
+    chats.current.draft = draftValue();
     for (const t of turns) recordPartial(t);
     chatGeneration++;
     sending = false;
@@ -2578,7 +2607,7 @@
     const now = Date.now();
     const target = chats.recent[index];
     const previous = chats.current;
-    previous.draft = el.promptInput.value;
+    previous.draft = draftValue();
     chats.recent.splice(index, 1);
     if (hasContent(previous) && !previous.temporary) { previous.lastActive = now; chats.recent.unshift(previous); }
     chats.recent = chats.recent.slice(0, MAX_RECENT);
@@ -2887,6 +2916,7 @@
     if (!commandMenu || commandText) el.promptInput.value = "";
     closeSlashMenu();
     autoResizePrompt();
+    updateDraft();
     cmd.run();
   }
 
@@ -3241,6 +3271,7 @@
     const chip = e.target.closest("[data-suggestion]");
     if (!chip) return;
     el.promptInput.value = chip.dataset.suggestion;
+    updateDraft(true);
     autoResizePrompt();
     updateIdleChips();
     el.promptInput.focus();
@@ -3249,6 +3280,7 @@
   });
 
   el.promptInput.addEventListener("input", () => {
+    updateDraft(true);
     recallIndex = -1;
     commandMenu = false;
     autoResizePrompt();
@@ -3286,7 +3318,7 @@
       e.preventDefault();
       recallIndex = e.key === "ArrowUp" ? Math.min(prompts.length - 1, recallIndex + 1) : Math.max(-1, recallIndex - 1);
       el.promptInput.value = recallIndex < 0 ? "" : prompts[prompts.length - 1 - recallIndex] || "";
-      autoResizePrompt(); return;
+      updateDraft(true); autoResizePrompt(); return;
     }
     if (slashOpen()) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -3523,6 +3555,7 @@
         const turn = evt.id ? turns.find((t) => t.id === evt.id) : null;
         if (turn?.status === "streaming" && !turn.backendDone) {
           flushReveal(turn);
+          if (!turn.text && !turn.media?.length && !turn.cachedMedia) turn.restoreDraft?.();
           turn.status = "error";
           turn.code = evt.code;
           turn.error = formatErrorCopy(evt.code, evt.message);
@@ -3543,7 +3576,7 @@
   listen("qchat://selection", ({ payload }) => {
     if (typeof payload !== "string" || !payload.trim()) return;
     chats.current.selectionTexts.push(payload);
-    chats.current.draft = el.promptInput.value;
+    chats.current.draft = draftValue();
     hideGlobalError();
     saveChats();
     renderAttachments();
@@ -3600,7 +3633,7 @@
         const draft = el.promptInput.value;
         await startNewChat(false);
         el.promptInput.value = draft;
-        chats.current.draft = draft;
+        chats.current.draft = draftValue();
         saveChats(); autoResizePrompt(); updateComposerMode();
         showGlobalError(null, `Couldn't load ${restored === "gemini" ? "Gemini" : "ChatGPT"}. Using ${providerName()} for now.`);
       }

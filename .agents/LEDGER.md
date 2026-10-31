@@ -79,3 +79,8 @@
 2026-10-31 | Overnight copy tests | codex/gpt-6.1-terra medium | partial | initial 8 pass/3 fail; parent fixed stale success and textarea selection, extended to 25 passing checks
 2026-10-31 | Overnight review and audit | antigravity/gemini-4-argon medium | done | 6 copy findings resolved; next features draft recovery, find, undo local removal
 2026-10-31 | Overnight copy integration | parent | done | copy25, feature/history/tag/provider/UX suites PASS; screenshot inspected; no real clipboard or account writes
+2026-10-31 | Draft recovery | codex/gpt-6.1-terra medium | running | ui/app.js and tools/draft-ui-test.mjs only
+2026-10-31 | Draft recovery first attempt | codex/gpt-6.1-terra medium | incomplete, 0 edits | inspection only; resend with explicit persistence and race contract at high effort
+2026-10-31 | Draft recovery retry | codex/gpt-6.1-terra high | implemented | browser draft/UX/copy checks PASS; parent native restart and cross-family review next
+2026-10-31 | Draft recovery review | antigravity/gemini-4-argon medium | done | 3 low findings; parent fixed timer cleanup and startup filtering and extended lifecycle/stop tests
+2026-10-31 | Draft recovery integration | parent | done | draft29, native persistence6, copy25, UX/provider PASS; rebuilt debug native; PID34592 untouched
