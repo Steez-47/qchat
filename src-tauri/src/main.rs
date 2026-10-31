@@ -590,7 +590,26 @@ fn chat_list_conversations(app: tauri::AppHandle, offset: u32) -> Result<(), Str
     eval(&app,&format!("window.__qchat && window.__qchat.listConversations({offset})"))
 }
 #[tauri::command]
-fn chat_status(app: tauri::AppHandle) -> Result<(), String> {
+fn chat_status(app: tauri::AppHandle, reconnect: Option<bool>, provider: Option<String>) -> Result<(), String> {
+    if reconnect == Some(true) {
+        let target = {
+            let state = app.state::<Host>();
+            let mut a = state.0.lock().unwrap();
+            if a.flight_id.is_some() { return Err("busy: A request is already in progress".into()); }
+            if provider.as_ref().is_some_and(|expected| expected != &a.active) {
+                return Err("provider_mismatch: Active provider changed".into());
+            }
+            let target = a.active.clone();
+            let page = a.providers.get_mut(&target).unwrap();
+            page.loaded = Instant::now(); page.heard = false; page.retries = 0;
+            target
+        };
+        resume_provider(&app, &target);
+        // Reload the same provider URL. New chat would clear staged draft files
+        // and detach the page from the UI's current conversation.
+        return app.get_webview_window(&target).ok_or("Provider window unavailable")?
+            .reload().map_err(|_| "Could not reload the provider".into());
+    }
     for provider in ["chatgpt", "gemini"] {
         if let Some(w) = app.get_webview_window(provider) {
             let _ = w.eval("if (window.__qchat) window.__qchat.status(); else if (window.__QCHAT_EMIT__) window.__QCHAT_EMIT__({type:'status',ready:false,loggedIn:false});");
@@ -852,7 +871,7 @@ fn main() {
      // the system's default spot its home.
      if !own && w.is_visible().unwrap_or(false) { capture_anchor(w.app_handle()); }
    }
-   if let tauri::WindowEvent::CloseRequested{api,..}=e { api.prevent_close(); if w.label()=="main" { hide_main(w.app_handle().clone()); } else { background_provider(w.app_handle(),w.label()); let _=chat_status(w.app_handle().clone()); } }
+   if let tauri::WindowEvent::CloseRequested{api,..}=e { api.prevent_close(); if w.label()=="main" { hide_main(w.app_handle().clone()); } else { background_provider(w.app_handle(),w.label()); let _=chat_status(w.app_handle().clone(),None,None); } }
  })
  .run(tauri::generate_context!()).expect("QChat runtime failed");
 }

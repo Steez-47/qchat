@@ -11,6 +11,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - **Ctrl+Shift+C** copies the latest reply or selected composer/reply text. **Ctrl+Shift+X** copies its last code block.
 - **Ctrl+F** or `/find` searches the whole open conversation. Enter or F3 moves to the next match; add Shift to move back. Escape closes search and keeps the conversation open.
 - Unsent drafts recover after a reload or restart when local history is enabled. Temporary chats keep their drafts out of saved history.
+- A connection error retries when the network returns or QChat regains focus, keeping the draft, staged files and current conversation. Try again is available for manual recovery.
 - `/model` picks a ChatGPT model on a signed-in account. `/temp` starts a temporary chat that isn't saved.
 - Hover a reply to copy it, retry it or open it in ChatGPT. Up arrow recalls earlier prompts.
 - Your prompts have Copy and Edit in composer actions. Editing loads the prompt and quoted selections so you can revise and send it; reattach files when needed. Ctrl+Z recovers a draft replaced by an edit.
@@ -70,6 +71,7 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/gemini-bridge-test.mjs`: Gemini sending, streaming and Markdown conversion on synthetic pages.
 - `node tools/provider-ui-test.mjs`: provider picker, switching, per-chat providers and startup settings.
 - `node tools/provider-native-test.mjs`: Gemini window creation, provider routing and the startup flag, without writing the real startup entry. Requires a debug build.
+- `node tools/reconnect-native-test.mjs`: hidden provider reload and simulated offline recovery, retained draft files and native busy/provider guards. Uses a disposable guest profile and sends no messages.
 - `node tools/live/gemini-guest-check.mjs`: off-screen chat checks against Gemini as a guest. Requires a debug build.
 - `node tools/persist-e2e.mjs`: checks native profile, settings and multiline draft recovery after Quit and restart.
 

@@ -218,7 +218,9 @@ try {
   check('finding 11 surface geometry intersects viewport and clipping ancestors',surfacesSource.includes('Math.min(innerWidth,b.right)') && surfacesSource.includes('parent=parent.parentElement'));
   check('finding 12 surfaces use Set membership and finite animation loops',surfacesSource.includes('new Set(nodes)') && surfacesSource.includes('iterations !== Infinity') && nativeSource.includes('Result<(), String>'));
   check('finding 13 autostart compares stored executable path',nativeSource.includes("parse_autostart(") && nativeSource.includes("eq_ignore_ascii_case("));
-  check('finding 14 reconnect navigates signed-in unready page',appSource.includes('bridge.loggedIn && !bridge.ready ? "chat_new" : "chat_status"'));
+  const hostSource=await readFile(path.join(root,'src-tauri/src/main.rs'),'utf8');
+  const reconnectSource=hostSource.match(/fn chat_status\([\s\S]*?(?=#\[tauri::command\])/)?.[0]||'';
+  check('finding 14 reconnect reloads the provider without clearing uploads',appSource.includes('invoke("chat_status", { reconnect: true, provider: activeProvider })')&&reconnectSource.includes('.reload()')&&!reconnectSource.includes('media::clear'));
   check('finding 15 quota trims oldest entries without erasing all recents',appSource.includes('while (recent.length > 1)') && !appSource.includes('current.transcript.slice(-2) }, recent: []'));
   check('no runtime errors', problems.length === 0, problems.slice(0, 3).join(' | '));
 } catch (e) {

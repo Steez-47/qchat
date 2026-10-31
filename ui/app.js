@@ -3184,7 +3184,9 @@
     // the bridge still reads as ready, so every attempt ends on its own.
     clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(endReconnectAttempt, CONNECT_DEADLINE);
-    invoke(bridge.loggedIn && !bridge.ready ? "chat_new" : "chat_status").catch(endReconnectAttempt).finally(() => { reconnectInvokePending = false; });
+    bridge.ready = false;
+    paintStatusDot(); updateComposerMode();
+    invoke("chat_status", { reconnect: true, provider: activeProvider }).catch(endReconnectAttempt).finally(() => { reconnectInvokePending = false; });
     armConnectDeadline();
   }
 

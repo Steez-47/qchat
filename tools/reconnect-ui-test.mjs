@@ -112,6 +112,9 @@ try {
   check('ready clears error with feedback', await evalJS(`document.getElementById('global-error').hidden&&document.getElementById('command-feedback').textContent.includes('Reconnected')`));
   check('draft and attachment preserved', await evalJS(`document.getElementById('prompt-input').value==='my draft'&&document.getElementById('attachments').textContent.includes('x.txt')`));
   check('no prompt sent', await count('chat_send')===0);
+  await start();
+  await evalJS(`window.recoveryArgs=[];window.beforeSignedRecovery=__TAURI__.core.invoke;__TAURI__.core.invoke=(command,args)=>{if(command==='chat_status'&&args?.reconnect)recoveryArgs.push(args);return beforeSignedRecovery(command,args)};__mock.emit('bridge',{type:'status',ready:false,loggedIn:true});window.dispatchEvent(new Event('online'))`);
+  check('signed-in recovery reloads its provider without New chat',await evalJS(`attempts.length===1&&attempts[0]==='chat_status'&&recoveryArgs[0].provider==='chatgpt'&&__mock.count('chat_new')===0&&document.getElementById('btn-send').disabled`));
   await start(); await evalJS(`window.rejectAttempt=true;window.dispatchEvent(new Event('online'))`); await sleep(20);
   check('failed attempt retains error', await evalJS(`!document.getElementById('global-error').hidden`));
   await evalJS(`window.rejectAttempt=false;offset+=3001;window.dispatchEvent(new Event('online'))`);
