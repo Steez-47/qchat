@@ -1157,6 +1157,14 @@
     saveChats();
   }
 
+  function confirmClearChats() {
+    chats.current.draft = el.promptInput.value;
+    const snapshot = { type: "clear", current: structuredClone(chats.current), recent: structuredClone(chats.recent) };
+    clearRecentChats();
+    snapshot.clearedKey = chats.current.key;
+    offerChatUndo(snapshot);
+  }
+
   function clearRecentChats() {
     chats.recent = [];
     dismissExchange();
@@ -2834,7 +2842,7 @@
   }
 
   function chatRows() {
-    const local = chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: (chat.provider !== activeProvider ? `${providerName(chat)} · ` : "") + elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { chats.recent = chats.recent.filter(c => c.key !== chat.key); saveChats(); renderTabs(); featureList._repaint?.(); } }));
+    const local = chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: (chat.provider !== activeProvider ? `${providerName(chat)} · ` : "") + elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { const index = chats.recent.findIndex(c => c.key === chat.key); if (index < 0) return; offerChatUndo({ type: "remove", chat: structuredClone(chats.recent[index]), index }); chats.recent.splice(index, 1); saveChats(); renderTabs(); featureList._repaint?.(); } }));
     const known = new Set([chats.current.conversationId, ...chats.recent.filter(chat => chat.provider === activeProvider).map(chat => chat.conversationId)]);
     const account = accountChats.items.filter(item => !known.has(item.id)).map(item => ({ title: item.title || "Untitled chat", meta: item.updated ? elapsedLabel(item.updated) : "", run: () => openAccountChat(item) }));
     return [...local, ...account];
@@ -2851,6 +2859,8 @@
     closeFeatureList();
   });
   window.addEventListener("keydown", e => {
+    if (!e.isComposing && e.keyCode !== 229 && e.key === "Escape" && pendingChatUndo.length) { e.stopImmediatePropagation(); e.preventDefault(); dismissChatUndo(); return; }
+    if (!e.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "z" && pendingChatUndo.length && !(document.activeElement === el.promptInput && el.promptInput.value)) { e.preventDefault(); e.stopImmediatePropagation(); void undoChatChange(); return; }
     if (e.key === "Escape" && !featureList.hidden) { e.stopImmediatePropagation(); e.preventDefault(); closeFeatureList(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); showChatList(); }
   }, true);
@@ -2860,7 +2870,7 @@
   const slashOpen = () => !el.slashMenu.hidden;
 
   function syncMenuFlag() {
-    const away = slashOpen() || !el.clearConfirm.hidden;
+    const away = slashOpen() || !el.clearConfirm.hidden || !!document.querySelector("#command-feedback:not([hidden])");
     if (away) el.stack.dataset.menu = ""; else delete el.stack.dataset.menu;
     el.stack.toggleAttribute("data-slash-menu", slashOpen());
   }
@@ -3077,17 +3087,95 @@
   commandFeedback.hidden = true;
   el.attachments.before(commandFeedback);
   let commandFeedbackTimer;
+  let undoExpiryTimer;
   let copyGeneration = 0;
+  let pendingChatUndo = [];
+  const sameChat = (a, b) => a.key === b.key || !!(a.conversationId && b.conversationId && a.provider === b.provider && a.conversationId === b.conversationId);
+  function paintChatUndo(message) {
+    clearTimeout(undoExpiryTimer);
+    pendingChatUndo = pendingChatUndo.filter(item => item.expires > Date.now());
+    if (!pendingChatUndo.length) {
+      commandFeedback.hidden = true;
+    } else {
+      const latest = pendingChatUndo[pendingChatUndo.length - 1];
+      commandFeedback.replaceChildren(document.createTextNode(message || (latest.type === "clear" ? "Chats cleared" : "Chat removed")));
+      const button = make("button", "btn", "Undo");
+      button.type = "button";
+      button.addEventListener("click", () => void undoChatChange());
+      commandFeedback.append(button);
+      commandFeedback.hidden = false;
+      undoExpiryTimer = setTimeout(() => paintChatUndo(), Math.max(1, Math.min(...pendingChatUndo.map(item => item.expires)) - Date.now()));
+    }
+    syncMenuFlag();
+    queueSizes();
+  }
+  function offerChatUndo(snapshot) {
+    clearTimeout(commandFeedbackTimer);
+    snapshot.expires = Date.now() + 6000;
+    pendingChatUndo = [...pendingChatUndo.filter(item => item.expires > Date.now()), snapshot].slice(-5);
+    paintChatUndo();
+  }
+  function dismissChatUndo() {
+    pendingChatUndo = [];
+    clearTimeout(undoExpiryTimer);
+    hideCommandFeedback();
+  }
+  async function undoChatChange() {
+    pendingChatUndo = pendingChatUndo.filter(item => item.expires > Date.now());
+    const item = pendingChatUndo.pop();
+    if (!item) { paintChatUndo(); return; }
+    const keep = QSettings.settings.keepHistory;
+    if (item.type === "remove") {
+      if (keep && !chats.recent.some(chat => sameChat(chat, item.chat)) && !sameChat(chats.current, item.chat)) {
+        chats.recent.splice(Math.min(item.index, chats.recent.length), 0, item.chat);
+      }
+    } else {
+      const unchanged = () => chats.current.key === item.clearedKey && !hasContent(chats.current) && !el.promptInput.value && !pendingFiles.length;
+      let restoreCurrent = !isBusy() && unchanged();
+      if (restoreCurrent && item.current.provider !== activeProvider) {
+        restoreCurrent = await setProvider(item.current.provider || "chatgpt") && unchanged() && !isBusy();
+      }
+      if (keep) {
+        const newer = chats.recent.slice();
+        const restored = item.recent.filter(chat => !newer.some(other => sameChat(chat, other)));
+        chats.recent = [...restored, ...newer];
+        if (!restoreCurrent && !isBusy() && !item.current.temporary && !chats.recent.some(chat => sameChat(chat, item.current)) && !sameChat(chats.current, item.current)) pushRecent(item.current);
+        if (!restoreCurrent && !isBusy() && hasContent(chats.current)) { chats.current.draft = el.promptInput.value; pushRecent(chats.current); }
+      }
+      if (restoreCurrent) {
+        dismissExchange(true);
+        chats.current = item.current;
+        setModeLabel(item.current.temporary ? "Temporary" : "");
+        setModelLabel("");
+        el.promptInput.value = item.current.draft || "";
+        renderAttachments(); autoResizePrompt(); setHistoryOpen(false);
+        showCachedResponse(item.current);
+        updateIdleChips(); updateComposerMode();
+      }
+    }
+    saveChats(); renderTabs(); featureList._repaint?.();
+    if (pendingChatUndo.length) paintChatUndo(keep ? undefined : "Chat could not be restored");
+    else if (!keep) showCommandFeedback("Chat could not be restored");
+    else paintChatUndo();
+  }
   function hideCommandFeedback() {
     copyGeneration++;
     clearTimeout(commandFeedbackTimer);
+    if (pendingChatUndo.length) { paintChatUndo(); return; }
     commandFeedback.hidden = true;
+    syncMenuFlag();
     queueSizes();
   }
   function showCommandFeedback(message) {
     clearTimeout(commandFeedbackTimer);
+    if (pendingChatUndo.length) {
+      paintChatUndo(message);
+      commandFeedbackTimer = setTimeout(() => paintChatUndo(), 2200);
+      return;
+    }
     commandFeedback.textContent = message;
     commandFeedback.hidden = false;
+    syncMenuFlag();
     queueSizes();
     commandFeedbackTimer = setTimeout(hideCommandFeedback, 2200);
   }
@@ -3375,7 +3463,7 @@
     el.promptInput.focus();
   });
   el.btnClearYes.addEventListener("click", () => {
-    clearRecentChats();
+    confirmClearChats();
     hideClearConfirm();
     el.promptInput.focus();
   });
