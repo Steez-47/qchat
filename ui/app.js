@@ -3093,6 +3093,10 @@
   }
 
   let startupRead = false;
+  let reconnecting = false;
+  let reconnectInvokePending = false;
+  let reconnectHadError = false;
+  let lastReconnectAttempt = 0;
   function updateStatusHeader({ ready, loggedIn, signedOut }) {
     bridge.ready = Boolean(ready);
     bridge.loggedIn = Boolean(loggedIn);
@@ -3105,7 +3109,12 @@
     if (bridge.ready) {
       clearTimeout(connectTimer);
       connectTimer = null;
-      if (connectErrorShown) hideGlobalError();
+      if (connectErrorShown) {
+        hideGlobalError();
+        if (reconnecting && reconnectHadError) showCommandFeedback("Reconnected");
+      }
+      reconnecting = false;
+      reconnectHadError = false;
     }
     updateGuestNotice();
     updateComposerMode();
@@ -3117,7 +3126,9 @@
     if (bridge.ready) return;
     connectTimer = setTimeout(() => {
       connectTimer = null;
-      if (!bridge.ready) showGlobalError("offline");
+      reconnecting = false;
+      reconnectHadError = false;
+      if (!bridge.ready && (el.globalError.hidden || connectErrorShown)) showGlobalError("offline");
     }, CONNECT_DEADLINE);
   }
 
@@ -3140,7 +3151,7 @@
 
   function showGlobalError(code, message) {
     el.globalErrorText.textContent = formatErrorCopy(code, message);
-    const retry = code === "offline";
+    const retry = code === "offline" || code === "not_ready";
     el.btnErrorSignin.hidden = !(code === "auth" || retry);
     el.btnErrorSignin.textContent = retry ? "Try again" : "Sign in";
     el.btnErrorSignin.dataset.action = retry ? "retry-connect" : "signin";
@@ -3161,6 +3172,26 @@
     paintStatusDot();
     queueSizes();
   }
+
+  function recoverConnection(minInterval = 0) {
+    if (isBusy() || reconnecting || reconnectInvokePending || (!el.globalError.hidden && !connectErrorShown) || Date.now() - lastReconnectAttempt < minInterval) return;
+    lastReconnectAttempt = Date.now();
+    reconnecting = true;
+    reconnectInvokePending = true;
+    reconnectHadError = connectErrorShown;
+    invoke(bridge.loggedIn && !bridge.ready ? "chat_new" : "chat_status").catch(() => {
+      reconnecting = false;
+      reconnectHadError = false;
+    }).finally(() => { reconnectInvokePending = false; });
+    armConnectDeadline();
+  }
+
+  window.addEventListener("online", () => {
+    if (connectErrorShown || !bridge.ready) recoverConnection(3000);
+  });
+  window.addEventListener("focus", () => {
+    if (connectErrorShown) recoverConnection(15000);
+  });
 
   const openSignin = () => invoke("show_signin", {provider: activeProvider}).catch(() => {});
 
@@ -3711,9 +3742,7 @@
   });
   el.btnErrorSignin.addEventListener("click", () => {
     if (el.btnErrorSignin.dataset.action === "retry-connect") {
-      hideGlobalError();
-      invoke(bridge.loggedIn && !bridge.ready ? "chat_new" : "chat_status").catch(() => {});
-      armConnectDeadline();
+      recoverConnection();
       el.promptInput.focus();
       return;
     }
@@ -3942,9 +3971,11 @@
     el.promptInput.focus();
     refreshTheme();
     renderTabs();
-    if (connectErrorShown) hideGlobalError();
-    invoke("chat_status").catch(() => {});
-    armConnectDeadline();
+    if (connectErrorShown) recoverConnection(15000);
+    else if (el.globalError.hidden && !isBusy()) {
+      invoke("chat_status").catch(() => {});
+      armConnectDeadline();
+    }
     // The first placement can use a stale size. Settle it now, not on the first click.
     lastFit = { width: 0, height: 0 };
     queueSizes();
