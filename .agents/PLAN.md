@@ -1,3 +1,9 @@
+## v1.2.0: one picker, tab logos, Gemini images (2026-10-31, branch feat/v1.2)
+
+Owner asked for the provider button to become the reasoning/model picker, provider logos on recent tabs, and Gemini images, then v1.2.0. Publication authorized. Provider switching stays as the picker's last row plus /gemini and /chatgpt. Gemini's guest menu holds a model list with descriptions and no separate level control; the bridge reads a titled reasoning group generically if a signed-in menu has one, synthetic only.
+Image cause: linked images were dropped as decorative, and gstatic thumbnails were refused by native and the CSP. Sweep found a real intermittent bug: Gemini's guest log-in dialog swallowed Send (about 1 in 5 runs of tools/live/gemini-app-e2e.mjs). The bridge dismisses such nudges and re-clicks only while the prompt is still in the composer and no turn started; 10 of 10 after the fix.
+Verified: Rust 26; 29 suites PASS first time, interactive UI, settings-e2e passing on rerun (ERR_NO_BUFFER_SPACE, one page-init race); app-e2e known guest Stop failure only. Real guest reply image naturalWidth 678. Screenshots of both panels and tabs reviewed. Not verified signed in: generated images, Copy and Save on them, any level control, model switching on a paid account.
+
 ## v1.1: open at startup + Gemini (2026-10-31, branch feat/v1.1)
 
 Owner away for hours, no questions. Publishing not authorized: build and verify locally, no push or release.

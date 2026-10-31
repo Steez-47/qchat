@@ -26,6 +26,7 @@ try {
   for (let i = 0; i < 80 && !list.some(p => p.url.includes('tauri.localhost')); i++) { list = await targets(); await sleep(500); }
   const ui = cdp(list.find(p => p.url.includes('tauri.localhost')).webSocketDebuggerUrl); await ui.ready;
   check('Gemini page not loaded until needed', !list.some(p => p.url.includes('gemini.google.com')));
+  await ui.evaluate(`window.__errs=[];window.__TAURI__.event.listen('bridge',e=>{if(e.payload.type==='error')window.__errs.push(e.payload)});const __inv=window.__TAURI__.core.invoke;1`);
   const slash = async name => { await ui.evaluate(`(()=>{const t=document.getElementById('prompt-input');t.value='/${name}';t.dispatchEvent(new Event('input',{bubbles:true}));t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));})()`); };
   const label = () => ui.evaluate(`document.querySelector('#btn-provider span')?.textContent || document.querySelector('#btn-reasoning')?.textContent || ''`);
   const status = () => ui.evaluate(`document.getElementById('status-label').textContent`);
@@ -37,7 +38,7 @@ try {
   check('model picker available on Gemini', await ui.evaluate(`!document.getElementById('btn-reasoning').hidden`));
   const ready = await waitReady(); check('Gemini bridge ready as guest', /Ready|Guest/.test(ready), ready);
   list = await targets(); check('exactly one Gemini page', list.filter(p => p.url.includes('gemini.google.com')).length === 1);
-  const lastTurn = `(()=>{const ts=[...document.querySelectorAll('#bubble-zone [data-role=assistant]')];const l=ts[ts.length-1];return l?{txt:l.querySelector('.turn-content')?.innerText||'',html:l.querySelector('.turn-content')?.innerHTML||'',err:!l.querySelector('.turn-error')?.hidden,streaming:l.dataset.status==='streaming',label:l.getAttribute('aria-label')}:null})()`;
+  const lastTurn = `(()=>{const ts=[...document.querySelectorAll('#bubble-zone [data-role=assistant]')];const l=ts[ts.length-1];return l?{txt:l.querySelector('.turn-content')?.innerText||'',html:l.querySelector('.turn-content')?.innerHTML||'',err:!!(l.querySelector('.turn-error')&&!l.querySelector('.turn-error').hidden),errText:l.querySelector('.turn-error')?.innerText||'',status:l.dataset.status||'',streaming:l.dataset.status==='streaming',label:l.getAttribute('aria-label')}:null})()`;
   const ask = async (q, stopEarly) => {
     await ui.evaluate(`(()=>{const t=document.getElementById('prompt-input');t.value=${JSON.stringify(q)};t.dispatchEvent(new Event('input',{bubbles:true}));t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));})()`);
     let stopped = false;
@@ -69,7 +70,7 @@ try {
   r = await ask('Remember the code word walnut. Reply with only: ok');
   check('second turn in the same chat', !r.err && r.txt.trim().length > 0, r.txt.slice(0, 40));
   r = await ask('What code word did I just give you? Reply with only that word.');
-  check('context carries across turns', /walnut/i.test(r.txt), r.txt.slice(0, 40));
+  check('context carries across turns', /walnut/i.test(r.txt), JSON.stringify({ text: r.txt.slice(0, 60), err: r.err, errText: r.errText, status: r.status, timeout: r.timeout, errs: await ui.evaluate(`window.__errs`), page: await (async () => { const g = (await targets()).find(p => p.url.includes('gemini.google.com')); const c = cdp(g.webSocketDebuggerUrl); await c.ready; const v = await c.evaluate(`({composer:document.querySelector('rich-textarea [contenteditable=true]')?.innerText.slice(0,70),users:document.querySelectorAll('user-query').length,replies:document.querySelectorAll('model-response').length,focus:document.hasFocus(),btn:[...document.querySelectorAll('button')].filter(b=>/send|stop/i.test(b.getAttribute('aria-label')||'')).map(b=>b.getAttribute('aria-label')+':'+b.disabled+':'+b.getAttribute('aria-disabled')),alerts:[...document.querySelectorAll('[role=alert],[role=dialog],mat-snack-bar-container')].map(x=>(x.innerText||'').slice(0,150))})`); c.close(); return v; })(), later: await (async () => { await sleep(15000); const later = await ui.evaluate(lastTurn); return { text: later?.txt.slice(0, 40), errText: later?.errText, status: later?.status }; })(), notice: await ui.evaluate(`document.getElementById('global-error-text').textContent`) }));
   r = await ask('Count from 1 to 400, one number per line.', true);
   check('stop ends the reply cleanly', !r.timeout);
   await sleep(1500);

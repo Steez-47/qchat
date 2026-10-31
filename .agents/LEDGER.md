@@ -70,3 +70,5 @@
 2026-10-31 | V1.1 review | codex/gpt-6.1-terra medium | partial coverage | 6 findings, 5 fixed, retry-during-sign-in rejected because sign-in clears background
 2026-10-31 | V1.1 audit | codex/gpt-6-luna medium stalled; antigravity/gemini-4-argon low done | 10 items, fixed by codex/gpt-6.1-sol medium
 2026-10-31 | V1.1 release build | parent | done | dist/v1.1.0 local only, not published
+2026-10-31 | V1.2 Gemini images | codex/gpt-6.1-sol medium | done | live guest image loaded; parent fixed guest dialog swallowing Send
+2026-10-31 | V1.2 picker and tab logos | codex/gpt-6.1-sol medium | done | screenshots reviewed by parent

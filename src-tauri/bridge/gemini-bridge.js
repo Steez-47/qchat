@@ -706,6 +706,35 @@
     }).filter(item => item.text || item.hasMedia);
   }
 
+  // Gemini can open a promo dialog (such as its guest log-in nudge) that silently swallows Send.
+  function dismissNudges() {
+    let dismissed = false;
+    for (const dialog of document.querySelectorAll('[role="dialog"], [role="alertdialog"], mat-dialog-container')) {
+      if (!shown(dialog)) continue;
+      const button = [...dialog.querySelectorAll('button')].find(node =>
+        /^(not now|no thanks|maybe later|got it|dismiss)$/i.test((node.innerText || node.textContent || '').trim()));
+      if (button) { button.click(); dismissed = true; }
+    }
+    return dismissed;
+  }
+
+  // A Send that did not take leaves the prompt in the composer and no new turn. Only then may it be
+  // clicked again, so one prompt can never be sent twice.
+  async function confirmSend(job, composer) {
+    for (let i = 0; i < 12 && active === job && !job.started && !job.cancelled; i++) {
+      await sleep(1500);
+      sampleDOM(job);
+      if (active !== job || job.started || job.cancelled) return;
+      dismissNudges();
+      await sleep(200);
+      sampleDOM(job);
+      if (active !== job || job.started || job.cancelled) return;
+      const button = find('send');
+      const pending = (composer.innerText || composer.value || composer.textContent || '').trim();
+      if (pending && button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') button.click();
+    }
+  }
+
   function dispatchClickSequence(node) {
     if (!node) return;
     const wasExpanded = node.getAttribute?.('aria-expanded');
@@ -871,6 +900,7 @@
         }
         if (active !== job || job.cancelled) return;
         if (!composer) { fail(job, 'not_ready', 'Composer did not appear within 15 seconds.'); return; }
+        dismissNudges();
         composer.focus?.();
         if (composer.tagName === 'TEXTAREA') {
           Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(composer, prompt);
@@ -893,6 +923,7 @@
             job.submitted = true;
             button.click();
             sampleDOM(job);
+            confirmSend(job, composer).catch(() => {});
             return;
           }
           const block = blocking();

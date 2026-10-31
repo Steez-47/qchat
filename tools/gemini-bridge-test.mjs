@@ -638,6 +638,27 @@ test('send rejects concurrent request with busy and reports stream_failed on emp
   assert.equal(emptyErr?.code, 'stream_failed');
 });
 
+test('a promo dialog that swallows Send is dismissed and the prompt sent exactly once', async () => {
+  const b = createBrowser({ ready: true, loggedIn: false });
+  let clicks = 0, sent = 0;
+  const notNow = makeEl('button', {}, [makeText('Not now')]);
+  const dialog = makeEl('div', { role: 'dialog' }, [makeText('Log in to access more features'), notNow]);
+  notNow.onClick = () => dialog.remove();
+  b.sendButton.onClick = () => {
+    if (++clicks === 1) { b.body.append(dialog); return; } // The first click only raises the nudge.
+    if (dialog.parentElement) return;
+    sent++;
+    b.setStop(true);
+  };
+  await b.api.send({ id: 'nudge-job', prompt: 'hello again' });
+  await b.tick(4000);
+  assert.equal(sent, 1, 'prompt reached the page once');
+  assert.ok(b.events.some(e => e.type === 'start' && e.id === 'nudge-job'), 'turn started');
+  assert.ok(!dialog.parentElement, 'dialog dismissed');
+  await b.tick(4000);
+  assert.equal(sent, 1, 'no repeat send once started');
+});
+
 test('quota banner triggers rate_limited error', async () => {
   const b = createBrowser({ ready: true });
   b.sendButton.onClick = () => {
