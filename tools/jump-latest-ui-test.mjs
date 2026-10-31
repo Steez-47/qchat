@@ -148,7 +148,8 @@ try {
   await setup(); await type('/rename'); await key('Enter'); await until(`!document.getElementById('rename-chat').hidden`, 'rename open');
   const renameBefore = await evalJS(`document.activeElement.value`);
   check('rename input keeps native shortcut and stays open', await evalJS(`document.activeElement.tagName==='INPUT'`) && !await shortcut() && await evalJS(`!document.getElementById('rename-chat').hidden&&document.activeElement.value===${JSON.stringify(renameBefore)}`));
-  await setup(); await evalJS(`document.querySelector('#tabs [data-key="b"]').focus()`);
+  await open('/?mock=1', { settings, chats: { v: 1, current: chat('a'), recent: [chat('b'), chat('c'), chat('d')] } }); await sleep(150);
+  await evalJS(`document.querySelector('#tabs [data-key="b"]').focus()`);
   const tabSends = await evalJS(`__mock.count('chat_send')`);
   const currentKey = await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).current.key`);
   await shortcut(); await sleep(80);

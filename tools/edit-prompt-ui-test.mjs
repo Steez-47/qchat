@@ -212,6 +212,14 @@ try {
   await setup(seed([user('s1','Shot prompt to edit'),assistant('s2','A reply')])); await history(); await sleep(400);
   await evalJS(`document.querySelector('.history-row[data-role="user"] [data-action="edit-prompt"]').click()`); await sleep(100);
   check('tools action still works after move',await value()==='Shot prompt to edit');
+  { const a=[user('a1','only in chat A')], b=[user('b1','only in chat B')];
+    await setup({v:1,current:{...chatSeed('chatA',{transcript:a}),transcript:a},recent:[{...chatSeed('chatB',{transcript:b}),transcript:b}]});
+    await evalJS(`window.__mock.reply='ok'`); await type('sent in chat A'); await key('Enter'); await sleep(300);
+    await type(''); await press('ArrowUp');
+    check('recall includes what was just sent here',await value()==='sent in chat A',await value());
+    await type(''); await evalJS(`document.querySelector('#tabs [data-key="chatB"]').click()`); await sleep(250);
+    await type(''); await press('ArrowUp');
+    check('recall stays inside the current chat',await value()==='only in chat B',await value()); }
   check('no runtime errors',problems.length===0,problems.slice(0,3).join(' | '));
 } catch (e) {
   console.error(e);

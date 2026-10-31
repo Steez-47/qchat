@@ -398,7 +398,6 @@
     attachments: $("attachments")
   };
 
-  const prompts = [];
   let recallIndex = -1;
   const turns = [];
   const turnNodes = new Map();
@@ -1257,7 +1256,7 @@
 
   function confirmClearChats() {
     chats.current.draft = el.promptInput.value;
-    const snapshot = { type: "clear", current: structuredClone(chats.current), recent: structuredClone(chats.recent) };
+    const snapshot = { type: "clear", current: structuredClone(chats.current), recent: structuredClone(chats.recent), stagedFiles: pendingFiles.length };
     clearRecentChats();
     snapshot.clearedKey = chats.current.key;
     offerChatUndo(snapshot);
@@ -2492,7 +2491,7 @@
     }
     if (isBusy() || (!prompt && !files.length && !selectionTexts.length)) return;
     const consumeDraft = fromInput || (retrying && el.promptInput.value === prompt);
-    prompts.push(prompt); recallIndex = -1;
+    recallIndex = -1;
     const chat = chats.current;
     readingPositions.delete(chat.key);
     const previousMeta = { title: chat.title, lastPrompt: chat.lastPrompt, lastHadAttachments: chat.lastHadAttachments, lastActive: chat.lastActive };
@@ -2726,7 +2725,7 @@
   let tabStopKey = null;
   el.tabs.addEventListener("keydown", (e) => {
     const tab = e.target.closest(".tab");
-    if (!tab || !el.tabs.contains(tab) || e.isComposing || e.keyCode === 229) return;
+    if (!tab || !el.tabs.contains(tab) || e.isComposing || e.keyCode === 229 || e.ctrlKey || e.metaKey || e.altKey) return;
     const tabs = [...el.tabs.querySelectorAll(".tab")];
     const index = tabs.indexOf(tab);
     let next = index;
@@ -3135,7 +3134,7 @@
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") { e.preventDefault(); e.stopImmediatePropagation(); openFind(); return; }
     if (finder.isOpen && e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); finder.close(); return; }
     if (finder.isOpen && e.key === "F3") { e.preventDefault(); e.stopImmediatePropagation(); finder.move(e.shiftKey ? -1 : 1); return; }
-    if (!e.isComposing && e.keyCode !== 229 && e.key === "Escape" && pendingChatUndo.length) { e.stopImmediatePropagation(); e.preventDefault(); dismissChatUndo(); return; }
+    if (!e.isComposing && e.keyCode !== 229 && e.key === "Escape" && pendingChatUndo.length && !slashOpen() && el.clearConfirm.hidden && renameForm.hidden) { e.stopImmediatePropagation(); e.preventDefault(); dismissChatUndo(); return; }
     if (!e.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "z" && pendingChatUndo.length && document.activeElement !== finder.input && document.activeElement !== renameInput && !(document.activeElement?.matches("input, textarea") && document.activeElement.value)) { e.preventDefault(); e.stopImmediatePropagation(); void undoChatChange(); return; }
     if (e.key === "Escape" && !featureList.hidden) { e.stopImmediatePropagation(); e.preventDefault(); closeFeatureList(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); showChatList(); }
@@ -3459,7 +3458,7 @@
         chats.recent.splice(Math.min(item.index, chats.recent.length), 0, item.chat);
       }
     } else {
-      const unchanged = () => chats.current.key === item.clearedKey && !hasContent(chats.current) && !el.promptInput.value && !pendingFiles.length;
+      const unchanged = () => chats.current.key === item.clearedKey && !hasContent(chats.current) && !el.promptInput.value && pendingFiles.length <= item.stagedFiles;
       let restoreCurrent = !isBusy() && unchanged();
       if (restoreCurrent && item.current.provider !== activeProvider) {
         restoreCurrent = await setProvider(item.current.provider || "chatgpt") && unchanged() && !isBusy();
@@ -3869,7 +3868,7 @@
   el.promptInput.addEventListener("keydown", (e) => {
     if (e.isComposing) return;
     const arrow = e.key === "ArrowUp" || e.key === "ArrowDown";
-    const recalled = !arrow ? [] : prompts.length ? prompts : chats.current.transcript.filter(item => item.role === "user" && item.text?.trim()).map(item => item.text);
+    const recalled = !arrow ? [] : chats.current.transcript.filter(item => item.role === "user" && item.text?.trim()).map(item => item.text);
     if (arrow && !recalled.length && chats.current.lastPrompt?.trim()) recalled.push(chats.current.lastPrompt);
     // A chat switch or restored draft changes the text without an input event;
     // only text that recall itself placed may be replaced by the next step.
