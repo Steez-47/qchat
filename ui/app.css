@@ -486,6 +486,7 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
 .attachment-status, .media-status { color: var(--text-2); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .attachment-status { flex: none; }
 .attachment-chip[data-state="error"] .attachment-status { color: var(--critical-text); flex: 1; }
+.attachment-chip[data-state="error"] [data-action="retry-attachment"] { flex: none; min-height: 26px; padding: 0 6px; }
 .attachment-thumbnail { width: 28px; height: 28px; object-fit: cover; border-radius: calc(var(--r-chip) - 2px); flex: none; }
 .attachments .image-copy { min-height: 28px; padding: 0 9px; font-size: 11px; margin-right: 2px; }
 
