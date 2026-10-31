@@ -254,7 +254,7 @@
   // Rich replies are stored as a layout language. The text says where each image goes, by search
   // query, and the message's component results hold the image for each query.
   function webImageToken(image, caption) {
-    const url = image?.content_url || image?.thumbnail_url;
+    const url = image?.thumbnail_url || image?.content_url;
     try { if (new URL(url).hostname !== 'images.openai.com') return ''; } catch (_) { return ''; }
     // Result titles are the source page's headline, so only the reply's own caption is shown.
     const label = String(caption || 'Image').replace(/[\[\]()\n]/g, ' ').trim().slice(0, 120);
@@ -284,8 +284,20 @@
         const refs = list ? queries(list) : [single];
         return `\uE200cite\uE202${refs.join('\uE202')}\uE201`;
       });
+      const attribute = (tag, name) => new RegExp(`\\b${name}="([^"]*)"`).exec(tag)?.[1];
+      out = out.replace(/<Link\b[^>]*?\/>/g, tag => {
+        const url = attribute(tag, 'url') || attribute(tag, 'href');
+        const label = attribute(tag, 'title') || url;
+        return url ? `[${label.replace(/[\[\]]/g, ' ')}](${url})` : (label || '');
+      });
+      out = out.replace(/<Link\b([^>]*)>([\s\S]*?)<\/Link>/g, (tag, attrs, words) => {
+        const url = attribute(attrs, 'url') || attribute(attrs, 'href');
+        return url ? `[${words.replace(/[\[\]]/g, ' ')}](${url})` : words;
+      });
+      out = out.replace(/<caption\b[^>]*>([\s\S]*?)<\/caption>/g, (_, words) => `\n\n*${words.trim()}*\n\n`);
       out = out.replace(/<title\b[^>]*>([\s\S]*?)<\/title>/g, '**$1** ').replace(/<divider\b[^>]*\/?>/g, '\n\n---\n\n');
-      out = out.replace(/<\/?(?:box|row|col|column|stack|grid|grid-item|text|icon|card|section)\b[^>]*>/g, '\n').replace(/<\/?[A-Z][A-Za-z]*\b[^>]*>/g, '');
+      // New components arrive over time. Any other tag is layout, never reading material: its words stay.
+      out = out.replace(/<\/?(?:box|row|col|column|stack|grid|grid-item|text|icon|card|section)\b[^>]*>/g, '\n').replace(/<\/?[a-zA-Z][\w-]*\b[^<>]*>/g, '');
       // Indentation here is only the layout's nesting; Markdown would read it as code.
       out = out.replace(/^[ \t]+/gm, '');
       out = out.replace(/(qchat-web:[\w-]+\))\s*\n+\s*(!\[)/g, '$1 $2');
@@ -331,6 +343,8 @@
       if (role === 'tool') { generated.push(...storedMedia(Array.isArray(message.content?.parts) ? message.content.parts : [], []).map(file => ({ ...file, before: true }))); continue; }
       if (role !== 'user' && role !== 'assistant') continue;
       if (role === 'assistant' && message.recipient && message.recipient !== 'all') continue;
+      // The site folds these away too: "I'll look that up" notes between tool calls.
+      if (role === 'assistant' && ((message.channel && message.channel !== 'final') || message.metadata?.is_thinking_preamble_message)) continue;
       const content = message.content;
       if (!content || !['text', 'multimodal_text'].includes(content.content_type)) continue;
       const parts = Array.isArray(content.parts) ? content.parts : [];

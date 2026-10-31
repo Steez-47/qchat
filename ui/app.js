@@ -75,13 +75,13 @@
 
     // Old saved replies can still hold the site's layout tags. Never reading material; their
     // words stay. Code spans and blocks do not come through here, so examples are untouched.
-    const LAYOUT_TAG = /<\/?(?:box|row|col|column|stack|grid|grid-item|text|title|divider|icon|card|section|[A-Z][A-Za-z]*)\b[^>]*>/g;
+    const LAYOUT_TAG = /<\/?(?:box|row|col|column|stack|grid|grid-item|text|title|caption|divider|icon|card|section|[A-Z][A-Za-z]*)\b[^>]*>/g;
     renderer.html = (token) => escapeHtml(String(typeof token === "string" ? token : (token?.text ?? "")).replace(LAYOUT_TAG, ""));
     renderer.image = (href, _title, text) => {
       const raw = typeof href === "string" ? href : href?.href;
       const label = escapeHtml(typeof text === "string" ? text : (href?.text || "Image"));
       const web = /^qchat-web:([\w-]+)$/.exec(String(raw || ""));
-      if (web) return `<span class="web-figure" data-web="${web[1]}" title="${label}"><span class="web-image"></span>${label && label !== "Image" ? `<span class="web-caption">${label}</span>` : ""}</span>`;
+      if (web) return `<span class="web-figure" data-web="${web[1]}"${label && label !== "Image" ? ` title="${label}"` : ""}><span class="web-image"></span>${label && label !== "Image" ? `<span class="web-caption">${label}</span>` : ""}</span>`;
       const url = sanitizeHref(raw);
       return url ? `<a href="${escapeHtml(url)}" rel="noopener noreferrer">${label || "Image source"}</a>`
         : `<button type="button" class="hyperlink-btn" data-action="view-media">${label || "Image"}</button>`;
@@ -183,7 +183,24 @@
     }
   }, { rootMargin: "600px" });
 
-  async function loadWebImage(figure) {
+  // The browser loads these directly, which is far quicker. The broker is the fallback.
+  function loadWebImage(figure) {
+    let url = null;
+    try {
+      const parsed = new URL(atob(figure.dataset.web.replace(/-/g, "+").replace(/_/g, "/")));
+      if (parsed.protocol === "https:" && parsed.hostname === "images.openai.com") url = parsed.href;
+    } catch (_) {}
+    if (!url) { void loadBrokeredImage(figure); return; }
+    const image = make("img");
+    image.alt = figure.title || "Image";
+    image.referrerPolicy = "no-referrer";
+    image.addEventListener("load", () => queueSizes());
+    image.addEventListener("error", () => { void loadBrokeredImage(figure); }, { once: true });
+    image.src = url;
+    figure.querySelector(".web-image")?.replaceChildren(image);
+  }
+
+  async function loadBrokeredImage(figure) {
     try {
       const meta = await invoke("media_load", { mediaId: `webimage:${figure.dataset.web}`, revision: 0 });
       if (!safeMediaSource(meta, "image")) throw new Error("Unsupported media");
@@ -1693,9 +1710,10 @@
     const chat = chats.current;
     if (turn.chatKey === chat.key && chat.conversationId && bridge.loggedIn && !chat.temporary) {
       turn.restored = true;
-      const read = () => { if (chats.current === chat && !isBusy()) { backfilled.delete(chat); backfillHistory(chat); } };
-      setTimeout(read, 1500);
-      if (turn.rich) setTimeout(read, 6000);
+      // Stops as soon as the bubble has been rebuilt from the record.
+      const read = () => { if (chats.current === chat && !isBusy() && turns.some(t => t.id === turn.id)) { backfilled.delete(chat); backfillHistory(chat); } };
+      setTimeout(read, 700);
+      if (turn.rich) { setTimeout(read, 2200); setTimeout(read, 6000); }
     }
     queueSizes();
   }

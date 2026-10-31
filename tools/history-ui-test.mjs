@@ -10,7 +10,7 @@ import { spawn, spawnSync } from 'node:child_process';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const shotsArg = process.argv.indexOf('--shots');
 const shotsDir = shotsArg > 0 ? process.argv[shotsArg + 1] : null;
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'";
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://images.openai.com; connect-src 'self'";
 const profile = await mkdtemp(path.join(tmpdir(), 'qchat-history-ui-'));
 const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html' };
 const server = createServer(async (req, res) => {
@@ -57,7 +57,7 @@ try {
     if (m.id) { pending.get(m.id)?.(m); pending.delete(m.id); return; }
     if (m.method === 'Runtime.exceptionThrown') problems.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
     if (m.method === 'Runtime.consoleAPICalled' && (m.params.type === 'error' || m.params.type === 'warning')) problems.push(m.params.args.map((a) => a.value ?? a.description).join(' '));
-    if (m.method === 'Log.entryAdded' && m.params.entry.level === 'error' && !/favicon/.test(m.params.entry.url || '')) problems.push(`${m.params.entry.text} ${m.params.entry.url || ''}`);
+    if (m.method === 'Log.entryAdded' && m.params.entry.level === 'error' && !/favicon|images\.openai\.com/.test(m.params.entry.url || '')) problems.push(`${m.params.entry.text} ${m.params.entry.url || ''}`);
   };
   const cdp = (method, params = {}) => new Promise((resolve, reject) => {
     const id = ++serial;
@@ -232,7 +232,7 @@ try {
   const record=[{role:'user',text:'Make an image',media:[{file:'file_abc123',kind:'image',name:'Image'}],hasMedia:true},{role:'assistant',text:'Here it is.',media:[{file:'file_gen456',kind:'image',name:'R32 GTR'}],hasMedia:true},{role:'user',text:'Hello'},{role:'assistant',text:'Hi there!'}];
   await evalJS(`__mock.emit('bridge',{type:'transcript',conversationId:'mixed-conversation',messages:${JSON.stringify(record)},complete:true})`);await settle();
   check('the record replaces a longer, broken local list',await evalJS(`(()=>{const rows=[...document.querySelectorAll('#history-panel .turn-row')];return rows.length===4 && rows[3].textContent.includes('Hi there!') && !document.getElementById('history-panel').textContent.includes('View attachments');})()`),await evalJS(`document.getElementById('history-panel').textContent.slice(0,200)`));
-  await until(`[...document.querySelectorAll('#history-panel .stored-media img')].length===2`,'old images load',400);
+  await until(`(()=>{document.querySelectorAll('#history-panel .stored-media:not(:has(img))').forEach(f=>f.scrollIntoView());return document.querySelectorAll('#history-panel .stored-media img').length===2;})()`,'old images load',400);
   check('old images render as images',await evalJS(`__mock.calls.filter(c=>c.cmd==='media_load'&&c.args.mediaId==='stored:file_gen456:mixed-conversation').length===1 && document.querySelectorAll('#history-panel .stored-media img').length===2`));
   check('saved chats keep file ids and no links',await evalJS(`(()=>{const raw=localStorage.getItem('qchat.chats');return raw.includes('file_gen456') && !raw.includes('http');})()`));
   await open('/',{keep:true});await settle();
@@ -289,9 +289,9 @@ try {
   check('a saved image resolves to something the native loader can read',resolved?.url?.startsWith('blob:') && resolved.kind==='image' && resolved.name==='R32.png',JSON.stringify(resolved));
   // A rich reply, as the account stores it: a layout language with images found by search query.
   await cdp('Page.navigate',{url:'about:blank'});await sleep(100);
-  const richText=['# Heading','','<AsyncImageGroup query={["blue car","red car"]} aspectRatio="5:4" layout="carousel"/>','','The <Entity category="vehicle" value="Skyline" disambig="x"/> is famous. <Cite refs={["turn1search5"]}/>','','<box gap={3}>','  <row align="start" gap={3}>','    <text color="secondary" size="xs">Indented words stay prose</text>','    <title size="2xl" tabularNums>11,578</title>','  </row>','</box>','<divider/>','<grid columns={2} gap={2}>','  <grid-item>','    <AsyncImage query="grey car" aspectRatio="4:3"/>','    <text weight="medium" size="xs">1989 - R32</text>','  </grid-item>','  <grid-item>','    <text>Stat</text>','    <title>42</title>','  </grid-item>','</grid>','','```html','<box>code stays</box>','```'].join('\n');
+  const richText=['# Heading','','<AsyncImageGroup query={["blue car","red car"]} aspectRatio="5:4" layout="carousel"/>','','The <Entity category="vehicle" value="Skyline" disambig="x"/> is famous. <Cite refs={["turn1search5"]}/>','','<box gap={3}>','  <row align="start" gap={3}>','    <text color="secondary" size="xs">Indented words stay prose</text>','    <title size="2xl" tabularNums>11,578</title>','  </row>','</box>','<divider/>','<grid columns={2} gap={2}>','  <grid-item>','    <AsyncImage query="grey car" aspectRatio="4:3"/>','    <text weight="medium" size="xs">1989 - R32</text>','  </grid-item>','  <grid-item>','    <text>Stat</text>','    <title>42</title>','  </grid-item>','</grid>','','<caption>A note under the gallery.</caption>','You can view them here:','','- <Link url="https://example.com/gallery" title="The full gallery"/>','- <NewWidget mode="x">Words in a future tag</NewWidget>','','```html','<box>code stays</box>','```'].join('\n');
   const img=(q,n)=>({image_search_query:q,content_url:`https://images.openai.com/static-rsc-4/${n}`,thumbnail_url:`https://images.openai.com/thumb/${n}`,title:q});
-  const richMapping={current_node:'r2',mapping:{r1:{parent:null,message:{author:{role:'user'},content:{content_type:'text',parts:['Tell me']}}},r2:{parent:'r1',message:{author:{role:'assistant'},recipient:'all',content:{content_type:'text',parts:[richText]},metadata:{search_result_groups:[{entries:[{url:'https://example.com/source',title:'A source',ref_id:{turn_index:1,ref_type:'search',ref_index:5}}]}],model_dil_v2:{appData:{opGenui:{componentResults:{a:{state:{images:[img('blue car','a'),img('red car','b')]}},b:{state:{images:[img('grey car','c')]}}}}}}}}}}};
+  const richMapping={current_node:'r2',mapping:{r1:{parent:null,message:{author:{role:'user'},content:{content_type:'text',parts:['Tell me']}}},r0:{parent:'r1',message:{author:{role:'assistant'},recipient:'all',channel:'commentary',content:{content_type:'text',parts:['Let me look for that first.']}}},r2:{parent:'r0',message:{author:{role:'assistant'},recipient:'all',content:{content_type:'text',parts:[richText]},metadata:{search_result_groups:[{entries:[{url:'https://example.com/source',title:'A source',ref_id:{turn_index:1,ref_type:'search',ref_index:5}}]}],model_dil_v2:{appData:{opGenui:{componentResults:{a:{state:{images:[img('blue car','a'),img('red car','b')]}},b:{state:{images:[img('grey car','c')]}}}}}}}}}}};
   await evalJS(`document.body.innerHTML='<main></main>';window.__events=[];window.__QCHAT_EMIT__=e=>{window.__events.push(e)};window.fetch=async(url)=>{const u=String(url);const json=b=>({ok:true,status:200,json:async()=>b,headers:new Headers()});if(u.includes('/api/auth/session'))return json({accessToken:'tok',user:{}});if(u.includes('/backend-api/conversation/richconversation'))return json(${JSON.stringify(richMapping)});return {ok:false,status:404,json:async()=>({})};};`);
   await evalJS(`((location)=>{${bridgeSource}})({hostname:'chatgpt.com',href:'https://chatgpt.com/',pathname:'/',origin:'https://chatgpt.com'})`);
   await evalJS(`window.__qchat.readConversation('richconversation')`);await sleep(80);
@@ -305,14 +305,17 @@ try {
   check('every queried image lands in the text, in order, with its caption',webTokens.length===3 && webTokens[2][1]==='1989 - R32' && richOut.indexOf('qchat-web:')<richOut.indexOf('The Skyline'),richOut);
   check('gallery images share a line',/\) !\[/.test(richOut),richOut);
   check('citations resolve to their sources',rich?.sources?.[0]?.id==='turn1search5' && rich.sources[0].url==='https://example.com/source' && richOut.includes('turn1search5'),JSON.stringify(rich?.sources));
+  check('links become real links, in place',/^- \[The full gallery\]\(https:\/\/example\.com\/gallery\)$/m.test(richOut),richOut);
+  check('captions are text, and future tags keep their words',richOut.includes('*A note under the gallery.*') && richOut.includes('- Words in a future tag') && !richOut.includes('NewWidget'),richOut);
+  check('notes between tool calls stay hidden, like the site',!richOut.includes('Let me look'),richOut);
   const webId=webTokens[0]?.[2];
   const webResolved=await evalJS(`window.__qchat.resolveMedia('webimage:${webId}')`);
-  check('a web image id resolves only to its own image host',webResolved?.url==='https://images.openai.com/static-rsc-4/a',JSON.stringify(webResolved));
+  check('a web image id resolves only to its own image host',webResolved?.url==='https://images.openai.com/thumb/a',JSON.stringify(webResolved));
   const forged=await evalJS(`window.__qchat.resolveMedia('webimage:'+btoa('https://evil.example/x')).then(()=>'allowed').catch(()=>'refused')`);
   check('other hosts are refused',forged==='refused',forged);
   await open('/',{settings:{v:4,animations:'off',autoDismiss:0,keepHistory:true},chats:{v:chatsVersion,current:{key:'richui',conversationId:'rich-conversation',title:'Rich',lastActive:1,lastPrompt:'Tell me',lastResponse:'x',transcript:[{id:'ru',role:'user',text:'Tell me'},{id:'ra',role:'assistant',text:richOut,sources:rich.sources,media:[{file:'file_gen1',kind:'image',name:'Made',before:true}],hasMedia:true}],createdAt:1},recent:[]}});await settle();
   await evalJS(`document.getElementById('btn-history').click()`);await settle();
-  await until(`document.querySelectorAll('#history-panel .web-figure img').length===3`,'web images load',400);
+  await until(`(()=>{document.querySelectorAll('#history-panel .web-figure:not(:has(img))').forEach(f=>f.scrollIntoView());return document.querySelectorAll('#history-panel .web-figure img').length===3;})()`,'web images load as they scroll into view',400);
   const placed=await evalJS(`(()=>{const c=document.querySelector('#history-panel [data-role=assistant] .turn-content');const figs=[...c.querySelectorAll('.web-figure')];const row=figs[0].parentElement;const text=[...c.querySelectorAll('p')].find(p=>p.textContent.includes('Skyline'));const media=document.querySelector('#history-panel [data-role=assistant] .turn-media').getBoundingClientRect();return {sameRow:row===figs[1].parentElement,before:!!(figs[0].compareDocumentPosition(text)&Node.DOCUMENT_POSITION_FOLLOWING),caption:figs[2].querySelector('.web-caption')?.textContent,link:!!c.querySelector('a[href="https://example.com/source"]'),generatedAbove:media.bottom<=c.getBoundingClientRect().top+1,raw:c.textContent.includes('<'),code:c.querySelector('pre')?.textContent.includes('<box>code stays</box>')};})()`);
   check('images sit inside the reply where the text put them',placed.sameRow && placed.before && placed.caption==='1989 - R32',JSON.stringify(placed));
   check('citations are links',placed.link,JSON.stringify(placed));
