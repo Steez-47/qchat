@@ -1,7 +1,7 @@
 // Chat-window UX regressions driven through the mock backend in an isolated,
 // invisible Edge profile. No account, site access or OS-level input.
 import { createServer } from 'node:http';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -224,6 +224,33 @@ try {
     check('arrow keys still move the selection', await evalJS(`document.getElementById('prompt-input').getAttribute('aria-activedescendant')==='slash-signin'`));
     await type('/s');
     check('a changed match set selects the first row again', await evalJS(`document.getElementById('prompt-input').getAttribute('aria-activedescendant')==='slash-settings' && document.getElementById('slash-settings').getAttribute('aria-selected')==='true'`));
+  });
+
+  await section('slash menu geometry and stability', async () => {
+    const current = chatSeed('slash-layout');
+    await open('/?mock=signedin', { chats: { v: 1, current, recent: [chatSeed('slash-recent')] }, settings: { animations: 'on', autoDismiss: 0 } });
+    await waitFor(`document.querySelector('.bubble-response') && !document.getElementById('tabs').hidden`);
+    await sleep(700);
+    const frames = await evalJS(`(async()=>{
+      const input=document.getElementById('prompt-input'), bar=document.getElementById('bar'), menu=document.getElementById('slash-menu');
+      const geometry=()=>({bar:bar.getBoundingClientRect().top,bubble:document.querySelector('.bubble-response').getBoundingClientRect().top,menuTop:menu.getBoundingClientRect().top,menuBottom:menu.getBoundingClientRect().bottom,open:!menu.hidden});
+      const baseline=geometry(), samples=[];
+      for(const value of ['/', '/s', '/settings', '']) {
+        input.value=value; input.dispatchEvent(new Event('input',{bubbles:true}));
+        for(let i=0;i<22;i++) { await new Promise(requestAnimationFrame); samples.push(geometry()); }
+      }
+      return {baseline,samples};
+    })()`);
+    check('slash commands stay above the chat input', frames.samples.filter(s => s.open).every(s => s.menuBottom <= s.bar + 1 && s.menuTop >= 0), JSON.stringify(frames.samples.filter(s => s.open).slice(0, 2)));
+    check('opening, filtering and closing commands keeps the input still', frames.samples.every(s => Math.abs(s.bar - frames.baseline.bar) <= 1));
+    check('opening, filtering and closing commands keeps the reply still', frames.samples.every(s => Math.abs(s.bubble - frames.baseline.bubble) <= 1));
+    await key('k', { ctrlKey: true });
+    await sleep(350);
+    check('orb command menu also opens above the input', await evalJS(`(()=>{const m=document.getElementById('slash-menu'),b=document.getElementById('bar');return !m.hidden && m.getBoundingClientRect().bottom<=b.getBoundingClientRect().top+1;})()`));
+    await mkdir(path.join(root, '.tmp/slash-menu'), { recursive: true });
+    const shot = await cdp('Page.captureScreenshot', { format: 'png' });
+    await writeFile(path.join(root, '.tmp/slash-menu/commands.png'), Buffer.from(shot.data, 'base64'));
+    await key('Escape');
   });
 
   await section('8 history mirrors the live reveal', async () => {

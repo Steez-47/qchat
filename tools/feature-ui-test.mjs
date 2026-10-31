@@ -208,7 +208,7 @@ try {
   check('finding 6 temporary chat saves a fresh current with recents',appSource.includes('chats.current.temporary ? freshChat() : chats.current'));
   check('finding 7 model menu polls and empty menu reports unavailable',bridgeSource.includes('i<30') && bridgeSource.includes('if(!nodes.length) { unavailable(); return; }'));
   check('finding 8 separate model chip has a first-line 28 character label',appSource.includes('modeChips.append(modeChip, modelChip)') && appSource.includes(".split('\\n')[0].slice(0,28)"));
-  check('finding 9 retry guards attachments and persists actual prompt',appSource.includes('chat.lastPrompt = prompt;') && appSource.includes('!turn.prompt || turn.hadAttachments'));
+  check('finding 9 retry guards attachments and persists actual prompt',appSource.includes('chat.lastPrompt = prompt;') && appSource.includes('(!turn.prompt && !turn.selectionTexts?.length) || turn.hadAttachments'));
   check('finding 10 surface limit and stale fail-open guard',nativeSource.includes('rects.len() > 2048') && nativeSource.includes('!rs.is_empty()') && nativeSource.includes('reported.elapsed()'));
   check('finding 11 surface geometry intersects viewport and clipping ancestors',surfacesSource.includes('Math.min(innerWidth,b.right)') && surfacesSource.includes('parent=parent.parentElement'));
   check('finding 12 surfaces use Set membership and finite animation loops',surfacesSource.includes('new Set(nodes)') && surfacesSource.includes('iterations !== Infinity') && nativeSource.includes('Result<(), String>'));

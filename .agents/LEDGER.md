@@ -46,3 +46,12 @@
 - 2026-10-31 | Response tags cross-family review | antigravity/gemini-4-argon low | done | six findings; parent fixed all and added parser/native-stream/Edge regression cases, no additional review delegates
 - 2026-10-31 | Response tags release | parent | done | final parser/stream73/auth17/all UI/history/Rust19/native checks and npm build PASS; previous exe backed up, final hash verified; running other-worktree QChat preserved, update ready for next launch after that copy quits
 - 2026-10-31 | v0.1.2 release integration | parent | verified for publication | release build/version/hash PASS; both merged PRs integrated into main; Rust19/parser/stream73/auth17/reasoning/UI/history/animation/media PASS; no delegation
+2026-10-31 | Each templates and streaming pairs | native worker gpt-6.1-sol medium + parent | done, release build PASS | bounded safe data parser, loop/index/nesting and JSX values; full streaming context and paragraph reveals inside open scopes; parser/boundary/bridge73/tag UI17/paragraph/animation/math PASS; screenshot inspected; existing session preserved
+
+2026-10-31 | Interactive DIL runtime | native worker gpt-6.1-sol medium + native reviewer gpt-6.1-sol medium + parent | done, suites and release verified | bounded AST interpreter, safe DOM controls, raw source preserved, independent security review fixes applied; existing session preserved
+2026-10-31 | Slash menu positioning and jitter | native worker gpt-6.1-sol medium + parent | UI verified, build pending | UX frame sampling open/filter/close and animation suites PASS; screenshot inspected; concurrent selection work and running session preserved
+2026-10-31 | Slash menu release | parent | done | release compile PASS, running executable backed up by rename, dist updated and SHA256 verified; restart required
+
+2026-10-31 | Selection shortcut repair | native worker gpt-6.1-sol medium + parent | in progress | UI selection20 PASS; Rust20 PASS; original rich-clipboard native fixture exposed an unavailable clipboard format, worker investigating
+
+2026-10-31 | Independent chat panel material | native worker Sol medium + parent | integration | per-surface native blur, dedicated controls and migration; focused settings/browser and Rust checks PASS; glass160 and release build PASS; executable hash verified; restart required

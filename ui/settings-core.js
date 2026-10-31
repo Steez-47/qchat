@@ -6,7 +6,7 @@
   const STORAGE_KEY = "qchat.settings";
   const THEME_KEY = "qchat.theme";
   const LEGACY_LOOK_KEY = "qchat.look";
-  const VERSION = 4;
+  const VERSION = 5;
 
   // ---------------------------------------------------------------------------
   // Looks. Everything else (fills, text tiers, rims) is derived in apply().
@@ -86,7 +86,7 @@
   const bool = (def) => ({ type: "bool", def });
 
   const SCHEMA = {
-    replyWidth: range(640,360,1000,10,"px"), replyOpacity: range(92,20,100,1,"%"), readableGuard: bool(true),
+    replyWidth: range(640,360,1000,10,"px"), replyOpacity: range(92,0,100,1,"%"), replyNativeBlur: bool(true), replyBlur: range(100,0,100,1,"%"), replyCorners: range(20,0,40,1,"px"), replyBorder: range(1,0,2,.25,"px"), readableGuard: bool(true),
     paragraphSpacing: range(1,.4,2,.05,"em"), letterSpacing: range(0,-.02,.06,.005,"em"),
     replyWeight: range(400,300,600,10), headingScale: range(1,.85,1.5,.05,"×"),
     replyPadding: range(18,8,36,1,"px"), bubbleGap: range(8,2,24,1,"px"), codeSize: range(.9,.75,1.15,.01,"em"),
@@ -238,6 +238,13 @@
         if (parsed.feel === "springy") parsed.feel = "calm";
         if (parsed.textSize === 14) parsed.textSize = 15;
         if (parsed.lineHeight === 1.6) parsed.lineHeight = 1.65;
+      }
+      if (!Object.hasOwn(parsed, "replyNativeBlur")) parsed.replyNativeBlur = parsed.nativeBlur;
+      if (!Object.hasOwn(parsed, "replyBlur") && Number.isFinite(parsed.blur)) parsed.replyBlur = parsed.blur / 40 * 100;
+      if (!Object.hasOwn(parsed, "replyBorder")) parsed.replyBorder = parsed.border;
+      if (!Object.hasOwn(parsed, "replyCorners") && Number.isFinite(parsed.cornerWeight)) {
+        const t = sanitizeValue("cornerWeight", parsed.cornerWeight) / 100;
+        parsed.replyCorners = t <= .85 ? 6 + t * (14 / .85) : 20 + (t - .85) * 80;
       }
       const loaded = sanitize(parsed);
       return upgrading ? save(loaded) : loaded;
@@ -428,7 +435,7 @@
     const backdrops = p.tint.flatMap((t) => [over(t, inkAlpha, [255,255,255]), over(t, inkAlpha, [0,0,0])]);
     root.dataset.nativeblur = s.nativeBlur ? "on" : "off";
     const tintArgb = (((p.dark ? 0x55 : 0x66) << 24) | (Math.round(p.tint[0][0]) << 16) | (Math.round(p.tint[0][1]) << 8) | Math.round(p.tint[0][2])) >>> 0;
-    window.QSurfaces?.setBlur(s.nativeBlur, tintArgb, lessGlass ? 0 : s.blur / 40)?.catch(() => {});
+    window.QSurfaces?.setBlur(s.nativeBlur || s.replyNativeBlur, tintArgb, lessGlass || !s.nativeBlur ? 0 : s.blur / 40, lessGlass || !s.replyNativeBlur ? 0 : s.replyBlur / 100)?.catch(() => {});
 
     css["--tint-a"] = triple(p.tint[0]);
     css["--tint-b"] = triple(p.tint[1]);
@@ -438,6 +445,7 @@
     css["--reply-a"] = textAlpha.toFixed(3);
     css["--blur"] = `${lessGlass ? 0 : s.blur}px`;
     css["--bw"] = `${s.border}px`;
+    css["--reply-bw"] = `${s.replyBorder}px`;
 
     const rim = s.rim / 100, sheen = s.sheen / 100, shadow = s.shadow / 100;
     css["--rim-ink"] = p.dark ? "255 255 255" : "15 23 42";
@@ -504,7 +512,7 @@
     const barHeight = BAR_HEIGHT[s.density];
     const control = barHeight - 14;
     css["--r-bar"] = `${(6 + round * (barHeight / 2 - 6)).toFixed(1)}px`;
-    css["--r-bubble"] = `${(t <= .85 ? 6 + t * (14 / .85) : 20 + (t - .85) * 80).toFixed(1)}px`;
+    css["--r-bubble"] = `${s.replyCorners}px`;
     css["--r-chip"] = `${(6 + round * 6).toFixed(1)}px`;
     css["--r-tab"] = `${(5 + t * (4 / .85)).toFixed(1)}px`;
     css["--r-inner"] = `${(4 + t * 10).toFixed(1)}px`;

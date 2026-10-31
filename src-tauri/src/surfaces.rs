@@ -11,11 +11,16 @@ pub struct Surface {
     // Hit-test only when false: controls outside the glass never get a blur panel.
     #[serde(default = "blurred_by_default")]
     b: bool,
+    #[serde(default)]
+    s: Option<f64>,
 }
 fn blurred_by_default() -> bool {
     true
 }
 impl Surface {
+    fn blur_strength(&self, global: f64) -> f64 {
+        self.s.filter(|v| v.is_finite()).unwrap_or(global).clamp(0., 1.)
+    }
     fn hit(&self, x: f64, y: f64, scale: f64) -> bool {
         let (x, y) = (x / scale, y / scale);
         if x < self.x || y < self.y || x > self.x + self.w || y > self.y + self.h {
@@ -35,6 +40,7 @@ impl Surface {
             h: r.h * scale,
             r: r.r.min(r.w / 2.).min(r.h / 2.) * scale,
             b: self.b,
+            s: self.s,
         })
     }
     fn inset(&self) -> Option<Self> {
@@ -48,6 +54,7 @@ impl Surface {
             h: self.h - 3.,
             r: (self.r - 1.5).max(0.),
             b: self.b,
+            s: self.s,
         })
     }
 }
@@ -546,7 +553,7 @@ impl GlassComposition {
             }
             let (sprite, geometry) = &sprites[index];
             // The system blur has a fixed radius; strength crossfades it with the sharp desktop.
-            sprite.SetOpacity(strength as f32)?;
+            sprite.SetOpacity(r.blur_strength(strength) as f32)?;
             let mut size = sprite.Size()?;
             size.X = r.w as f32;
             size.Y = r.h as f32;
@@ -778,6 +785,7 @@ mod tests {
             h: 40.,
             r: 20.,
             b: true,
+            s: None,
         };
         assert!(!r.hit(10., 10., 1.));
         assert!(r.hit(30., 10., 1.));
@@ -797,6 +805,7 @@ mod tests {
             h: 74.,
             r: 24.,
             b: true,
+            s: None,
         };
         for scale in [1., 1.5] {
             let p = r.physical_inset(scale).unwrap();
@@ -817,6 +826,20 @@ mod tests {
         assert!(r.b);
         let hit: Surface = serde_json::from_str(r#"{"x":0,"y":0,"w":20,"h":20,"r":4,"b":false}"#).unwrap();
         assert!(!hit.physical_inset(1.).unwrap().b);
+    }
+    #[test]
+    fn surface_strength_defaults_overrides_and_survives_inset() {
+        let r: Surface = serde_json::from_str(r#"{"x":0,"y":0,"w":20,"h":20,"r":4}"#).unwrap();
+        assert_eq!(r.s, None);
+        assert_eq!(r.blur_strength(0.3), 0.3);
+        let custom: Surface = serde_json::from_str(r#"{"x":0,"y":0,"w":20,"h":20,"r":4,"s":0.8}"#).unwrap();
+        assert_eq!(custom.blur_strength(0.), 0.8);
+        assert_eq!(custom.inset().unwrap().s, Some(0.8));
+        assert_eq!(custom.physical_inset(1.5).unwrap().s, Some(0.8));
+        assert_eq!(serde_json::from_str::<Surface>(&serde_json::to_string(&custom).unwrap()).unwrap(), custom);
+        for (value, expected) in [(2., 1.), (-1., 0.), (f64::NAN, 0.3), (f64::INFINITY, 0.3)] {
+            assert_eq!(Surface { s: Some(value), ..r.clone() }.blur_strength(0.3), expected);
+        }
     }
     #[test]
     fn shortcuts() {

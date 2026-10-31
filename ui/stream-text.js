@@ -47,7 +47,7 @@
     return boundary;
   }
 
-  // Commit whole blocks at blank lines outside fences, math, inline code and nested tags.
+  // Commit paragraphs inside layout tags too: the renderer pairs their open scopes.
   function completeBoundary(text) {
     let fence = null, offset = 0, end = 0, math = null, inline = null, container = false;
     const tags = [];
@@ -71,6 +71,26 @@
           const opener = line.startsWith('$$', i) ? '$$' : line.startsWith('\\[', i) ? '\\]' : line.startsWith('\\(', i) ? '\\)' : null;
           if (opener) { math = opener; i += 2; continue; }
           if (line[i] === '\\') { i += 2; continue; }
+          if (line[i] === '{') {
+            const body = window.QResponseTags.bodyAt(text, offset + i);
+            if (body) {
+              if (body.partial) return end;
+              skipUntil = body.end;
+              i = body.end - offset;
+              continue;
+            }
+            const directive = window.QResponseTags.eachAt(text, offset + i);
+            if (directive) {
+              if (directive.partial) return end;
+              if (directive.close) {
+                const index = tags.lastIndexOf('@each');
+                if (index >= 0) tags.length = index;
+              } else tags.push('@each');
+              skipUntil = directive.end;
+              i = directive.end - offset;
+              continue;
+            }
+          }
           if (line[i] === '<' && /^<\/?[a-zA-Z]/.test(line.slice(i))) {
             // Share the renderer's quote/JSX-aware tokenizer; comparisons aren't tag prefixes.
             const at = offset + i;
@@ -96,7 +116,8 @@
           inline = null;
           const following = container ? /^(?:[ \t\r]*\n)*([^\n]*)/.exec(text.slice(next))[1] : '';
           const continuation = container && (!following || /^(?:\s|[-+*](?:\s|$)|\d+(?:[.)](?:\s|$)|$)|>)/.test(following));
-          if (!math && !tags.length && (!container || !continuation)) { end = next; container = false; }
+          const literalTag = tags.some(name => /^(pre|code|script|style|iframe|svg|object|template)$/.test(name));
+          if (!math && !literalTag && (!container || !continuation)) { end = next; container = false; }
         }
       }
       offset = next;

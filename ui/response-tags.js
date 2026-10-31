@@ -23,6 +23,9 @@
     const saved = []; let out = '', i = 0, start = 0;
     while (i < text.length) {
       let end = i, html = null;
+      const each = text[i] === '{' && !escaped(text,i) ? (eachAt(text,i) || bodyAt(text,i)) : null;
+      // Data strings can contain currency, backticks and HTML; they are not prose.
+      if (each) { i = each.end; continue; }
       const fence = (i === 0 || text[i - 1] === '\n') && /^(?:(?:[ \t]*>[ \t]?)|[ \t]*[-+*][ \t]+|[ \t]*\d+[.)][ \t]+)*[ \t]*(`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(text.slice(i));
       if (fence) {
         end = i + fence[0].length;
@@ -80,6 +83,161 @@
     try { return JSON.parse(s); } catch (_) {}
     if (/^'(?:[^'\\]|\\.)*'$/.test(s)) return s.slice(1, -1).replace(/\\(['\\])/g, '$1');
     return undefined;
+  }
+  function eachAt(source, at) {
+    const tail = source.slice(at), head = /^\{([#/])each\b/.exec(tail);
+    if (!head) return /^\{[#/](?:e(?:a(?:c(?:h)?)?)?)?$/.test(tail) ? {end:source.length,partial:true} : null;
+    let quote = '', depth = 1;
+    for (let i = at + head[0].length; i < source.length; i++) {
+      const c = source[i];
+      if (quote) { if (c === '\\') i++; else if (c === quote) quote = ''; }
+      else if (c === '"' || c === "'") quote = c;
+      else if (c === '{') depth++;
+      else if (c === '}' && !--depth) return {end:i + 1,close:head[1] === '/',header:source.slice(at + head[0].length,i).trim()};
+    }
+    return {end:source.length,partial:true,close:head[1] === '/'};
+  }
+  function expressionEnd(source, at) {
+    let quote = '', depth = 1;
+    for (let i = at + 1; i < source.length; i++) {
+      const c = source[i];
+      if (quote) { if (c === '\\') i++; else if (c === quote) quote = ''; }
+      else if (c === '"' || c === "'") quote = c;
+      else if (c === '{') depth++;
+      else if (c === '}' && !--depth) return i;
+    }
+    return -1;
+  }
+  function bodyAt(source, at) {
+    const tail = source.slice(at);
+    if (!/^\{@body\b/.test(tail)) return /^\{@(?:b(?:o(?:d(?:y)?)?)?)?$/.test(tail) ? {end:source.length,partial:true} : null;
+    const end = expressionEnd(source,at);
+    return end < 0 ? {end:source.length,partial:true} : {end:end+1};
+  }
+  function hasInteractive(text) {
+    let found = false;
+    protect(String(text ?? ''), source => {
+      for (let at = 0; at < source.length; at++) {
+        if (escaped(source,at)) continue;
+        if (source[at] === '{' && bodyAt(source,at)) { found = true; break; }
+        if (source[at] === '<') {
+          const tag = tagAt(source,at);
+          if (tag && !tag.partial && Object.keys(tag.attrs).some(key => /^on(?:click|change|input)$/.test(key))) { found = true; break; }
+        }
+      }
+      return source;
+    });
+    return found;
+  }
+  const forbiddenKey = key => /^(?:__proto__|prototype|constructor)$/.test(key);
+  // A deliberately small data grammar. No expressions, functions or prototype reads.
+  function eachValue(source, scope) {
+    let at = 0, nodes = 0;
+    const space = () => { while (/\s/.test(source[at] || '') && at < source.length) at++; };
+    const fail = () => { throw new Error('Invalid each data'); };
+    const string = () => {
+      const quote = source[at++]; let value = '';
+      while (at < source.length) {
+        const c = source[at++];
+        if (c === quote) return value;
+        if (c < ' ') fail();
+        if (c !== '\\') { value += c; continue; }
+        const e = source[at++], escapes = {'"':'"',"'":"'",'\\':'\\','/':'/','b':'\b','f':'\f','n':'\n','r':'\r','t':'\t'};
+        if (Object.hasOwn(escapes,e)) value += escapes[e];
+        else if (e === 'u' && /^[\da-f]{4}$/i.test(source.slice(at,at + 4))) { value += String.fromCharCode(parseInt(source.slice(at,at + 4),16)); at += 4; }
+        else fail();
+      }
+      fail();
+    };
+    const value = depth => {
+      if (++nodes > 20000 || depth > 32) fail();
+      space(); const c = source[at];
+      if (c === '"' || c === "'") return string();
+      if (c === '[' || c === '{') {
+        const array = c === '[', result = array ? [] : Object.create(null), close = array ? ']' : '}'; at++; space();
+        if (source[at] === close) { at++; return result; }
+        while (at < source.length) {
+          let key;
+          if (!array) {
+            space();
+            if (source[at] === '"' || source[at] === "'") key = string();
+            else { const m = /^[A-Za-z_$][\w$]*/.exec(source.slice(at)); if (!m) fail(); key = m[0]; at += key.length; }
+            if (forbiddenKey(key)) fail();
+            space(); if (source[at++] !== ':') fail();
+          }
+          const item = value(depth + 1); if (array) result.push(item); else result[key] = item;
+          space(); if (source[at] === close) { at++; return result; }
+          if (source[at++] !== ',') fail();
+          space(); if (source[at] === close) { at++; return result; }
+        }
+        fail();
+      }
+      const primitive = /^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)(?![\w$.])/.exec(source.slice(at));
+      if (primitive) { at += primitive[0].length; const result = JSON.parse(primitive[0]); if (typeof result === 'number' && !Number.isFinite(result)) fail(); return result; }
+      const path = /^[A-Za-z_$][\w$]*(?:\.(?:[A-Za-z_$][\w$]*|\d+))*/.exec(source.slice(at));
+      if (!path) fail();
+      at += path[0].length; let result = scope;
+      for (const key of path[0].split('.')) {
+        if (forbiddenKey(key) || result === null || typeof result !== 'object' || !Object.hasOwn(result,key)) fail();
+        result = result[key];
+      }
+      return result;
+    };
+    try { const result = value(0); space(); return {value:result,rest:source.slice(at)}; } catch (_) { return null; }
+  }
+  function expandEach(source) {
+    if (!/\{[#/]/.test(source)) return source;
+    let iterations = 0, size = 0;
+    const textValue = value => escape(typeof value === 'object' ? '' : value).replace(/[\\`*_[\]{}()!#$|~]/g, '\\$&');
+    const render = (text, scope, depth) => {
+      if (depth > 32) return '';
+      let out = '', at = 0;
+      const append = value => { const part = value.slice(0,Math.max(0,1000000 - size)); out += part; size += part.length; };
+      while (at < text.length && size < 1000000) {
+        const next = text.indexOf('{',at);
+        if (next < 0) { append(text.slice(at)); break; }
+        append(text.slice(at,next)); at = next;
+        if (escaped(text,at)) { append('{'); at++; continue; }
+        const token = eachAt(text,at);
+        if (token) {
+          at = token.end;
+          if (token.partial) break;
+          if (token.close) continue;
+          let nesting = 1, cursor = at, bodyEnd = text.length, end = text.length;
+          while ((cursor = text.indexOf('{',cursor)) >= 0) {
+            const other = !escaped(text,cursor) && eachAt(text,cursor);
+            if (!other) { cursor++; continue; }
+            if (other.partial) { bodyEnd = cursor; break; }
+            nesting += other.close ? -1 : 1;
+            if (!nesting) { bodyEnd = cursor; end = other.end; break; }
+            cursor = other.end;
+          }
+          const parsed = eachValue(token.header,scope), binding = parsed && /^as\s+([A-Za-z_$][\w$]*)(?:\s*,\s*([A-Za-z_$][\w$]*))?\s*$/.exec(parsed.rest);
+          if (binding && !forbiddenKey(binding[1]) && !forbiddenKey(binding[2]) && Array.isArray(parsed.value)) {
+            for (let i = 0; i < parsed.value.length && iterations < 1000 && size < 1000000; i++) {
+              iterations++;
+              const local = Object.assign(Object.create(null),scope); local[binding[1]] = parsed.value[i]; if (binding[2]) local[binding[2]] = i;
+              out += render(text.slice(at,bodyEnd),local,depth + 1);
+            }
+          }
+          at = end; continue;
+        }
+        if (depth) {
+          const end = expressionEnd(text,at);
+          if (end < 0) break;
+          const expression = text.slice(at + 1,end), parsed = eachValue(expression,scope);
+          if (parsed && !parsed.rest) {
+            // JSX attribute data stays quoted data for the existing tag parser.
+            const attribute = /<[^<>]*=\s*$/.test(text.slice(0,at));
+            append(attribute ? '{' + JSON.stringify(parsed.value) + '}' : textValue(parsed.value));
+          }
+          at = end + 1; continue;
+        }
+        append('{'); at++;
+      }
+      return out;
+    };
+    return render(source,Object.create(null),0);
   }
   // A tag ends only outside quotes and balanced JSX data braces. No evaluation.
   function tagAt(s, at) {
@@ -142,6 +300,7 @@
   }
   function toMarkdown(input, options = {}) {
     return protect(String(input ?? ''), (source,restore) => {
+      source = expandEach(source);
       const root = { children: [] }, stack = [root]; let i = 0, count = 0;
       const add = v => stack[stack.length - 1].children.push(v);
       while (i < source.length) {
@@ -150,7 +309,11 @@
         const auto = /^<(?:https?:\/\/|mailto:)[^<>\s]+>/.exec(source.slice(i));
         if (auto) { add(auto[0]); i += auto[0].length; continue; }
         const t = tagAt(source, i);
-        if (!t) { add('&lt;'); i++; continue; }
+        if (!t) {
+          // The first bytes of a streamed closer belong to the open node too.
+          if (stack.length > 1 && /^<\/?$/.test(source.slice(i))) break;
+          add('&lt;'); i++; continue;
+        }
         i = t.end; if (t.partial) break;
         const name = t.name.toLowerCase();
         if (t.close) { for (let j = stack.length - 1; j > 0; j--) if (stack[j].name.toLowerCase() === name) { stack.length = j; break; } continue; }
@@ -218,6 +381,9 @@
   function hasLayout(text) {
     let found = false;
     protect(String(text), source => {
+      for (let i = source.indexOf('{'); i >= 0; i = source.indexOf('{',i + 1)) {
+        if (!escaped(source,i) && eachAt(source,i)) { found = true; return source; }
+      }
       let at = -1;
       while ((at = source.indexOf('<',at + 1)) >= 0) {
         if (escaped(source,at)) continue;
@@ -238,5 +404,5 @@
       return allowed && inert.has(allowed[1].toLowerCase()) ? part.toLowerCase() : escape(part);
     }).join('');
   }
-  window.QResponseTags = { toMarkdown, hasLayout, stabilize: text => toMarkdown(text), protect, sanitizeHTML, safeURL, tagAt };
+  window.QResponseTags = { toMarkdown, hasLayout, hasInteractive, bodyAt, decodeEntities, stabilize: text => toMarkdown(text), protect, sanitizeHTML, safeURL, tagAt, eachAt };
 })();

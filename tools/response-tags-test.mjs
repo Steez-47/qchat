@@ -60,4 +60,53 @@ assert.equal(md('An Array<object> is common in JS, followed by important text.')
 for(const prose of ['Suppose a <b and c = 1 in this proof.',"Suppose a <b and it's > 0 in this proof."]) assert.equal(md(prose),prose.replace('<','&lt;'));
 for(const prose of ['Hello <C','Hello <Ci','Hello <Cit','Visit <https','Visit <mailto','If a \\<b in math']) assert.equal(api.hasLayout(prose),false);
 assert.equal(md('<Future>\n    Plain text\n</Future>').trim(),'Plain text');
+const sales = `{#each [{period:"First 24 hours",copies:"25M",revenue:"$2.2B"},{period:'First 3 days',copies:'30M',revenue:'$2.6B'},{period:'First week',copies:'40M',revenue:'$3.5B'}] as item, index}<box><text>{item.period}</text><strong>{item.copies}</strong><text>{item.revenue}</text><text>{index}</text></box>`;
+const salesOutput = md(sales);
+for (const value of ['First 24 hours','First 3 days','First week','25M','30M','40M','2.2B','2.6B','3.5B']) assert.ok(salesOutput.includes(value),value);
+assert.doesNotMatch(salesOutput,/\{[#/]|item\.|<box>/);
+for (const close of ['{','{/','{/e','{/ea','{/eac','{/each','{/each}']) assert.equal(md(sales + close),salesOutput,close);
+for (const prefix of ['{#','{#e','{#ea','{#eac','{#each','{#each [','{#each [{period:"First','{#each [] as']) {
+  assert.equal(md('Before '+prefix),'Before ');
+  assert.equal(api.hasLayout(prefix),true);
+}
+const nestedEach = `{#each [{name:'A',rows:[{n:1},{n:2}]},{name:'B',rows:[{n:3}]}] as group}{group.name}:{#each group.rows as item, i}{i}={item.n};{/each}|{/each}`;
+assert.equal(md(nestedEach),'A:0=1;1=2;|B:0=3;|');
+assert.equal(md(`{#each [true,false,null,12,-2.5, {name:'line\\nquote\\\'\\u0041'}] as item}{item};{/each}`), 'true;false;;12;-2.5;;');
+assert.equal(md(`{#each [{a:'one'},{a:'two'},] as item}{item.a}{/each}`),'onetwo');
+for (const data of ['globalThis.hacked=true','[globalThis.hacked=true]','[(()=>{globalThis.hacked=true})()]','[1].map(alert)','[{__proto__:{x:1}}]','[{constructor:1}]','[{prototype:1}]','[NaN]','[Infinity]','[1e999]','[undefined]','[{x:}]']) {
+  assert.equal(md(`Before{#each ${data} as item}hidden{item}{/each}After`),'BeforeAfter',data);
+}
+for (const expression of ['item.constructor','item.__proto__','item.a.constructor','item.toString()','globalThis.hacked=true','item.a + "bad"','item["a"]']) {
+  assert.equal(md(`{#each [{a:'safe'}] as item}{${expression}}{/each}`),'',expression);
+}
+assert.equal(context.hacked,undefined);
+for (const wrapper of [s=>'`'+s+'`',s=>'~~~\n'+s+'\n~~~',s=>'$$'+s+'$$',s=>'\\('+s+'\\)']) {
+  const example=wrapper('{#each [1] as item}{item}{/each}');
+  assert.equal(md(example),example);
+  assert.equal(api.hasLayout(example),false);
+}
+assert.equal(md('{#each [1] as item}`{item}`<code>{item}</code>{/each}'),'`{item}`` {item} `');
+assert.equal(md('\\{#each [1] as item}literal\\{/each}'),'\\{#each [1] as item}literal\\{/each}');
+assert.equal(api.hasLayout('\\{#each [1] as item}'),false);
+const xss = md(`{#each [{x:'<img src=x onerror=alert(1)>',y:'[click](javascript:alert(1))',z:'{#each [1] as item}bad{/each}'}] as item}{item.x} {item.y} {item.z}{/each}`);
+assert.ok(xss.includes('&lt;img'));
+assert.doesNotMatch(xss,/<img|\[click\]\(javascript/);
+assert.ok(xss.includes('\\{#each') || xss.includes('\\{\\#each'));
+assert.equal(md(`{#each [{x:'" onmouseover="alert(1)'}] as item}<Future label="{item.x}"/>{/each}`),'&quot; onmouseover=&quot;alert\\(1\\)');
+assert.equal(md(`{#each [{name:'Hello world'}] as item}<Entity value={item.name}/><Entity value={"literal text"}/>{/each}`),'Hello worldliteral text');
+assert.equal(md(`{#each [{name:'<img src=x onerror=alert(1)>'}] as item}<Entity value={item.name}/>{/each}`),'&lt;img src=x onerror=alert(1)&gt;');
+assert.equal(md('x'.repeat(1000001)).length,1000001);
+const many = `[${Array(1001).fill('1').join(',')}]`;
+assert.equal(md(`{#each ${many} as item}x{/each}`).length,1000);
+assert.ok(md(`{#each ${many} as item}${'x'.repeat(2000)}{/each}`).length <= 1000000);
+assert.equal(api.eachAt('{#each [{a:"}"}] as row}',0).end,'{#each [{a:"}"}] as row}'.length);
+assert.equal(api.eachAt('{/each}',0).close,true);
+for (const closer of ['<','</','</m','</mark>']) assert.equal(md('<mark>Live'+closer),'<mark>Live</mark>');
 console.log('ALL PASS response tags');
+
+assert.equal(api.hasInteractive('{@body const a=1}'),true);
+assert.equal(api.hasInteractive('{@bo'),true);
+assert.equal(api.hasInteractive('<button onClick={()=>setN(1)}>Add</button>'),true);
+assert.equal(api.hasInteractive('`{@body const a=1}`'),false);
+assert.equal(api.hasInteractive('```js\n{@body const a=1}\n```'),false);
+assert.equal(api.hasInteractive('\\{@body const a=1}'),false);

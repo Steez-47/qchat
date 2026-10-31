@@ -297,8 +297,8 @@
       id: "shape", title: "Shape & glass", glyph: "", preview: true,
       groups: [[
         () => rangeRow({ key: "cornerWeight", label: "Corner weight" }),
-        () => rangeRow({ key: "glassOpacity", label: "Glass opacity" }),
-        () => rangeRow({ key: "blur", label: "Blur" }),
+        () => rangeRow({ key: "glassOpacity", label: "Bar opacity" }),
+        () => rangeRow({ key: "blur", label: "Bar blur" }),
         () => rangeRow({ key: "rim", label: "Edge light" }),
         () => rangeRow({ key: "sheen", label: "Specular sheen" }),
         () => rangeRow({ key: "shadow", label: "Shadow strength" }),
@@ -329,7 +329,6 @@
       id: "layout", title: "Layout", glyph: "", preview: true,
       groups: [[
         () => rangeRow({ key: "barWidth", label: "Bar width" }),
-        () => rangeRow({ key: "maxHeightPct", label: "Reply height limit", format: (v) => `${v}% of screen` }),
         () => choiceRow({ key: "density", label: "Bar size", options: [["compact", "Compact"], ["cozy", "Cozy"], ["roomy", "Roomy"]] }),
         () => switchRow({ key: "showTabs", label: "Recent-chat tabs" }),
         () => switchRow({ key: "showTabClock", label: "Clock icon on tabs" }),
@@ -390,7 +389,7 @@
     }
   ];
 
-  SECTIONS.find(s => s.id === "shape").title = "Glass";
+  SECTIONS.find(s => s.id === "shape").title = "Bar glass";
   SECTIONS.find(s => s.id === "text").title = "Reading";
   SECTIONS.find(s => s.id === "layout").title = "Bar & tabs";
   SECTIONS.find(s => s.id === "chats").title = "Chats";
@@ -401,17 +400,18 @@
     input.addEventListener("input",() => setValue(key,input.value)); row.append(textBlock(label,hint),input,resetButton(key,label));
     refreshers.set(key,() => { input.value = settings[key]; row.toggleAttribute("data-changed",settings[key] !== DEFAULTS[key]); }); return row;
   }
+  SECTIONS.push({id:"chatpanel",title:"Chat panel",glyph:"",preview:true,groups:[]});
   const extra = {
     appearance: "tintSource tintColor inkBoost",
-    shape: "replyOpacity readableGuard",
-    text: "replyWidth paragraphSpacing letterSpacing replyWeight headingScale replyPadding bubbleGap codeSize codeFont codeWrap userLines userAlign showPrompt linkStyle quoteStyle softEdges scrollbarStyle",
+    chatpanel: "replyOpacity readableGuard replyNativeBlur replyBlur replyCorners replyBorder replyWidth replyPadding bubbleGap maxHeightPct",
+    text: "paragraphSpacing letterSpacing replyWeight headingScale codeSize codeFont codeWrap userLines userAlign showPrompt linkStyle quoteStyle softEdges scrollbarStyle",
     motion: "enterStyle",
     layout: "tabCount tabStyle showAttach orbStyle sendStyle placeholderText",
     streaming: "streamStyle streamSpeed followStream streamCaret"
   };
   const descriptions = {
     tintSource:["Glass colour source","Use the look or a custom tint"],tintColor:["Custom glass colour","Automatically chooses light or dark ink"],inkBoost:["Secondary text strength","Sharpen quieter text"],
-    replyOpacity:["Reply opacity","Fill behind reply text"],readableGuard:["Keep text readable","Raise reply opacity for contrast"],
+    replyOpacity:["Chat opacity","Background fill behind messages"],replyNativeBlur:["Chat desktop blur","Blur the desktop behind messages"],replyBlur:["Chat blur strength","Blend between clear and frosted glass"],replyCorners:["Chat corners","Roundness of message bubbles"],replyBorder:["Chat border","Outline thickness around messages"],maxHeightPct:["Chat height limit","Percentage of screen height"],readableGuard:["Keep text readable","Raise reply opacity for contrast"],
     replyWidth:["Reply width","Independent of bar width"],paragraphSpacing:["Paragraph spacing","Space between paragraphs"],letterSpacing:["Letter spacing","Space between letters"],replyWeight:["Text weight","Thickness of body text"],headingScale:["Heading scale","Relative size of headings"],replyPadding:["Reply padding","Space around reply text"],bubbleGap:["Bubble spacing","Space between objects"],codeSize:["Code size","Relative to reply text"],codeFont:["Code font","Typeface for code blocks"],codeWrap:["Wrap code","Fit long lines inside the bubble"],userLines:["My message line limit","Zero shows every line"],userAlign:["My message alignment","Side of the reply stack"],showPrompt:["Keep my message above the reply","Keep the prompt visible after sending"],linkStyle:["Link style","How links stand out"],quoteStyle:["Quote style","How quoted text appears"],softEdges:["Fade scroller edges","Soften clipped text at the edges"],scrollbarStyle:["Scrollbar style","Width of reply scrollbars"],
     enterStyle:["Reply entrance","How new replies arrive"],tabCount:["Recent tab count","Maximum tabs above the bar"],tabStyle:["Tab style","How tabs join the bar"],showAttach:["Attachment button","Show the paperclip"],orbStyle:["Orb style","Appearance of the brand mark"],sendStyle:["Send button style","Accent or quiet fill"],placeholderText:["Prompt placeholder","Shown when your message is empty"],streamStyle:["Streaming style","How incoming text appears"],streamSpeed:["Streaming speed","Pace of incoming text"],followStream:["Follow incoming text","Scroll as the reply grows"],streamCaret:["Streaming caret","Show a cursor while replying"]
   };
@@ -470,9 +470,9 @@
     });
     return row;
   }
-  SECTIONS.find(s => s.id === "behavior").groups.unshift([() => desktopControl("hotkey"), () => desktopControl("selection"), () => switchRow({key: "selectionClipboard", label: "Copy selection if needed", hint: "Briefly uses the clipboard when an app doesn't share its selection, then restores it"}), () => desktopControl("autostart")]);
-  SECTIONS.find(s => s.id === "shape").groups.unshift([() => switchRow({key:"nativeBlur",label:"Desktop blur",hint:"Blur the desktop behind each surface"})]);
-  const sectionOrder = ["presets","appearance","shape","text","streaming","motion","layout","behavior","chats","account","about"];
+  SECTIONS.find(s => s.id === "behavior").groups.unshift([() => desktopControl("hotkey"), () => desktopControl("selection"), () => switchRow({key: "selectionClipboard", label: "Copy selection if needed", hint: "Copies selected text when needed; restores the clipboard when possible"}), () => desktopControl("autostart")]);
+  SECTIONS.find(s => s.id === "shape").groups.unshift([() => switchRow({key:"nativeBlur",label:"Bar desktop blur",hint:"Blur the desktop behind the bar and menus"})]);
+  const sectionOrder = ["presets","appearance","shape","chatpanel","text","streaming","motion","layout","behavior","chats","account","about"];
   SECTIONS.sort((a,b) => sectionOrder.indexOf(a.id)-sectionOrder.indexOf(b.id));
   const scrollEl = $("section-scroll");
   const nav = $("section-nav");
@@ -576,6 +576,7 @@
     dim("tintColor", settings.tintSource !== "custom");
     dim("streamSpeed", settings.streamStyle === "instant");
     dim("blur", !settings.nativeBlur);
+    dim("replyBlur", !settings.replyNativeBlur);
     dim("accentColor", settings.accentSource !== "custom");
     for (const key of ["speed", "feel", "riseDistance", "tabPop", "shimmer"]) dim(key, noMotion);
     dim("showTabClock", !settings.showTabs);
