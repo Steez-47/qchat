@@ -1,8 +1,18 @@
-## Continued overnight iteration (2026-10-31)
+## v1.3.0 closeout (2026-11-01)
 
-Goal: add useful compact features, refine and test each one, commit locally, then continue. Preserve the running app, account/profile and unrelated icon.icns modification. No publication requested. The absent orchestrator playbook was read from git commit 37b5396.
+Status: finished. The owner ended feature iteration and requested a build, merge and release. O1 to O32 are committed and integrated. No feature or verification job remains claimed. The absent orchestrator playbook was read from git commit 37b5396.
 
-Current portable checkpoint: dist/overnight/20261101-075659-ffd0ac6/QChat.exe (sourceffd0ac6f74a7079cee784230e966906966e411df, SHA256ffa7b08cadec30a5a07192b7a5b4c54273f6b6407182e096f47227a866bef9e4). O25 is included. Compiled/staged/manifest/checksum match; original app and all7 older checkpoints are unchanged. Native checks use the debug build of the same source; release not launched. Goal stays active.
+- Release: https://github.com/Steez-47/qchat/releases/tag/v1.3.0, published once by the companion Claude thread, public, Latest and not a prerelease.
+- Built source and tag: `2c7368df8c544b9b4a3d1044325f4ea3028ce30c`. Root fast-forwarded main and atomically pushed main plus feat/overnight-iteration without force before publication. This closeout changes documentation only.
+- Assets in `dist/v1.3.0`: installer, portable QChat.exe, INSTALL.txt, THIRD-PARTY-NOTICES.txt and SHA256SUMS.txt. All five uploaded sizes and GitHub SHA256 digests independently match the local files. Companion also downloaded the portable app and install notes back and checked their hashes.
+- Installer SHA256: `563b1a6526c02a5da02f5da115d121ce41bc6aad90b9f66922dc444daecf5d99`; portable SHA256: `6e1c48a3f32d192cfa554554271c7e30783632c86106625fc25d6a9593b27222`. Both match the compiled outputs; portable ProductVersion is 1.3.0.
+- Verification: 75 distinct suites passed serially, including isolated native and live guest checks. The aggregate run had 74 passes and a stale selection-row locator failure; the locator was corrected without changing assertions, then selection-ui passed independently with 27 checks. Rust: 34 passed, one intentionally ignored real-clipboard fixture. No application code changed after the gate.
+- Session preservation: `dist/QChat.exe` and all 12 older overnight checkpoint hashes are unchanged. The owner's running app/profile was preserved. Neither the release executable nor installer was launched.
+- Integration audit: nine worker branch patches are already incorporated. The keyboard-copy and attachment-retry prototype branches are superseded and intentionally unmerged. Historical dirty worktrees were preserved, with index/working patches archived under `.tmp/finalization-archive`; their stream tests are already present or stronger in main.
+
+Remaining manual verification: signed-in provider use, including Temporary mode, attachments and export; physical shortcut handling; real clipboard round trip; installer and release executable launch; mixed-DPI placement and focus after closing sign-in. One unexplained historical guest failure remains recorded even though subsequent guest checks passed. Temporary mode deliberately refuses unsupported or unconfirmed provider states. Quit the existing app through its tray before installing or launching the new version.
+
+## Completed overnight iteration (2026-10-31 to 2026-11-01)
 
 | id | task | model | owns | status |
 |---|---|---|---|---|
@@ -32,7 +42,12 @@ Current portable checkpoint: dist/overnight/20261101-075659-ffd0ac6/QChat.exe (s
 | O24 | Recover ordinary drafts that have no sent messages | Terra high partial + root | draft-only chat preservation and tests | done -5b3389f built and staged; native baseline3 failures; final UI311/native59 PASS; provider-move duplication2 failures fixed, quote-only concern refuted; Claude no blocker |
 | O25 | Name local chats before sending their first message | Terra medium partial + root | rename eligibility and focused regression | done -921051c adopted, native baseline2 failures; final UI262/native20 PASS;20 focused cases,33 existing Rename checks, native340px inspected; Claude no findings |
 | O26 | Keep chat-list selection and focus stable as results load | Terra high + root | asynchronous chat search rendering/tests | done -a13824d adopted; final UI462/native41 PASS; native baseline8 failures; parent action-arrow/duplicate/paging8 failures fixed, same-node identity and target actions verified; Claude no blocker; next portable build after O27 |
-| O27 | Require a fresh Enter press to send a draft | Terra medium + root | composer send-key repeat guard/tests | starting -8-check mock probe reproduces3 failures: repeated Enter sends, error-restored draft resends, repeated Ctrl+Enter sends; newline/IME/non-repeat paths already pass |
+| O27 | Require a fresh Enter press to send a draft | Terra medium + root, companion final verification | composer send-key repeat guard/tests | done - fdcf928; held-send/IME/slash/confirmation guards and native/UI regressions passed |
+| O28 | Resolve interaction audit findings | Gemini Flash audit + companion Claude verification | UI/native and focused regressions | done - confirmed findings fixed; unsupported claims rejected; serial regressions passed |
+| O29 | Jump to the start with Ctrl+Home | Gemini Flash + companion Claude verification | UI shortcut and navigation tests | done - focused18 and related navigation/UI suites passed |
+| O30 | Discard composer work with Undo | Gemini Flash + companion Claude verification | UI discard lifecycle and tests | done - focused31,18 related UI suites and native regressions passed; in-flight file loss guarded |
+| O31 | Refine settings search and streamed replies | Gemini Flash audit + companion Claude verification | settings and safe response rendering/tests | done - reproduced parser/search findings fixed; unit and serial UI regressions passed |
+| O32 | Recover clipboard on failed capture and roll back invalid shortcuts | Gemini Flash audit + companion Claude verification | native selection/settings and tests | done - Rust34 plus1 ignored, native selection9/surfaces6/settings11 passed; real clipboard round trip remains manual |
 
 Verification uses isolated headless browsers and hidden native profiles. Build to a separate executable; do not replace dist/QChat.exe while the owner's instance is running. Each completed feature gets its own commit. Free provider failures will be recorded; no claims of exhaustive edge-case coverage.
 
@@ -487,7 +502,9 @@ Owner asked this thread to work with the Overnight App Feature Polishing thread 
 O6 undo for chat removal and /clear: done (6e84bdb). O7 audit bug fixes: done; stop before first token, Retry on attachment turns (the dead button is no longer shown), multiline recall, History media, reply after DOM fallback open, settings section search. Headless browser suites only; live WebView2 not exercised. Suites flake when several Edge instances run at once, so run them one at a time.
 Next: O8 paste anywhere; O9 edit and resend.
 
-## Handoff (2026-11-01, Claude thread)
+## Historical handoff (2026-11-01, Claude thread)
+
+Superseded by the v1.3.0 closeout above. The notes below preserve the earlier checkpoints and verification boundaries.
 
 Companion thread stopped on Codex's usage limit (resets 2026-11-07 19:18). Free OpenCode models were also out at last try; Gemini reported out earlier. All work O1 to O27 is committed on feat/overnight-iteration; latest portable build dist/overnight/20261101-084009-fdcf928. Nothing pushed or published. No feature is in progress; no uncommitted source.
 Open: unexplained live guest failure (one run; diagnostics now capture code and message). Not verified: any signed-in use (Temporary chat, attachments, export on real chats), real clipboard, real keypresses of Ctrl+Shift+N and Ctrl+Shift+C, this release exe launched. Leftover unused branches: t3/keyboard-copy-latest-reply, t3/retry-failed-attachment-turns, plus idle worktrees under .t3/worktrees.
