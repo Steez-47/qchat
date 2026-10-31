@@ -1,42 +1,54 @@
 // Isolated native attachment and media broker checks. No account data is read or logged.
 import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const exe = path.join(root, 'src-tauri', 'target', 'debug', 'qchat.exe');
-const port = 9344;
+const exe = path.join(process.env.CARGO_TARGET_DIR || path.join(root, 'src-tauri', 'target'), 'debug', 'qchat.exe');
+const reserve = createServer();await new Promise(resolve=>reserve.listen(0,'127.0.0.1',resolve));
+const port = reserve.address().port;await new Promise(resolve=>reserve.close(resolve));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function cdp(wsUrl) {
   const ws = new WebSocket(wsUrl); let n = 0; const pend = new Map();
   ws.onmessage = m => { const d = JSON.parse(m.data); if (d.id && pend.has(d.id)) { pend.get(d.id)(d); pend.delete(d.id); } };
-  const ready = new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
-  const call = async (method, params = {}) => { const id = ++n; ws.send(JSON.stringify({ id, method, params })); return new Promise((r, j) => { pend.set(id, d => d.error ? j(Error(d.error.message)) : r(d.result || {})); }); };
+  const ready = new Promise((r, j) => { const timer=setTimeout(()=>j(Error('CDP connection timeout')),10000);ws.onopen=()=>{clearTimeout(timer);r()};ws.onerror=()=>{clearTimeout(timer);j(Error('CDP connection failed'))}; });
+  ws.onclose=()=>{for(const callback of pend.values())callback({error:{message:'CDP closed'}});pend.clear()};
+  const call = async (method, params = {}) => { await ready;const id = ++n; return new Promise((r, j) => { const timer=setTimeout(()=>{pend.delete(id);j(Error('CDP timeout: '+method))},15000);pend.set(id, d => {clearTimeout(timer);d.error ? j(Error(d.error.message)) : r(d.result || {})});ws.send(JSON.stringify({ id, method, params })); }); };
   const evaluate = async expr => { const d = await call('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }); if (d.exceptionDetails) throw Error(`page evaluation failed: ${String(d.exceptionDetails.exception?.description || d.exceptionDetails.text || '').slice(0, 150)}`); return d.result?.value; };
   return { ready, evaluate, call, close: () => ws.close() };
 }
 const profile = mkdtempSync(path.join(tmpdir(), 'qchat-native-media-'));
 let app, ui, site, failed = 0;
+function ownsEndpoint() {
+  const script=`$probeId=Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction Stop | Where-Object { $_.LocalAddress -in @('127.0.0.1','0.0.0.0') } | Select-Object -First 1 -ExpandProperty OwningProcess;for($depth=0;$depth -lt 20 -and $probeId;$depth++){if($probeId -eq ${app.pid}){Write-Output 'owned';exit 0};$record=Get-CimInstance Win32_Process -Filter "ProcessId = $probeId" -ErrorAction Stop;$probeId=$record.ParentProcessId};exit 1`;
+  const result=spawnSync('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-Command',script],{encoding:'utf8',windowsHide:true,timeout:10000});
+  return result.status===0&&result.stdout.trim()==='owned';
+}
 const check = (name, ok, info = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${info ? ` :: ${info}` : ''}`); if (!ok) failed++; };
 const safeError = async p => { try { await p; return false; } catch { return true; } };
 try {
   if (!existsSync(exe)) throw Error('Debug executable missing; build src-tauri first.');
   app = spawn(exe, [], { env: { ...process.env, QCHAT_DEBUG_PORT: String(port), QCHAT_TEST_MODE: '1', QCHAT_TEST_PROFILE: profile }, stdio: 'ignore', windowsHide: true });
+  let launchError;app.on('error',error=>{launchError=error});
   let pages = [];
   for (let i = 0; i < 100; i++) {
-    try { pages = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); } catch {}
+    if(launchError)throw launchError;if(app.exitCode!==null)throw Error('Isolated test app exited early');
+    try { pages = await (await fetch(`http://127.0.0.1:${port}/json`,{signal:AbortSignal.timeout(700)})).json(); } catch {}
     if (pages.some(p => p.url.includes('tauri.localhost')) && pages.some(p => p.url.includes('chatgpt.com'))) break;
     await sleep(500);
   }
   const mainPage = pages.find(p => p.url.includes('tauri.localhost'));
   const sitePage = pages.find(p => p.url.includes('chatgpt.com'));
   if (!mainPage || !sitePage) throw Error('App CDP pages did not become ready.');
+  if(!ownsEndpoint())throw Error('Debug endpoint is not owned by spawned QChat; refusing to attach');
   ui = cdp(mainPage.webSocketDebuggerUrl); site = cdp(sitePage.webSocketDebuggerUrl); await Promise.all([ui.ready, site.ready]);
   let status = '';
   for (let i = 0; i < 80; i++) { status = await ui.evaluate("document.getElementById('status-label')?.textContent||''"); if (/Ready|Guest/.test(status)) break; await sleep(500); }
   check('main bridge ready', /Ready|Guest/.test(status));
+  let uploadGeneration=(await ui.evaluate("window.__TAURI__.core.invoke('launch_info')")).uploadGeneration;
   check('bridge context denies native attachment command', await safeError(site.evaluate("window.__TAURI_INTERNALS__.invoke('attachment_begin',{name:'x',mime:'text/plain',size:0})")));
   check('bridge context denies native media command', await safeError(site.evaluate("window.__TAURI_INTERNALS__.invoke('media_load',{mediaId:'x'})")));
   check('bridge context denies native image copy', await safeError(site.evaluate("window.__TAURI_INTERNALS__.invoke('image_copy',{width:1,height:1,rgba:'AAAAAA=='})")));
@@ -44,7 +56,7 @@ try {
 
   const fixture = Buffer.alloc(700123); for (let i = 0; i < fixture.length; i++) fixture[i] = (i * 31 + 17) & 255;
   const expected = fixture.toString('base64');
-  const begun = await ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'資料 🧪.txt',mime:'text/plain; charset=utf-8',size:${fixture.length}})`);
+  const begun = await ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'資料 🧪.txt',mime:'text/plain; charset=utf-8',size:${fixture.length},uploadGeneration:${uploadGeneration}})`);
   check('attachment metadata preserves Unicode filename and MIME', begun.name === '資料 🧪.txt' && begun.mime === 'text/plain' && begun.size === fixture.length);
   const id = begun.id;
   check('reject incorrect chunk offset', await safeError(ui.evaluate(`window.__TAURI__.core.invoke('attachment_chunk',{id:${JSON.stringify(id)},offset:1,data:'AA=='})`)));
@@ -53,6 +65,7 @@ try {
   for (let offset = 0; offset < fixture.length;) { const bytes = fixture.subarray(offset, Math.min(offset + 512 * 1024, fixture.length)); await ui.evaluate(`window.__TAURI__.core.invoke('attachment_chunk',{id:${JSON.stringify(id)},offset:${offset},data:${JSON.stringify(bytes.toString('base64'))}})`); offset += bytes.length; }
   const finished = await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(id)}})`);
   check('stage multi-chunk attachment', finished.id === id && finished.kind === 'file');
+  check('Stop before a native flight preserves staged draft ownership', (await ui.evaluate("window.__TAURI__.core.invoke('chat_stop')")).includes(id)&&!!await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(id)}})`));
   // Page synchronization must retain a draft staged before a lazy chat open/new.
   await site.evaluate(`window.__qchat.openConversation=async()=>{};window.__qchat.newChat=async()=>{}`);
   for (const [command, args] of [['chat_open', {conversationId:'fixture-conversation',preserveUploads:true}], ['chat_new', {preserveUploads:true}]]) {
@@ -60,11 +73,18 @@ try {
     const retained = await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(id)}})`);
     check(`${command} page synchronization retains staged attachment`, retained.id === id);
   }
-  check('reject staged filename traversal', await safeError(ui.evaluate("window.__TAURI__.core.invoke('attachment_begin',{name:'../../escape.txt',mime:'text/plain',size:0})")));
-  const removed = await ui.evaluate("window.__TAURI__.core.invoke('attachment_begin',{name:'remove.txt',mime:'text/plain',size:0})");
+  check('reject staged filename traversal', await safeError(ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'../../escape.txt',mime:'text/plain',size:0,uploadGeneration:${uploadGeneration}})`)));
+  const removed = await ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'remove.txt',mime:'text/plain',size:0,uploadGeneration:${uploadGeneration}})`);
   await ui.evaluate(`window.__TAURI__.core.invoke('attachment_remove',{id:${JSON.stringify(removed.id)}})`);
   check('reject removed attachment token', await safeError(ui.evaluate(`window.__TAURI__.core.invoke('attachment_chunk',{id:${JSON.stringify(removed.id)},offset:0,data:''})`)));
 
+  await site.evaluate(`(()=>{const f=document.createElement('input');f.type='file';f.id='qchat-fixture-upload';document.body.append(f);window.__qchat.attachmentInput=async()=> '#qchat-fixture-upload';window.__qchat.send=p=>window.__QCHAT_EMIT__({type:'error',id:p.id,code:'send_failed'})})()`);
+  await ui.evaluate(`window.__TAURI__.core.invoke('chat_send',{id:'failed-upload',prompt:'fixture',attachmentIds:[${JSON.stringify(id)}]})`);
+  await sleep(300);
+  check('error retains quota', await safeError(ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'quota.txt',mime:'text/plain',size:536870912,uploadGeneration:${uploadGeneration}})`)));
+  check('error retains staged file', !!await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(id)}})`));
+  await site.call('Page.reload');
+  for(let i=0;i<80;i++){if(await site.evaluate('!!window.__qchat'))break;await sleep(250);}
   await site.evaluate(`(()=>{const f=document.createElement('input');f.type='file';f.id='qchat-fixture-upload';f.hidden=true;document.body.append(f);window.__qchat.attachmentInput=async()=> '#qchat-fixture-upload';window.__qchat.send=async p=>{const file=document.querySelector('#qchat-fixture-upload').files[0];const b=new Uint8Array(await file.arrayBuffer());let s='';for(let i=0;i<b.length;i+=0x8000)s+=String.fromCharCode(...b.subarray(i,i+0x8000));window.__qchatFixtureSent={name:file.name,type:file.type,b64:btoa(s),count:1};await window.__QCHAT_EMIT__({type:'done',id:p.id})}})()`);
   await ui.evaluate(`window.__TAURI__.core.invoke('chat_send',{id:'native-media-fixture',prompt:'fixture',attachmentIds:[${JSON.stringify(id)}]})`);
   let uploaded = null;
@@ -73,11 +93,74 @@ try {
   const parity = await site.evaluate(`(()=>{const f=document.querySelector('#qchat-fixture-upload')?.files?.[0],sent=window.__qchatFixtureSent;return !!f&&!!sent&&f.name==='資料 🧪.txt'&&f.type==='text/plain'&&sent.name===f.name&&sent.type===f.type&&sent.b64===${JSON.stringify(expected)}&&sent.count===1})()`);
   check('CDP staged bytes reach actual site file input exactly once before terminal', parity && uploaded?.name === '資料 🧪.txt' && uploaded?.type === 'text/plain' && uploaded?.count === 1);
   await sleep(300);
-  const capacityId = await ui.evaluate("window.__TAURI__.core.invoke('attachment_begin',{name:'capacity-check.txt',mime:'text/plain',size:536870912}).catch(()=>null)");
+  const capacityId = await ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'capacity-check.txt',mime:'text/plain',size:536870912,uploadGeneration:${uploadGeneration}}).catch(()=>null)`);
   check('terminal event releases staged attachment quota', !!capacityId?.id);
   if (capacityId?.id) await ui.evaluate(`window.__TAURI__.core.invoke('attachment_remove',{id:${JSON.stringify(capacityId.id)}})`);
   await site.evaluate("document.querySelector('#qchat-fixture-upload')?.remove();delete window.__qchatFixtureSent");
   await ui.evaluate(`window.__TAURI__.core.invoke('attachment_remove',{id:${JSON.stringify(id)}})`);
+
+  // A synchronous dispatch failure retains bytes, then transfers exclusive
+  // ownership. Old terminal events cannot affect the new native flight.
+  const retryFile=await ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'retry.txt',mime:'text/plain',size:0,uploadGeneration:${uploadGeneration}})`);
+  await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(retryFile.id)}})`);
+  await site.evaluate("(()=>{const input=document.createElement('input');input.type='file';input.id='qchat-fixture-upload';input.hidden=true;document.body.append(input);window.__qchat.send=()=>{window.__dispatchThrew=true;throw Error('fixture dispatch failed')}})()");
+  check('dispatch exception rejects send',await safeError(ui.evaluate(`window.__TAURI__.core.invoke('chat_send',{id:'dispatch-failed',prompt:'fixture',attachmentIds:[${JSON.stringify(retryFile.id)}]})`))&&await site.evaluate('window.__dispatchThrew===true'));
+  check('failed dispatch retains its staged bytes',!!await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(retryFile.id)}})`));
+  await site.evaluate("window.__qchat.send=p=>{window.__retrySent=p.id}");
+  await ui.evaluate(`window.__TAURI__.core.invoke('chat_send',{id:'retry-active',prompt:'fixture',attachmentIds:[${JSON.stringify(retryFile.id)}]})`);
+  await site.evaluate("(async()=>{for(const type of ['done','error'])await window.__QCHAT_EMIT__({type,id:'dispatch-failed',code:'send_failed'})})()");
+  check('stale native terminal leaves retry file and flight owned',!!await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(retryFile.id)}})`)&&await site.evaluate("window.__retrySent==='retry-active'")&&await safeError(ui.evaluate("window.__TAURI__.core.invoke('chat_send',{id:'should-be-busy',prompt:'fixture'})")));
+  await ui.evaluate("window.__TAURI__.core.invoke('chat_stop')");
+  check('native Stop releases active retry bytes',await safeError(ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(retryFile.id)}})`)));
+
+  const orphan=await ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'orphan.txt',mime:'text/plain',size:0,uploadGeneration:${uploadGeneration}})`);
+  await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(orphan.id)}})`);
+  await site.evaluate("window.__qchat.send=p=>{window.__QCHAT_EMIT__({type:'error',id:p.id,code:'timeout'})}");
+  await ui.evaluate(`window.__TAURI__.core.invoke('chat_send',{id:'reload-retained',prompt:'fixture',attachmentIds:[${JSON.stringify(orphan.id)}]})`);
+  await sleep(100);
+  await ui.call('Page.reload');
+  for(let i=0;i<80;i++){try{if(await ui.evaluate("!!window.QSettings&&document.readyState==='complete'"))break}catch{}await sleep(100)}
+  const previousGeneration=uploadGeneration;
+  uploadGeneration=(await ui.evaluate("window.__TAURI__.core.invoke('launch_info')")).uploadGeneration;
+  check('main reload releases unreachable retry bytes and changes upload session',uploadGeneration>previousGeneration&&await safeError(ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(orphan.id)}})`)));
+  check('queued old-document begin cannot create orphan files',await safeError(ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'late-old.txt',mime:'text/plain',size:0,uploadGeneration:${previousGeneration}})`)));
+  const currentFile=await ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'current.txt',mime:'text/plain',size:536870912,uploadGeneration:${uploadGeneration}})`);
+  check('main reload restores full upload quota for new session',!!currentFile.id);
+  await ui.evaluate(`window.__TAURI__.core.invoke('attachment_remove',{id:${JSON.stringify(currentFile.id)}})`);
+
+  const racing=await ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'racing.txt',mime:'text/plain',size:0,uploadGeneration:${uploadGeneration}})`);
+  await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(racing.id)}})`);
+  await site.evaluate("window.__lateDispatches=0;window.__qchat.send=()=>{window.__lateDispatches++};window.__qchat.attachmentInput=()=>{window.__inputWaiting=true;return new Promise(resolve=>{window.__releaseInput=()=>resolve('#qchat-fixture-upload')})}");
+  await ui.evaluate(`window.__racingSend=window.__TAURI__.core.invoke('chat_send',{id:'reload-attaching',prompt:'fixture',attachmentIds:[${JSON.stringify(racing.id)}]}).catch(()=>{});true`);
+  for(let i=0;i<80;i++){if(await site.evaluate('window.__inputWaiting===true'))break;await sleep(50)}
+  await ui.call('Page.reload');
+  for(let i=0;i<80;i++){try{if(await ui.evaluate("!!window.QSettings&&document.readyState==='complete'"))break}catch{}await sleep(100)}
+  await site.evaluate('window.__releaseInput()');await sleep(500);
+  check('main reload cancels an in-flight attach before provider dispatch',await site.evaluate('window.__lateDispatches===0')&&await safeError(ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(racing.id)}})`)));
+  uploadGeneration=(await ui.evaluate("window.__TAURI__.core.invoke('launch_info')")).uploadGeneration;
+
+  const unsent=await ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'unsent.txt',mime:'text/plain',size:0,uploadGeneration:${uploadGeneration}})`);
+  await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(unsent.id)}})`);
+  await site.evaluate('window.__inputWaiting=false;window.__qchat.newChat=async()=>{};window.__qchat.openConversation=async()=>{}');
+  await ui.evaluate(`window.__earlyStopped=false;window.__TAURI__.core.invoke('chat_send',{id:'stop-before-dispatch',prompt:'fixture',attachmentIds:[${JSON.stringify(unsent.id)}]}).catch(()=>{window.__earlyStopped=true});true`);
+  for(let i=0;i<80;i++){if(await site.evaluate('window.__inputWaiting===true'))break;await sleep(50)}
+  const keptDrafts=await ui.evaluate("window.__TAURI__.core.invoke('chat_stop')");
+  await site.evaluate('window.__releaseInput()');
+  for(let i=0;i<80;i++){if(await ui.evaluate('window.__earlyStopped'))break;await sleep(50)}
+  check('Stop before dispatch preserves original draft bytes and reports their ownership',Array.isArray(keptDrafts)&&keptDrafts.includes(unsent.id)&&!!await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(unsent.id)}})`)&&await ui.evaluate('window.__earlyStopped')&&await site.evaluate('window.__lateDispatches===0'));
+  await ui.evaluate(`window.__TAURI__.core.invoke('attachment_remove',{id:${JSON.stringify(unsent.id)}})`);
+
+  await site.evaluate('window.__inputWaiting=false');
+  await ui.evaluate("(()=>{const data=new DataTransfer();data.items.add(new File(['draft bytes'],'ui-stop.txt',{type:'text/plain'}));const input=document.getElementById('attachment-input');input.files=data.files;input.dispatchEvent(new Event('change'))})()");
+  for(let i=0;i<80;i++){if(await ui.evaluate("!!document.querySelector('#attachments [data-state=ready]')"))break;await sleep(50)}
+  await ui.evaluate("(()=>{const input=document.getElementById('prompt-input');input.value='preserve UI draft';input.dispatchEvent(new Event('input'));document.getElementById('btn-send').click()})()");
+  for(let i=0;i<80;i++){if(await site.evaluate('window.__inputWaiting===true'))break;await sleep(50)}
+  await ui.evaluate("document.getElementById('btn-send').click()");await sleep(150);
+  await site.evaluate('window.__releaseInput()');
+  for(let i=0;i<80;i++){if(await ui.evaluate("!document.querySelector('#bubble-zone [data-role=assistant]')&&document.getElementById('prompt-input').value==='preserve UI draft'"))break;await sleep(50)}
+  const uiDraftIds=await ui.evaluate("window.__TAURI__.core.invoke('chat_stop')");
+  check('real UI Stop before acceptance restores draft and preserves its file chip and bytes',uiDraftIds.length===1&&await ui.evaluate("document.getElementById('prompt-input').value==='preserve UI draft'&&!!document.querySelector('#attachments [data-state=ready]')&&!document.querySelector('#bubble-zone [data-role=assistant]')")&&!!await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(uiDraftIds[0])}})`));
+  await ui.evaluate("document.querySelector('#attachments .attachment-chip .icon-btn').click()");
 
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
   await site.evaluate(`window.__qchat.resolveMedia=async()=>({url:'data:image/png;base64,${png}',name:'test.png',kind:'image',mime:'image/png'})`);

@@ -399,7 +399,7 @@ fn bridge_event(app: tauri::AppHandle, window: tauri::WebviewWindow, mut event: 
     event["provider"]=provider.into();
     if matches!(event["type"].as_str(), Some("done" | "error")) {
         if let Some(id) = event["id"].as_str() {
-            media::finish_turn(&app, id);
+            media::terminal_turn(&app, id, event["type"].as_str() == Some("error"), event["code"].as_str());
         }
     }
     let auto_return = {
@@ -485,6 +485,7 @@ async fn chat_send(
     validate_reasoning_effort(reasoning_effort.as_deref())?;
     chat_page(&app)?;
     resume(&app);
+    expire_flight(&app);
     {
         let s = app.state::<Host>();
         let mut a = s.0.lock().unwrap();
@@ -492,14 +493,19 @@ async fn chat_send(
         if provider.as_ref().is_some_and(|p| p != &a.active) {
             return Err("provider_mismatch: Active provider changed".into());
         }
-        if a.flight_id.is_some() && a.last_progress.elapsed() < Duration::from_secs(600) {
+        if a.flight_id.is_some() {
             return Err("busy: A request is already in progress".into());
         }
         a.flight_id = Some(id.clone());
         a.last_progress = Instant::now();
     }
     let attachment_ids = attachment_ids.unwrap_or_default();
-    if let Err(error) = media::attach(&app, &attachment_ids, &id).await {
+    let attached = match media::track_turn(&app, &id, &attachment_ids) {
+        Ok(()) => media::attach(&app, &attachment_ids, &id).await,
+        Err(error) => Err(error),
+    };
+    if let Err(error) = attached {
+        media::abandon_turn(&app, &id);
         let state = app.state::<Host>();
         let mut a = state.0.lock().unwrap();
         if a.flight_id.as_deref() == Some(&id) {
@@ -524,9 +530,9 @@ async fn chat_send(
         &serde_json::json!({"id":id,"prompt":prompt,"attachmentCount":attachment_ids.len(),"reasoningEffort":reasoning_effort}),
     )
     .map_err(|e| e.to_string())?;
-    media::track_turn(&app, &id, &attachment_ids);
-    let result = eval(&app,&format!("(()=>{{const p={data}; if(window.__qchat) window.__qchat.send(p); else window.__QCHAT_EMIT__({{type:'error',id:p.id,code:'not_ready',message:'Provider page not loaded yet'}});}})()"));
+    let result = media::dispatch_turn(&app, &id, format!("(()=>{{const p={data}; if(window.__qchat) window.__qchat.send(p); else window.__QCHAT_EMIT__({{type:'error',id:p.id,code:'not_ready',message:'Provider page not loaded yet'}});}})()")).await;
     if result.is_err() {
+        media::abandon_turn(&app, &id);
         let state = app.state::<Host>();
         let mut a = state.0.lock().unwrap();
         if a.flight_id.as_deref() == Some(&id) {
@@ -535,10 +541,25 @@ async fn chat_send(
     }
     result
 }
+fn expire_flight(app: &tauri::AppHandle) {
+    let expired = {
+        let state = app.state::<Host>();
+        let mut a = state.0.lock().unwrap();
+        if a.last_progress.elapsed() >= Duration::from_secs(600) {
+            a.flight_id.take().map(|id| (id, a.active.clone()))
+        } else { None }
+    };
+    if let Some((id, provider)) = expired {
+        media::abandon_turn(app, &id);
+        let _ = app.emit_to("main", "bridge", serde_json::json!({"type":"error","id":id,"provider":provider,"code":"timeout"}));
+    }
+}
 #[tauri::command]
-fn chat_stop(app: tauri::AppHandle) -> Result<(), String> {
-    app.state::<Host>().0.lock().unwrap().flight_id = None;
-    eval(&app, "window.__qchat && window.__qchat.stop()")
+fn chat_stop(app: tauri::AppHandle) -> Vec<String> {
+    let id = app.state::<Host>().0.lock().unwrap().flight_id.take();
+    if let Some(id) = id { media::cancel_turn(&app, &id); }
+    let _ = eval(&app, "window.__qchat && window.__qchat.stop()");
+    media::draft_uploads(&app)
 }
 #[tauri::command]
 fn chat_models(app: tauri::AppHandle) -> Result<(), String> { eval(&app, "if (window.__qchat) window.__qchat.listModels(); else if (window.__QCHAT_EMIT__) window.__QCHAT_EMIT__({type:'models',models:[],error:'unavailable'});") }
@@ -622,7 +643,7 @@ fn test_profile() -> Option<std::path::PathBuf> {
 #[tauri::command]
 fn provider_get(app: tauri::AppHandle) -> String { active_provider(&app) }
 #[tauri::command]
-fn launch_info() -> serde_json::Value { serde_json::json!({"autostart":std::env::args().any(|a|a=="--autostart")}) }
+fn launch_info(app: tauri::AppHandle) -> serde_json::Value { serde_json::json!({"autostart":std::env::args().any(|a|a=="--autostart"),"uploadGeneration":media::upload_generation(&app)}) }
 #[tauri::command]
 fn show_main(app: tauri::AppHandle) { show(&app); }
 fn ensure_provider(app: &tauri::AppHandle, provider: &str) -> Result<(),String> {
@@ -741,7 +762,12 @@ fn main() {
      }
    }
  });
- {let b=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat").inner_size(480.,110.).min_inner_size(120.,60.).decorations(false).shadow(false).transparent(true).always_on_top(true).skip_taskbar(true).resizable(false).disable_drag_drop_handler().visible(false).build()?;
+ {let b=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat").inner_size(480.,110.).min_inner_size(120.,60.).decorations(false).shadow(false).transparent(true).always_on_top(true).skip_taskbar(true).resizable(false).disable_drag_drop_handler().visible(false)
+ .on_page_load(|window,payload| { if payload.event() == tauri::webview::PageLoadEvent::Started {
+     let app=window.app_handle();
+     let _=chat_stop(app.clone());
+     media::reset_uploads(app);
+ } }).build()?;
  {let b=WebviewWindowBuilder::new(app,"chatgpt",WebviewUrl::External("https://chatgpt.com/".parse()?)); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat - ChatGPT sign-in").inner_size(1000.,760.).skip_taskbar(true).decorations(false).visible(false)
  .initialization_script("if(location.hostname === 'chatgpt.com' || location.hostname.endsWith('.chatgpt.com')) window.__QCHAT_EMIT__ = (evt) => window.__TAURI_INTERNALS__.invoke('bridge_event', {event:evt});")
  .initialization_script(include_str!("../../ui/response-tags.js"))
@@ -763,10 +789,12 @@ fn main() {
  if test_profile().is_some() { show(app.handle()); }
  let handle=app.handle().clone();std::thread::spawn(move||loop{
  std::thread::sleep(Duration::from_secs(10));
+ expire_flight(&handle);
+ media::expire_uploads(&handle);
  let hidden=handle.get_webview_window("main").and_then(|w| w.is_visible().ok()).map(|v| !v).unwrap_or(false);
  for provider in ["chatgpt","gemini"] {
  if handle.get_webview_window(provider).is_none() {continue}
- let (suspend,generation)={let s=handle.state::<Host>();let mut a=s.0.lock().unwrap();if a.flight_id.is_some()&&a.last_progress.elapsed()>=Duration::from_secs(600){a.flight_id=None;} let idle=hidden&&a.hidden.elapsed()>=Duration::from_secs(180)&&a.flight_id.is_none(); let a=a.providers.get_mut(provider).unwrap(); let yes=idle&&a.background&&!a.suspended&&!a.suspend_pending;if yes{a.suspend_pending=true;}(yes,a.resume_generation)};
+ let (suspend,generation)={let s=handle.state::<Host>();let mut a=s.0.lock().unwrap();let idle=hidden&&a.hidden.elapsed()>=Duration::from_secs(180)&&a.flight_id.is_none(); let a=a.providers.get_mut(provider).unwrap(); let yes=idle&&a.background&&!a.suspended&&!a.suspend_pending;if yes{a.suspend_pending=true;}(yes,a.resume_generation)};
  if suspend {
    if let Some(w)=handle.get_webview_window(provider) {
      let callback_handle=handle.clone();

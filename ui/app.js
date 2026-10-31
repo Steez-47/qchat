@@ -4,6 +4,7 @@
   const IS_MOCK = window.__QCHAT_MOCK__ === true;
   const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
   const listen = (event, cb) => window.__TAURI__.event.listen(event, cb);
+  const launchInfo = invoke("launch_info").catch(() => null);
   const GUTTER = 28;
   const CHATS_KEY = "qchat.chats";
   const CHATS_VERSION = 1;
@@ -1389,7 +1390,8 @@
   async function stageAttachment(item) {
     try {
       if (item.cancelled) return;
-      const meta = await invoke("attachment_begin", { name: item.file.name, mime: item.file.type || "application/octet-stream", size: item.file.size });
+      const info = await launchInfo;
+      const meta = await invoke("attachment_begin", { name: item.file.name, mime: item.file.type || "application/octet-stream", size: item.file.size, uploadGeneration: info?.uploadGeneration || 0 });
       if (!meta || typeof meta.id !== "string") throw new Error("Invalid attachment response");
       item.id = meta.id;
       while (!item.cancelled && item.offset < item.file.size) {
@@ -1914,6 +1916,27 @@
     return row;
   }
 
+  const attachmentRetryCodes = new Set(["send_failed", "stream_failed", "timeout", "not_ready"]);
+  function retainTurnFiles(turn) {
+    clearTimeout(turn.retryTimer);
+    if (!turn.retryFiles?.length) return;
+    turn.retryTimer = setTimeout(() => {
+      releaseTurnFiles(turn);
+      if (turn.status === "error" && turns.includes(turn)) {
+        turn.error = "These files have expired. Attach them again.";
+        scheduleTurnRender(turn.id, true);
+      }
+    }, 10 * 60 * 1000);
+  }
+  function releaseTurnFiles(turn, retainedIds = []) {
+    clearTimeout(turn.retryTimer);
+    for (const file of turn.retryFiles || []) {
+      if (pendingFiles.includes(file)) { if (!retainedIds.includes(file.id)) removeAttachment(file); }
+      else void discardAttachment(file);
+    }
+    turn.retryFiles = null;
+  }
+
   function buildTurnError(turn) {
     const line = make("div", "error-line");
     line.setAttribute("role", "alert");
@@ -1925,7 +1948,7 @@
       signin.dataset.action = "signin";
       actions.appendChild(signin);
     }
-    if (!turn.hadAttachments && (turn.prompt || turn.selectionTexts?.length)) {
+    if (turn.code !== "auth" && (turn.hadAttachments ? turn.retryFiles?.length && attachmentRetryCodes.has(turn.code) : (turn.prompt || turn.selectionTexts?.length))) {
       const retry = make("button", "btn btn-compact", "Retry");
       retry.type = "button";
       retry.dataset.action = "retry-turn";
@@ -2282,6 +2305,7 @@
     let stopping = false;
     for (const turn of turns.slice()) {
       if (turn.status === "streaming") { stopping = true; turn.status = "done"; turn.stopped = true; }
+      releaseTurnFiles(turn);
       retireTurn(turn, immediate);
     }
     if (stopping) void stopBackend();
@@ -2406,10 +2430,16 @@
 
   const IMAGE_PROMPT = /^(?:please\s+)?(?:generate|create|draw|paint|render|make|design)\b[\s\S]{0,100}\b(?:image|picture|photo|illustration|artwork|portrait)\b/i;
 
-  async function sendPrompt(rawPrompt, { fromInput = false, selectionTexts = fromInput ? chats.current.selectionTexts.slice() : [] } = {}) {
+  async function sendPrompt(rawPrompt, { fromInput = false, selectionTexts = fromInput ? chats.current.selectionTexts.slice() : [], retryFiles = null, retrying = false } = {}) {
     const prompt = String(rawPrompt ?? "").trim();
-    const files = pendingFiles.filter((f) => f.state === "ready");
-    if (snapshotCapturing || isBusy() || pendingFiles.some((f) => f.state === "staging") || (!prompt && !files.length && !selectionTexts.length)) return;
+    const files = retryFiles || (retrying ? [] : pendingFiles.filter((f) => f.state === "ready"));
+    const staging = pendingFiles.some((f) => f.state === "staging");
+    if (snapshotCapturing || staging) {
+      if (retrying) showCommandFeedback(snapshotCapturing ? "Wait for the snapshot to finish." : "Wait for files to finish attaching.");
+      return;
+    }
+    if (isBusy() || (!prompt && !files.length && !selectionTexts.length)) return;
+    const consumeDraft = fromInput || (retrying && el.promptInput.value === prompt);
     prompts.push(prompt); recallIndex = -1;
     const chat = chats.current;
     const previousMeta = { title: chat.title, lastPrompt: chat.lastPrompt, lastHadAttachments: chat.lastHadAttachments, lastActive: chat.lastActive };
@@ -2421,7 +2451,7 @@
     const draft = el.promptInput.value;
     const revision = draftEditRevision;
     const restoreDraft = () => {
-      if (fromInput && revision === draftEditRevision && generation === chatGeneration && chats.current === chat && !el.promptInput.value) {
+      if (consumeDraft && revision === draftEditRevision && generation === chatGeneration && chats.current === chat && !el.promptInput.value) {
         el.promptInput.value = draft; autoResizePrompt(); updateDraft(); cancelDraftSave(); saveChats();
       }
     };
@@ -2431,12 +2461,16 @@
     if (!featureList.hidden) closeFeatureList();
     hideClearConfirm();
     setHistoryOpen(false);
+    for (const turn of turns) {
+      if (turn.retryFiles?.some(file => files.includes(file))) { clearTimeout(turn.retryTimer); turn.retryFiles = null; }
+    }
     dismissExchange();
     sentThisSession = true;
 
     const userTurn = { id: crypto.randomUUID(), role: "user", text: prompt, selectionTexts, selectionMatch: selectionTexts.length ? selectionMatch(wirePrompt(prompt, selectionTexts)) : undefined, status: "done", chatKey: chat.key, attachments: files.map((f) => ({ name: f.file.name, size: f.file.size, previewURL: imagePreview(f.file) })) };
     const assistantTurn = { id: crypto.randomUUID(), role: "assistant", text: "", status: "streaming", prompt, selectionTexts, hadAttachments: files.length > 0, chatKey: chat.key };
     assistantTurn.restoreDraft = restoreDraft;
+    assistantTurn.retryFiles = files.length ? files : null;
     assistantTurn.undoEmptyExchange = () => {
       chat.transcript = chat.transcript.filter(item => item.id !== userTurn.id && item.id !== assistantTurn.id);
       Object.assign(chat, previousMeta);
@@ -2463,7 +2497,7 @@
     rememberTurn(userTurn);
     rememberTurn(assistantTurn);
     chat.lastActive = Date.now();
-    if (fromInput) { cancelDraftSave(); el.promptInput.value = ""; chat.draft = ""; autoResizePrompt(); }
+    if (consumeDraft) { cancelDraftSave(); el.promptInput.value = ""; chat.draft = ""; autoResizePrompt(); }
     saveChats();
     updateGuestNotice();
     updateIdleChips();
@@ -2497,10 +2531,17 @@
       }
       if (assistantTurn.status !== "streaming") return;
       const code = errorCode(err);
+      if (retryFiles && /Attachment (is unavailable|was removed|unavailable)/i.test(String(err))) {
+        releaseTurnFiles(assistantTurn);
+        if (!el.promptInput.value) { el.promptInput.value = prompt; autoResizePrompt(); updateDraft(); }
+        assistantTurn.error = "This file is no longer available. Attach it again.";
+      }
       flushReveal(assistantTurn);
       assistantTurn.status = "error";
       assistantTurn.code = code;
-      assistantTurn.error = formatErrorCopy(code);
+      if (attachmentRetryCodes.has(code)) retainTurnFiles(assistantTurn);
+      else releaseTurnFiles(assistantTurn);
+      assistantTurn.error = assistantTurn.error || formatErrorCopy(code);
       revealResponse(assistantTurn);
       scheduleTurnRender(assistantTurn.id, true);
       updateComposerMode();
@@ -2539,13 +2580,15 @@
     }
     updateComposerMode();
     queueSizes();
-    await stopBackend();
+    const retainedIds = await stopBackend();
+    for (const turn of stopping) releaseTurnFiles(turn, Array.isArray(retainedIds) ? retainedIds : pendingFiles.map(file => file.id));
     if (!sending && !turns.some((t) => t.role === "assistant" && (t.text || t.media?.length))) dismissExchange();
     updateComposerMode();
     queueSizes();
   }
 
   function discardPendingFiles() {
+    for (const turn of turns) releaseTurnFiles(turn);
     for (const item of pendingFiles.slice()) removeAttachment(item);
     for (const url of [...imageURLs]) releasePreview(url);
   }
@@ -3473,8 +3516,9 @@
       el.promptInput.focus();
     } else if (action === "retry-turn" || action === "retry-reply") {
       const turn = turns.find((t) => t.id === actionBtn.dataset.id);
-      if (turn && (turn.prompt || turn.selectionTexts?.length) && !turn.hadAttachments && !isStreaming()) {
-        sendPrompt(turn.prompt, { selectionTexts: turn.selectionTexts || [] });
+      if (turn && !isBusy() && (turn.hadAttachments ? turn.retryFiles?.length && attachmentRetryCodes.has(turn.code) : (turn.prompt || turn.selectionTexts?.length))) {
+        const files = turn.retryFiles;
+        sendPrompt(turn.prompt, { selectionTexts: turn.selectionTexts || [], retryFiles: files, retrying: true });
         el.promptInput.focus();
       }
     } else if (action === "view-media") {
@@ -3831,6 +3875,7 @@
           if (typeof evt.text === "string" && (evt.text || !turn.text)) turn.text = evt.text;
           turn.rich = evt.rich === true;
           turn.backendDone = true;
+          releaseTurnFiles(turn);
           turn.activity = null;
           if (turnNodes.get(turn.id)?.activity) turnNodes.get(turn.id).activity.hidden = true;
           if (turn.chatKey === chats.current.key) {
@@ -3864,6 +3909,8 @@
           if (!turn.text && !turn.media?.length && !turn.cachedMedia) turn.restoreDraft?.();
           turn.status = "error";
           turn.code = evt.code;
+          if (attachmentRetryCodes.has(evt.code)) retainTurnFiles(turn);
+          else releaseTurnFiles(turn);
           turn.error = formatErrorCopy(evt.code, evt.message);
           recordPartial(turn);
           revealResponse(turn);
@@ -3946,7 +3993,7 @@
       syncReasoningButton();
     }
     await invoke("chat_status").catch(() => {});
-    try { const info = await invoke("launch_info"); if (info && (!info.autostart || QSettings.settings.showBarAtStartup)) await invoke("show_main"); } catch (_) {}
+    try { const info = await launchInfo; if (info && (!info.autostart || QSettings.settings.showBarAtStartup)) await invoke("show_main"); } catch (_) {}
   })();
   armConnectDeadline();
 })();

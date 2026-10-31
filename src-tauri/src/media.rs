@@ -10,13 +10,14 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::Manager;
 use windows::core::HSTRING;
 
 const LIMIT: u64 = 512 * 1024 * 1024;
 const CHUNK: usize = 512 * 1024;
+const RETRY_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Serialize)]
 pub struct Attachment {
@@ -31,6 +32,9 @@ struct Staged {
     path: PathBuf,
     written: u64,
     ready: bool,
+    owner: Option<String>,
+    retry_until: Option<Instant>,
+    dispatched: bool,
 }
 #[derive(Clone)]
 struct Cached {
@@ -48,7 +52,7 @@ pub struct MediaState {
     cached: Mutex<HashMap<String, Cached>>,
     download_gate: tokio::sync::Mutex<()>,
     generation: AtomicU64,
-    sent: Mutex<HashMap<String, Vec<String>>>,
+    upload_generation: AtomicU64,
     pending: Mutex<Option<PendingDownload>>,
 }
 struct PendingDownload {
@@ -91,6 +95,7 @@ impl Drop for PendingCleanup {
 #[derive(Clone)]
 enum Scope {
     Turn(String),
+    Send(String),
     Media(u64),
 }
 
@@ -223,6 +228,7 @@ pub fn attachment_begin(
     name: String,
     mime: String,
     size: u64,
+    upload_generation: u64,
 ) -> Result<Attachment, String> {
     main_only(&window)?;
     if name.contains(['/', '\\']) || name.chars().any(char::is_control) {
@@ -236,6 +242,10 @@ pub fn attachment_begin(
     }
     let state = app.state::<MediaState>();
     let mut staged = state.staged.lock().unwrap();
+    if upload_generation != state.upload_generation.load(Ordering::SeqCst) {
+        return Err("Attachment session ended. Attach the file again.".into());
+    }
+    reap_staged(&mut staged, Instant::now());
     if staged.len() >= 32 || staged.values().map(|v| v.meta.size).sum::<u64>() + size > LIMIT {
         return Err("Attachment cache is full. Start a new chat to clear it.".into());
     }
@@ -260,6 +270,9 @@ pub fn attachment_begin(
             path,
             written: 0,
             ready: false,
+            owner: None,
+            retry_until: None,
+            dispatched: false,
         },
     );
     Ok(meta)
@@ -335,30 +348,91 @@ pub fn clear_uploads(app: &tauri::AppHandle) {
         remove_cached_file(&item.path);
     }
 }
+pub fn upload_generation(app: &tauri::AppHandle) -> u64 {
+    app.state::<MediaState>().upload_generation.load(Ordering::SeqCst)
+}
+pub fn draft_uploads(app: &tauri::AppHandle) -> Vec<String> {
+    app.state::<MediaState>().staged.lock().unwrap().iter()
+        .filter(|(_, item)| item.owner.is_none()).map(|(id, _)| id.clone()).collect()
+}
+pub fn reset_uploads(app: &tauri::AppHandle) {
+    let state = app.state::<MediaState>();
+    let mut staged = state.staged.lock().unwrap();
+    state.upload_generation.fetch_add(1, Ordering::SeqCst);
+    for (_, item) in staged.drain() { remove_cached_file(&item.path); }
+}
+fn reap_staged(staged: &mut HashMap<String, Staged>, now: Instant) {
+    staged.retain(|_, item| {
+        let expired = item.retry_until.is_some_and(|deadline| now >= deadline);
+        if expired { remove_cached_file(&item.path); }
+        !expired
+    });
+}
+pub fn expire_uploads(app: &tauri::AppHandle) {
+    reap_staged(&mut app.state::<MediaState>().staged.lock().unwrap(), Instant::now());
+}
 fn remove_cached_file(path: &Path) {
     let _ = std::fs::remove_file(path);
     if let Some(parent) = path.parent() {
         let _ = std::fs::remove_dir(parent);
     }
 }
-pub fn track_turn(app: &tauri::AppHandle, id: &str, files: &[String]) {
-    if !files.is_empty() {
-        app.state::<MediaState>()
-            .sent
-            .lock()
-            .unwrap()
-            .insert(id.into(), files.to_vec());
-    }
-}
-pub fn finish_turn(app: &tauri::AppHandle, id: &str) {
-    let state = app.state::<MediaState>();
-    let ids = state.sent.lock().unwrap().remove(id).unwrap_or_default();
-    let mut staged = state.staged.lock().unwrap();
-    for id in ids {
-        if let Some(item) = staged.remove(&id) {
-            remove_cached_file(&item.path);
+fn claim_staged(staged: &mut HashMap<String, Staged>, id: &str, files: &[String]) -> Result<(), String> {
+    reap_staged(staged, Instant::now());
+    // Validate the whole set before transferring anything. One file has one owner.
+    for file in files {
+        let item = staged.get(file).ok_or("Attachment is unavailable. Select it again.")?;
+        if !item.ready { return Err("Wait for the attachment to finish staging".into()); }
+        if item.owner.as_deref().is_some_and(|owner| owner != id) && item.retry_until.is_none() {
+            return Err("Attachment is already being sent".into());
         }
     }
+    for file in files {
+        let item = staged.get_mut(file).unwrap();
+        item.owner = Some(id.into());
+        item.retry_until = None;
+        item.dispatched = false;
+    }
+    Ok(())
+}
+pub fn track_turn(app: &tauri::AppHandle, id: &str, files: &[String]) -> Result<(), String> {
+    claim_staged(&mut app.state::<MediaState>().staged.lock().unwrap(), id, files)
+}
+fn retain_staged(staged: &mut HashMap<String, Staged>, id: &str, now: Instant) {
+    for item in staged.values_mut().filter(|item| item.owner.as_deref() == Some(id) && item.retry_until.is_none()) {
+        item.retry_until = Some(now + RETRY_TTL);
+    }
+}
+pub fn abandon_turn(app: &tauri::AppHandle, id: &str) {
+    retain_staged(&mut app.state::<MediaState>().staged.lock().unwrap(), id, Instant::now());
+}
+pub fn terminal_turn(app: &tauri::AppHandle, id: &str, error: bool, code: Option<&str>) {
+    if error && matches!(code, Some("send_failed" | "stream_failed" | "timeout" | "not_ready")) {
+        abandon_turn(app, id);
+    } else {
+        finish_staged(&mut app.state::<MediaState>().staged.lock().unwrap(), id, false);
+    }
+}
+fn finish_staged(staged: &mut HashMap<String, Staged>, id: &str, include_retained: bool) {
+    staged.retain(|_, item| {
+        let owned = item.owner.as_deref() == Some(id) && (include_retained || item.retry_until.is_none());
+        if owned { remove_cached_file(&item.path); }
+        !owned
+    });
+}
+pub fn cancel_turn(app: &tauri::AppHandle, id: &str) -> Vec<String> {
+    let state = app.state::<MediaState>();
+    let mut staged = state.staged.lock().unwrap();
+    let mut drafts = Vec::new();
+    staged.retain(|file, item| {
+        if item.owner.as_deref() != Some(id) { return true; }
+        if item.dispatched { remove_cached_file(&item.path); return false; }
+        item.owner = None;
+        item.retry_until = None;
+        drafts.push(file.clone());
+        true
+    });
+    drafts
 }
 pub fn clear_all(app: &tauri::AppHandle) {
     clear_reply_media(app);
@@ -367,7 +441,6 @@ pub fn clear_all(app: &tauri::AppHandle) {
 pub fn clear_reply_media(app: &tauri::AppHandle) {
     let state = app.state::<MediaState>();
     state.generation.fetch_add(1, Ordering::SeqCst);
-    state.sent.lock().unwrap().clear();
     if let Some(pending) = state.pending.lock().unwrap().take() {
         remove_cached_file(&pending.item.path);
         let _ = pending
@@ -399,7 +472,7 @@ async fn cdp_scoped(
         .ok_or("Provider window unavailable")?
         .with_webview(move |w| unsafe {
             let allowed = match &scope {
-                Some(Scope::Turn(id)) => {
+                Some(Scope::Turn(id) | Scope::Send(id)) => {
                     scope_app
                         .state::<crate::Host>()
                         .0
@@ -423,6 +496,11 @@ async fn cdp_scoped(
                     let _ = tx.send(Err("Operation was cancelled".into()));
                 }
                 return;
+            }
+            if let Some(Scope::Send(id)) = &scope {
+                for item in scope_app.state::<MediaState>().staged.lock().unwrap().values_mut().filter(|item| item.owner.as_deref() == Some(id)) {
+                    item.dispatched = true;
+                }
             }
             let callback_sender = sender.clone();
             let callback = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
@@ -469,6 +547,13 @@ pub async fn evaluate(app: &tauri::AppHandle, expression: String) -> Result<Valu
         );
     }
     Ok(value["result"]["value"].clone())
+}
+pub async fn dispatch_turn(app: &tauri::AppHandle, id: &str, expression: String) -> Result<(), String> {
+    let value = cdp_scoped(app, "Runtime.evaluate", json!({"expression":expression,"returnByValue":true}), Some(Scope::Send(id.into()))).await?;
+    if value.get("exceptionDetails").is_some() {
+        return Err("Provider could not send this message".into());
+    }
+    Ok(())
 }
 pub async fn attach(app: &tauri::AppHandle, ids: &[String], turn_id: &str) -> Result<(), String> {
     if ids.is_empty() {
@@ -1074,6 +1159,59 @@ fn byte_range(range: Option<&str>, size: u64) -> Option<(u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn staged_fixture() -> (HashMap<String, Staged>, PathBuf) {
+        let directory = std::env::temp_dir().join(format!("qchat-upload-unit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("fixture.txt");
+        std::fs::write(&path, b"fixture").unwrap();
+        let item = Staged { meta: Attachment { id:"file".into(),name:"fixture.txt".into(),mime:"text/plain".into(),size:7,kind:"file".into() },path:path.clone(),written:7,ready:true,owner:None,retry_until:None,dispatched:false };
+        ([("file".into(), item)].into(), path)
+    }
+    #[test]
+    fn retry_claims_are_atomic_and_exclusive() {
+        let (mut files, path) = staged_fixture();
+        assert!(claim_staged(&mut files, "old", &["file".into(),"missing".into()]).is_err());
+        assert!(files["file"].owner.is_none());
+        claim_staged(&mut files, "old", &["file".into()]).unwrap();
+        assert!(claim_staged(&mut files, "other", &["file".into()]).is_err());
+        assert_eq!(files["file"].owner.as_deref(), Some("old"));
+        finish_staged(&mut files, "old", true);
+        assert!(files.is_empty() && !path.exists());
+    }
+    #[test]
+    fn stale_terminals_cannot_delete_retried_files_or_extend_retention() {
+        let (mut files, path) = staged_fixture();
+        claim_staged(&mut files, "old", &["file".into()]).unwrap();
+        let now=Instant::now();
+        retain_staged(&mut files, "old", now);
+        retain_staged(&mut files, "old", now+Duration::from_secs(30));
+        assert_eq!(files["file"].retry_until, Some(now+RETRY_TTL));
+        finish_staged(&mut files, "old", false);
+        assert!(path.exists());
+        claim_staged(&mut files, "retry", &["file".into()]).unwrap();
+        finish_staged(&mut files, "old", true);
+        retain_staged(&mut files, "old", now);
+        assert!(path.exists() && files["file"].retry_until.is_none());
+        assert_eq!(files["file"].owner.as_deref(), Some("retry"));
+        finish_staged(&mut files, "retry", false);
+        assert!(files.is_empty() && !path.exists());
+    }
+    #[test]
+    fn expiry_deletes_retained_bytes_but_keeps_drafts_and_active_sends() {
+        let (mut files, path) = staged_fixture();
+        let now=Instant::now();
+        reap_staged(&mut files, now+RETRY_TTL+Duration::from_secs(1));
+        assert!(path.exists());
+        claim_staged(&mut files, "turn", &["file".into()]).unwrap();
+        reap_staged(&mut files, now+RETRY_TTL+Duration::from_secs(1));
+        assert!(path.exists());
+        retain_staged(&mut files, "turn", now);
+        reap_staged(&mut files, now+RETRY_TTL-Duration::from_millis(1));
+        assert!(path.exists());
+        reap_staged(&mut files, now+RETRY_TTL);
+        assert!(files.is_empty() && !path.exists());
+        assert!(claim_staged(&mut files, "retry", &["file".into()]).is_err());
+    }
     #[test]
     fn names_stay_inside_the_cache_and_keep_unicode() {
         assert_eq!(safe_name("../hello 🥰.png"), "_hello 🥰.png");
