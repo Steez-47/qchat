@@ -2,7 +2,7 @@
 
 Goal: add useful compact features, refine and test each one, commit locally, then continue. Preserve the running app, account/profile and unrelated icon.icns modification. No publication requested. The absent orchestrator playbook was read from git commit 37b5396.
 
-Current portable checkpoint: dist/overnight/20261101-034957-18cf484/QChat.exe (source18cf48492482fc44abc308f07e6077dcaceeef7b, SHA256015717d2a8f1a05ef6b7992097f26d2d6a82aa595e9c2385ee15ae2544f213e8). O17/O18 are included; next is O19 failed-file staging retry in an isolated worker checkout. Goal stays active.
+Current portable checkpoint: dist/overnight/20261101-034957-18cf484/QChat.exe (source18cf48492482fc44abc308f07e6077dcaceeef7b, SHA256015717d2a8f1a05ef6b7992097f26d2d6a82aa595e9c2385ee15ae2544f213e8). O17/O18 are included. O19 is verified in source; O20 provider-change draft preservation is in isolated implementation and serial UI acceptance. Stage the combined build after root native acceptance. Goal stays active.
 
 | id | task | model | owns | status |
 |---|---|---|---|---|
