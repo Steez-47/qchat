@@ -819,7 +819,7 @@
       const panel = el.historyPanel;
       if (scrollGap(panel) > 2) {
         const top = panel.getBoundingClientRect().top;
-        const row = [...panel.children].find(node => node.getBoundingClientRect().bottom > top);
+        const row = [...panel.children].find(node => node.dataset.id && node.getBoundingClientRect().bottom > top);
         if (row) state.anchor = { id: row.dataset.id, offset: top - row.getBoundingClientRect().top };
       }
     } else {
@@ -2758,8 +2758,9 @@
     if (isBusy()) return;
     const index = chats.recent.findIndex((c) => c.key === key);
     if (index < 0) return;
-    if (!await setProvider(chats.recent[index].provider || "chatgpt")) return;
+    // Before the provider switch, which can close History or replace the current chat.
     rememberReadingPosition();
+    if (!await setProvider(chats.recent[index].provider || "chatgpt")) return;
     chatGeneration++;
     discardPendingFiles();
     hideGlobalError();
