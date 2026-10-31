@@ -31,7 +31,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - Without signing in it chats as a ChatGPT guest.
 - Attach files with the paperclip, paste from the clipboard, or drop them onto the chat. Pasting text or files outside an editing field sends them to the composer. Attachments can be sent with or without text.
 - Failed attachment messages offer Retry for ten minutes, keeping newer drafts and files intact. Expired files ask you to attach them again.
-- If a file fails to prepare, Retry on its chip reuses the selected file. Draft files and image previews stay with you when switching providers.
+- If a file fails to prepare, Retry on its chip reuses the selected file. Provider switches preserve the latest draft, caret, quoted context, files and temporary-chat mode, including edits made while the switch is loading.
 - Replies support image previews, audio/video controls, and files saved to Downloads without overwriting existing files. Unsupported previews can be opened in ChatGPT.
 - Images show thumbnails before sending and previews in the chat. **Copy image** copies pixels to the Windows clipboard. Image requests show a preparation/generation graphic, with ChatGPT's percentage when the site supplies one.
 
@@ -65,6 +65,8 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/conversation-export-native-test.mjs`: real UTF-8 saves in an isolated profile, concurrent filenames, size bounds, failure recovery, window permissions and staged-file Undo. Requires a debug build.
 - `node tools/keyboard-copy-ui-test.mjs`: reply/code shortcuts, selected text, streamed snapshots, clipboard failures and embedded editors.
 - `node tools/draft-ui-test.mjs`: draft recovery, send failures, privacy and pending writes across chat/provider changes.
+- `node tools/provider-draft-ui-test.mjs`: edits, clears, quoted context, files and privacy while a provider change or startup fallback is pending.
+- `node tools/provider-draft-native-test.mjs`: the same provider-change lifecycle in an isolated hidden WebView, including real image bytes and reload persistence. Requires a debug build.
 - `node tools/edit-prompt-ui-test.mjs`, `node tools/paste-anywhere-ui-test.mjs` and `node tools/chat-undo-ui-test.mjs`: prompt reuse, pasting around the popup and reversible local chat removal.
 - `node tools/find-text-test.mjs` and `node tools/find-ui-test.mjs`: literal Unicode search, inline/code ranges, keyboard navigation, streaming and menu/undo interactions.
 - `node tools/find-native-test.mjs`: search, highlight rendering and native prompt-edit undo in an isolated hidden app. Requires a debug build.

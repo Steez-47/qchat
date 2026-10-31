@@ -2,7 +2,7 @@
 
 Goal: add useful compact features, refine and test each one, commit locally, then continue. Preserve the running app, account/profile and unrelated icon.icns modification. No publication requested. The absent orchestrator playbook was read from git commit 37b5396.
 
-Current portable checkpoint: dist/overnight/20261101-034957-18cf484/QChat.exe (source18cf48492482fc44abc308f07e6077dcaceeef7b, SHA256015717d2a8f1a05ef6b7992097f26d2d6a82aa595e9c2385ee15ae2544f213e8). O17/O18 are included. O19 is verified in source; O20 provider-change draft preservation is in isolated implementation and serial UI acceptance. Stage the combined build after root native acceptance. Goal stays active.
+Current portable checkpoint: dist/overnight/20261101-034957-18cf484/QChat.exe (source18cf48492482fc44abc308f07e6077dcaceeef7b, SHA256015717d2a8f1a05ef6b7992097f26d2d6a82aa595e9c2385ee15ae2544f213e8). O17/O18 are included. O19/O20 are verified in source; O20 native27 and affected native regressions pass. Await the companion's source review, then stage the combined build. Goal stays active.
 
 | id | task | model | owns | status |
 |---|---|---|---|---|
@@ -25,7 +25,7 @@ Current portable checkpoint: dist/overnight/20261101-034957-18cf484/QChat.exe (s
 | O17 | Save the open conversation as Markdown | Terra high + root, companion Claude review | UI/native export and tests | done - final UI20/native19/Rust31 PASS; Copy25/17 UI regressions/native24+9+6+guest10 verified; reviewed, release staging next |
 | O18 | Recall, attachment Undo and keyboard interactions | companion Claude after Terra audit, root review/native | UI and interaction tests | done - 6ab3e48 integrated; identity regression reproduced and fixed;15 companion +9 root UI suites and native24 PASS |
 | O19 | Retry file preparation without reattaching | Terra high + root, Claude cross-family review | UI/mock/staging regressions and native harness | done - UI42/native18 PASS; cleanup/quota review findings reproduced/fixed, related suites PASS; release awaits O20 |
-| O20 | Preserve edits made during a pending provider change | Terra medium + root | provider draft lifecycle/tests | running - root mock and native baselines each reproduce4 failures; worker prototype needs focused tests and serial acceptance before integration |
+| O20 | Preserve edits made during a pending provider change | Terra medium + root, Claude source review | provider draft lifecycle/tests | review - bb25eca integrated; six UI suites224 checks, rootUI25/native27/provider21/staging18 PASS; source review and production staging pending |
 
 Verification uses isolated headless browsers and hidden native profiles. Build to a separate executable; do not replace dist/QChat.exe while the owner's instance is running. Each completed feature gets its own commit. Free provider failures will be recorded; no claims of exhaustive edge-case coverage.
 
