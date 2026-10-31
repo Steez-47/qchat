@@ -636,6 +636,7 @@ fn main() {
  {let b=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat").inner_size(480.,110.).min_inner_size(120.,60.).decorations(false).shadow(false).transparent(true).always_on_top(true).skip_taskbar(true).resizable(false).disable_drag_drop_handler().visible(false).build()?;
  {let b=WebviewWindowBuilder::new(app,"chatgpt",WebviewUrl::External("https://chatgpt.com/".parse()?)); if let Some(p)=test_profile(){b.data_directory(p)}else{b}}.title("QChat - ChatGPT sign-in").inner_size(1000.,760.).skip_taskbar(true).decorations(false).visible(false)
  .initialization_script("if(location.hostname === 'chatgpt.com' || location.hostname.endsWith('.chatgpt.com')) window.__QCHAT_EMIT__ = (evt) => window.__TAURI_INTERNALS__.invoke('bridge_event', {event:evt});")
+ .initialization_script(include_str!("../../ui/response-tags.js"))
  .initialization_script(include_str!("../bridge/chatgpt-bridge.js"))
  .on_download(|webview,event|media::on_download(webview.app_handle(),event)).build()?;
  background(app.handle());

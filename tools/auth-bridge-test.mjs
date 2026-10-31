@@ -72,7 +72,7 @@ function browser({ ready = false, focused = true, composer = 'legacy', hidden = 
     setTimeout: (fn, delay) => schedule(fn, delay), clearTimeout: id => timers.delete(id),
     setInterval: (fn, delay) => schedule(fn, delay, delay), clearInterval: id => timers.delete(id)
   });
-  vm.runInContext(source, context);
+  vm.runInContext(readFileSync(new URL('../ui/response-tags.js', import.meta.url), 'utf8') + '\n' + source, context);
   return {
     requests, events, document, navigations,
     listModels: () => window.__qchat.listModels(),

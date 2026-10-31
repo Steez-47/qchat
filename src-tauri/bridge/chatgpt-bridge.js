@@ -261,7 +261,6 @@
     return `![${label}](qchat-web:${btoa(url).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')})`;
   }
   function layoutToMarkdown(text, message) {
-    if (!/<(?:AsyncImage|box|row|grid|text|title|divider|icon|Cite)\b/.test(text)) return entityText(text);
     const results = message?.metadata?.model_dil_v2?.appData?.opGenui?.componentResults || {};
     const byQuery = new Map();
     for (const result of Object.values(results)) {
@@ -269,41 +268,7 @@
         if (image?.image_search_query && !byQuery.has(image.image_search_query)) byQuery.set(image.image_search_query, image);
       }
     }
-    const queries = attributes => [...attributes.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(match => match[1].replace(/\\"/g, '"'));
-    const convert = part => {
-      let out = entityText(part);
-      out = out.replace(/<grid-item\b[^>]*>([\s\S]*?)<\/grid-item>/g, (_, inner) => {
-        const image = /<AsyncImage\b[^>]*\bquery="([^"]*)"[^>]*\/?>/.exec(inner);
-        const words = inner.replace(/<AsyncImage\b[^>]*>/g, '').replace(/<\/?[a-zA-Z][^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-        if (image) return `${webImageToken(byQuery.get(image[1]), words)}\n`;
-        return words ? `- ${words}\n` : '';
-      });
-      out = out.replace(/<AsyncImageGroup\b[^>]*?\bquery=\{\[([\s\S]*?)\]\}[^>]*?\/?>/g, (_, list) => `\n\n${queries(list).map(query => webImageToken(byQuery.get(query))).filter(Boolean).join(' ')}\n\n`);
-      out = out.replace(/<AsyncImage\b[^>]*?\bquery="([^"]*)"[^>]*?\/?>/g, (_, query) => `\n\n${webImageToken(byQuery.get(query))}\n\n`);
-      out = out.replace(/<Cite\b[^>]*?\brefs?=(?:\{[\[{]([\s\S]*?)[\]}]\}|"([^"]*)")[^>]*?\/?>/g, (_, list, single) => {
-        const refs = list ? queries(list) : [single];
-        return `\uE200cite\uE202${refs.join('\uE202')}\uE201`;
-      });
-      const attribute = (tag, name) => new RegExp(`\\b${name}="([^"]*)"`).exec(tag)?.[1];
-      out = out.replace(/<Link\b[^>]*?\/>/g, tag => {
-        const url = attribute(tag, 'url') || attribute(tag, 'href');
-        const label = attribute(tag, 'title') || url;
-        return url ? `[${label.replace(/[\[\]]/g, ' ')}](${url})` : (label || '');
-      });
-      out = out.replace(/<Link\b([^>]*)>([\s\S]*?)<\/Link>/g, (tag, attrs, words) => {
-        const url = attribute(attrs, 'url') || attribute(attrs, 'href');
-        return url ? `[${words.replace(/[\[\]]/g, ' ')}](${url})` : words;
-      });
-      out = out.replace(/<caption\b[^>]*>([\s\S]*?)<\/caption>/g, (_, words) => `\n\n*${words.trim()}*\n\n`);
-      out = out.replace(/<title\b[^>]*>([\s\S]*?)<\/title>/g, '**$1** ').replace(/<divider\b[^>]*\/?>/g, '\n\n---\n\n');
-      // New components arrive over time. Any other tag is layout, never reading material: its words stay.
-      out = out.replace(/<\/?(?:box|row|col|column|stack|grid|grid-item|text|icon|card|section)\b[^>]*>/g, '\n').replace(/<\/?[a-zA-Z][\w-]*\b[^<>]*>/g, '');
-      // Indentation here is only the layout's nesting; Markdown would read it as code.
-      out = out.replace(/^[ \t]+/gm, '');
-      out = out.replace(/(qchat-web:[\w-]+\))\s*\n+\s*(!\[)/g, '$1 $2');
-      return out.replace(/\n{3,}/g, '\n\n');
-    };
-    return text.split(/(^ *`{3,}[^\n]*\n[\s\S]*?^ *`{3,} *$)/m).map((part, index) => index % 2 ? part : convert(part)).join('').trim();
+    return window.QResponseTags.toMarkdown(text, { image: (query, caption) => webImageToken(byQuery.get(query), caption) }).trim();
   }
   function storedSources(message) {
     const out = [];
@@ -457,18 +422,13 @@
   }
   // <Entity value="R34"/> is how the site marks a named thing: its value is the visible text.
   function entityText(text) {
-    return text.replace(/<Entity\b[^>]*?\bvalue\s*=\s*"([^"]*)"[^>]*?(?:\/>|>(?:\s*<\/Entity>)?)/g, '$1').replace(/<\/?Entity\b[^>]*(?:>|$)/g, '');
+    return window.QResponseTags.toMarkdown(text);
   }
   function citationText(job, text) {
-    const links = refs => [...new Set(refs.split(/[\s,;\uE202]+/).filter(Boolean))].map(ref => {
+    return window.QResponseTags.toMarkdown(text, { citation: refs => refs.split(/\s+/).map(ref => {
       const item = job.sourceRefs?.get(ref);
-      return item ? `[${item.title.replace(/[\\[\]]/g, '\\$&')}](${item.url})` : '';
-    }).filter(Boolean).join(' ');
-    return entityText(text).replace(/^image_group\{.*\}[ \t]*$/gm, '').replace(/<Cite\b[^>]*\bref\s*=\s*["']([^"']*)["'][^>]*\/?>(?:\s*<\/Cite>)?/gi, (_, refs) => links(refs))
-      .replace(/\uE200(?:cite|navlist|image)\uE202([^\uE201]*)\uE201/g, (_, refs) => links(refs))
-      .replace(/<\/?Cite\b[^>]*>/gi, '')
-      .replace(/<(?:C|Ci|Cit|Cite\b[^>]*)$|\uE200[^\uE201]*$/gi, '')
-      .replace(/[\uE200-\uE202]/g, '');
+      return item ? `[${item.title.replace(/[\\[\]]/g, '\\$&').replace(/</g, '&lt;').replace(/[\r\n]/g, ' ')}](${item.url})` : '';
+    }).filter(Boolean).join(' ') });
   }
   function attachmentURL(url) {
     return /^(?:sandbox:|blob:|data:)/i.test(url || '') ||
@@ -677,14 +637,7 @@
         Date.now() - job.noStopAt >= 800) finish(job);
   }
   function richLayout(text) {
-    // Leave literal markup in fenced/inline code alone. These components and
-    // JSX props identify the site's rich layout stream outside code examples.
-    const prose = text.replace(/(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\1[^\n]*|$)|`+[^`\n]*`+/g, '');
-    const partial = /<([a-z]+)$/i.exec(prose)?.[1].toLowerCase();
-    // Any JSX-style component is the site's own markup; only citations are handled here.
-    const component = [...prose.matchAll(/<\/?([A-Z][A-Za-z]*)\b/g)].some(match => match[1] !== 'Cite');
-    return component || /<\/?(?:row|box|text|grid|grid-item|title|divider|icon)\b/.test(prose) ||
-      !!partial && ['asyncimage', 'row', 'box', 'text', 'entity'].some(name => name.startsWith(partial));
+    return window.QResponseTags.hasLayout(text);
   }
   function networkText(job, text, canonicalFallback = false) {
     if (active !== job || job.finished || job.finishing) return;

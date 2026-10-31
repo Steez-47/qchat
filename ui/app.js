@@ -78,8 +78,7 @@
 
     // Old saved replies can still hold the site's layout tags. Never reading material; their
     // words stay. Code spans and blocks do not come through here, so examples are untouched.
-    const LAYOUT_TAG = /<\/?(?:box|row|col|column|stack|grid|grid-item|text|title|caption|divider|icon|card|section|[A-Z][A-Za-z]*)\b[^>]*>/g;
-    renderer.html = (token) => escapeHtml(String(typeof token === "string" ? token : (token?.text ?? "")).replace(LAYOUT_TAG, ""));
+    renderer.html = token => window.QResponseTags.sanitizeHTML(typeof token === 'string' ? token : token?.text ?? '', text => window.marked.parseInline(text));
     renderer.image = (href, _title, text) => {
       const raw = typeof href === "string" ? href : href?.href;
       const label = escapeHtml(typeof text === "string" ? text : (href?.text || "Image"));
@@ -130,10 +129,7 @@
       const source = sources.find(item => item.id === ref);
       return source ? `[${sources.indexOf(source) + 1}](<${source.url}>)` : "";
     }).filter(Boolean).join(" ");
-    const src = String(markdownText ?? "")
-      .replace(/<Entity\b[^>]*?\bvalue\s*=\s*"([^"]*)"[^>]*?(?:\/>|>(?:\s*<\/Entity>)?)/g, "$1")
-      .replace(/<Cite\b[^>]*\bref=["']([^"']+)["'][^>]*\/?\s*>(?:<\/Cite>)?/gi, (_, refs) => citation(refs))
-      .replace(/\uE200cite\uE202([^\uE201]*)\uE201/g, (_, refs) => citation(refs.replace(/\uE202/g, " ")));
+    const src = window.QResponseTags.toMarkdown(markdownText, { citation });
     if (!src) return "";
     const prepared = window.QMath?.prepare(src);
     const html = window.marked ? window.marked.parse(prepared ? prepared.text : src) : `<p>${escapeHtml(src)}</p>`;
