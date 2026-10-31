@@ -4095,7 +4095,7 @@
     // Leave Enter alone while a reply streams so the textarea inserts a newline.
     if (isStreaming()) return;
     e.preventDefault();
-    if (!bridge.ready) return;
+    if (!bridge.ready || e.repeat) return;
     submitFromInput();
   });
 
