@@ -1,3 +1,9 @@
+## v1.0.0 public Windows installer (2026-10-31)
+
+User authorized promoting the current application to v1.0.0 and explicitly chose immediate public publication. Versions updated in npm, Tauri and Cargo. Added npm run build:installer: NSIS current-user installer, offline Microsoft WebView2 dependency, Start menu shortcut and Windows uninstall support. The standard Tauri uninstaller preserves app data unless removal is selected, cleans the Run entry on uninstall, and preserves it during installer updates. No custom hooks are required. Install notes and generated third-party notices are included both in setup and the release assets; source-pinned license fallbacks are stored in packaging/licenses.
+
+Verified: Windows x64 release and NSIS bundle PASS; Rust21 PASS with one desktop fixture ignored; setup extraction PASS. Extracted application matches compiled code with only the three-byte expected NSIS bundle marker, ProductVersion 1.0.0, resources match exactly, included WebView2 signature valid (Microsoft), PE imports require no separate VC runtime, and installer manifest is asInvoker. Setup is about 210 MiB. Source UI behavior unchanged from v0.1.3; prior passing UI/bridge evidence reused. Clean-device install, first sign-in, autostart and uninstall remain for owner's external test. No installer executed on the build PC and no saved profile touched. Publication assets: dist/v1.0.0/.
+
 ## v0.1.3 beta release (2026-10-31)
 
 User authorized publishing v0.1.3. Includes all commits on main since v0.1.2 plus the orb drag-only interaction and persistent command hint. Versions bumped in npm, Tauri, Cargo and both lockfiles. Format: Windows x64 QChat.exe plus SHA256SUMS.txt, prerelease.

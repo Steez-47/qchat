@@ -21,10 +21,15 @@ A tiny Windows popup for chatting with ChatGPT through your own chatgpt.com sess
 
 QChat accepts up to 10 attachments totalling 512 MB. ChatGPT's own account, upload and format limits still apply; audio/video playback also depends on WebView2's codecs. Live voice/camera sessions are not implemented. Files are staged in bounded chunks and reply media is cached on disk, then cleared on New chat or Quit. Normal sign-in stays saved.
 
+## Install
+
+Download `QChat_1.0.0_x64-setup.exe` from the [v1.0.0 release](https://github.com/Steez-47/qchat/releases/tag/v1.0.0). The Windows x64 installer includes WebView2, installs for your current user, and creates a Start menu shortcut. Quit any existing QChat tray instance first. This release is unsigned; Windows may show an unknown-publisher warning. See [installation and testing notes](packaging/INSTALL.txt).
+
 ## Build and run
 ```
 npm install
 npm run build          # regenerates assets/icon.svg icons and writes dist/QChat.exe
+npm run build:installer # NSIS setup, portable exe, notices and checksums in dist/v1.0.0/
 # or for development:
 cd src-tauri && cargo build && target/debug/qchat.exe
 ```
