@@ -618,7 +618,7 @@
 
     const stableFor = Date.now() - (job.stableAt || job.idleAt || Date.now());
     const idleFor = job.idleAt ? Date.now() - job.idleAt : 0;
-    if (node && !streaming && idleFor >= 600 && stableFor >= 600) {
+    if (node && !streaming && idleFor >= 1000 && stableFor >= 1000) {
       finish(job, true);
     }
   }
@@ -870,6 +870,9 @@
     stop() {
       const job = active;
       if (!job) return Promise.resolve();
+      // Whatever has rendered since the last sample belongs to the stopped reply.
+      if (job.started) { try { sampleDOM(job); } catch (_) {} }
+      if (active !== job) return Promise.resolve();
       job.cancelled = true;
       completeActivity(job);
       if (!job.started && job.attachmentCount > 0) {

@@ -3454,7 +3454,21 @@
   el.promptInput.focus();
   refreshTheme();
   (async () => {
-    try { await invoke("provider_set", {provider:activeProvider}); } catch (_) {}
+    try { await invoke("provider_set", {provider:activeProvider}); }
+    catch (_) {
+      // Native keeps its current provider, so the UI has to follow it, not the other way round.
+      const restored = activeProvider;
+      activeProvider = await invoke("provider_get").catch(() => "chatgpt") || "chatgpt";
+      if (activeProvider !== restored) {
+        const draft = el.promptInput.value;
+        await startNewChat(false);
+        el.promptInput.value = draft;
+        chats.current.draft = draft;
+        saveChats(); autoResizePrompt(); updateComposerMode();
+        showGlobalError(null, `Couldn't load ${restored === "gemini" ? "Gemini" : "ChatGPT"}. Using ${providerName()} for now.`);
+      }
+      syncReasoningButton();
+    }
     await invoke("chat_status").catch(() => {});
     try { const info = await invoke("launch_info"); if (info && (!info.autostart || QSettings.settings.showBarAtStartup)) await invoke("show_main"); } catch (_) {}
   })();

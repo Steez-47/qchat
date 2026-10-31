@@ -482,13 +482,16 @@ async fn chat_send(
     reasoning_effort: Option<String>,
     provider: Option<String>,
 ) -> Result<(), String> {
-    if provider.as_ref().is_some_and(|p|p!=&active_provider(&app)) { return Err("provider_mismatch: Active provider changed".into()) }
     validate_reasoning_effort(reasoning_effort.as_deref())?;
     chat_page(&app)?;
     resume(&app);
     {
         let s = app.state::<Host>();
         let mut a = s.0.lock().unwrap();
+        // Checked with the flight reservation: provider_set refuses to switch once a flight exists.
+        if provider.as_ref().is_some_and(|p| p != &a.active) {
+            return Err("provider_mismatch: Active provider changed".into());
+        }
         if a.flight_id.is_some() && a.last_progress.elapsed() < Duration::from_secs(600) {
             return Err("busy: A request is already in progress".into());
         }
@@ -632,6 +635,8 @@ fn ensure_provider(app: &tauri::AppHandle, provider: &str) -> Result<(),String> 
 #[tauri::command]
 async fn provider_set(app: tauri::AppHandle, provider: String) -> Result<(),String> {
     tauri::async_runtime::spawn_blocking(move || {
+        static SWITCH: Mutex<()> = Mutex::new(());
+        let _guard=SWITCH.lock().map_err(|e|e.to_string())?;
         if !matches!(provider.as_str(),"chatgpt"|"gemini") { return Err("invalid_provider".into()) }
         if app.state::<Host>().0.lock().unwrap().flight_id.is_some() {return Err("busy: A request is already in progress".into())}
         ensure_provider(&app,&provider)?;

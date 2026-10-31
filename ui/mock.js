@@ -24,7 +24,7 @@
   const mock = (window.__mock = {
     provider: "chatgpt",
     autostart: params.has("autostart"),
-    failProvider: false,
+    failProvider: params.has("failProvider"),
     calls: [],
     fit: null,
     fits: [],

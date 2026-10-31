@@ -597,13 +597,13 @@ test('send scopes to new model-response turn, streams throttled deltas, emits ac
   assert.equal(b.events.filter(e => e.type === 'delta').at(-1).text, 'Streaming chunk 1\n\nFinal paragraph');
   assert.equal(b.events.filter(e => e.type === 'done').length, 0, 'Must not finish while stop and .animate are active');
 
-  // Remove stop and .animate, wait >=600ms settle window
+  // Remove stop and .animate, wait >=1000ms settle window
   b.setStop(false);
   mdNode.classList.remove('animate');
   b.notifyMutations();
   await b.tick(400);
-  assert.equal(b.events.filter(e => e.type === 'done').length, 0, 'Must wait 600ms after stop and animate clear');
-  await b.tick(400);
+  assert.equal(b.events.filter(e => e.type === 'done').length, 0, 'Must wait 1000ms after stop and animate clear');
+  await b.tick(800);
 
   const doneEvt = b.events.find(e => e.type === 'done' && e.id === 'turn-1');
   assert.ok(doneEvt);
@@ -629,7 +629,7 @@ test('send rejects concurrent request with busy and reports stream_failed on emp
   // Settle job-1 with empty markdown
   b.setStop(false);
   mr.querySelector('.markdown').classList.remove('animate');
-  await b.tick(800);
+  await b.tick(1300);
 
   const emptyErr = b.events.find(e => e.type === 'error' && e.id === 'job-1');
   assert.equal(emptyErr?.code, 'stream_failed');
@@ -787,7 +787,7 @@ test('reply images register media items and resolveMedia returns safe url, kind,
   await b.api.send({ id: 'img-job', prompt: 'show image' });
   await b.tick(200);
   b.setStop(false);
-  await b.tick(800);
+  await b.tick(1300);
 
   const mediaEvt = b.events.filter(e => e.type === 'media' && e.id === 'img-job').at(-1);
   assert.ok(mediaEvt);
