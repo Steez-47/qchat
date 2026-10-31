@@ -1174,17 +1174,27 @@
     } catch (_) { showGlobalError(null, "Couldn't switch providers. Try again in a moment."); return false; }
     finally { switchingProvider = false; updateComposerMode(); }
   }
+  async function resetChatPreservingComposer() {
+    const input = el.promptInput;
+    const draft = input.value;
+    const start = input.selectionStart, end = input.selectionEnd, direction = input.selectionDirection;
+    const selections = chats.current.selectionTexts.slice();
+    const temporary = Boolean(chats.current.temporary);
+    await startNewChat(false, { preserveFiles: true });
+    input.value = draft;
+    chats.current.selectionTexts = selections;
+    chats.current.temporary = temporary;
+    setModeLabel(temporary ? "Temporary" : "");
+    renderAttachments();
+    chats.current.draft = draftValue();
+    saveChats(); autoResizePrompt(); updateIdleChips(); updateComposerMode();
+    input.focus();
+    input.setSelectionRange(start, end, direction);
+  }
   async function chooseProvider(provider) {
     if (provider === activeProvider || isBusy()) return;
-    const draft = el.promptInput.value;
     if (!await setProvider(provider)) return;
-    // Staged files live on this PC until a send, so they can follow the draft to the new provider.
-    await startNewChat(false, { preserveFiles: true });
-    renderAttachments();
-    chats.current.provider = provider;
-    el.promptInput.value = draft;
-    chats.current.draft = draftValue();
-    saveChats(); autoResizePrompt(); updateComposerMode();
+    await resetChatPreservingComposer();
   }
   function switchProviderRows() {
     const provider = activeProvider === "gemini" ? "chatgpt" : "gemini";
@@ -4291,11 +4301,7 @@
       const restored = activeProvider;
       activeProvider = await invoke("provider_get").catch(() => "chatgpt") || "chatgpt";
       if (activeProvider !== restored) {
-        const draft = el.promptInput.value;
-        await startNewChat(false, { preserveFiles: true });
-        el.promptInput.value = draft;
-        chats.current.draft = draftValue();
-        saveChats(); autoResizePrompt(); updateComposerMode();
+        await resetChatPreservingComposer();
         showGlobalError(null, `Couldn't load ${restored === "gemini" ? "Gemini" : "ChatGPT"}. Using ${providerName()} for now.`);
       }
       syncReasoningButton();
