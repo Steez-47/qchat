@@ -23,3 +23,9 @@
 - 2026-10-31 | UX bug fixes, KaTeX, model probe, migration + README | opencode/deepseek-v4.1-flash-free | done | 4 tasks; parent reran suites; migration conflict with one stale test seed fixed by parent
 - 2026-10-31 | Highlighter, list polish | opencode/glm-5.3-flash-free | done | 2 tasks + 1 audit; suites PASS
 - 2026-10-31 | Cross-family review | antigravity/claude-sonnet-5-5 medium | done | 15 real findings, all fixed
+- 2026-10-31 | Reasoning picker UI | opencode/deepseek-v4.1-flash-free high | running | composer picker, default setting, isolated UI regression
+- 2026-10-31 | Reasoning send integration | codex/gpt-6.1-sol medium | running | native IPC, real ChatGPT control, bridge regression
+- 2026-10-31 | Reasoning picker UI | opencode/deepseek-v4.1-flash-free high | done | reasoning26, presets14, features42 PASS
+- 2026-10-31 | Reasoning bridge initial + current controls | codex/gpt-6.1-sol medium | done (2 tasks) | reasoning, auth17, stream71, Rust16 PASS; signed-in DOM blocked by locked profile
+- 2026-10-31 | Reasoning cross-family review | antigravity/claude-sonnet-5-5 medium | unavailable: quota exhausted for 6 days 1 hour | no review returned; parent reviewing
+- 2026-10-31 | Reasoning final integration | parent | done | live Power slider recovered and verified, default persists across restart; release hash verified and PID26764 responsive; baseline guest Stop assertion also fails on old build
