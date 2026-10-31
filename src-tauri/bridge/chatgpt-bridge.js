@@ -261,6 +261,8 @@
     return `![${label}](qchat-web:${btoa(url).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')})`;
   }
   function layoutToMarkdown(text, message) {
+    // Preserve executable-looking DIL as data for the UI's bounded interpreter.
+    if (window.QResponseTags.hasInteractive(text)) return String(text).trim();
     const results = message?.metadata?.model_dil_v2?.appData?.opGenui?.componentResults || {};
     const byQuery = new Map();
     for (const result of Object.values(results)) {
@@ -425,6 +427,7 @@
     return window.QResponseTags.toMarkdown(text);
   }
   function citationText(job, text) {
+    if (window.QResponseTags.hasInteractive(text)) return text;
     return window.QResponseTags.toMarkdown(text, { citation: refs => refs.split(/\s+/).map(ref => {
       const item = job.sourceRefs?.get(ref);
       return item ? `[${item.title.replace(/[\\[\]]/g, '\\$&').replace(/</g, '&lt;').replace(/[\r\n]/g, ' ')}](${item.url})` : '';
@@ -615,7 +618,7 @@
     if (richLayout(text)) text = '';
     if (domActivity && /^(?:Searching(?: the)? web|(?:Reading|Browsing) sources|(?:Running|Executing) code)(?:\.{3}|\u2026)?$/i.test(text)) text = '';
     if (body) domMedia(job, body);
-    if (text && text !== job.domText) {
+    if (text && text !== job.domText && !window.QResponseTags.hasInteractive(job.netText)) {
       job.domText = text; job.stableAt = Date.now(); progress(job);
       if ((!job.canonicalFallback && (!job.netText || job.detached)) || job.requiresDOM) { job.text = text; delta(job); }
     }
@@ -623,7 +626,7 @@
     // text packets. At completion prefer a longer scoped visible reply over a
     // stale network prefix; retain network markdown when it already covers it.
     const dil = job.assistantNode?.hasAttribute('data-dil-source-message-id');
-    if (text && job.finishing && (job.requiresDOM || !job.canonicalFallback && (text.length > (dil ? (job.netText || '').length : job.text.length) || job.domPreferred || (dil && job.detached)))) {
+    if (text && job.finishing && !window.QResponseTags.hasInteractive(job.netText) && (job.requiresDOM || !job.canonicalFallback && (text.length > (dil ? (job.netText || '').length : job.text.length) || job.domPreferred || (dil && job.detached)))) {
       job.domPreferred = true;
       job.text = dil ? completedMarkdown(job, body, text) : text;
       delta(job);
@@ -643,8 +646,9 @@
     if (active !== job || job.finished || job.finishing) return;
     job.netText = text;
     job.canonicalFallback = canonicalFallback;
-    job.requiresDOM = richLayout(text);
-    job.rich = job.rich || job.requiresDOM;
+    const interactive = window.QResponseTags.hasInteractive(text);
+    job.requiresDOM = !interactive && richLayout(text);
+    job.rich = job.rich || job.requiresDOM || interactive;
     if (job.requiresDOM) { sampleDOM(job); return; }
     job.text = markdownMedia(job, text) || (!canonicalFallback && job.domText) || '';
     delta(job);
@@ -679,7 +683,7 @@
       // fallbackMarkdown is an authoritative full snapshot, even when the
       // accompanying layout/markdown field is an append delta. Never combine
       // the two representations or retain an earlier rendered prefix.
-      const text = typeof fallback === 'string' ? fallback : markdown;
+      const text = window.QResponseTags.hasInteractive(markdown) ? markdown : typeof fallback === 'string' ? fallback : markdown;
       collectSources(job, packet.metadata?.content_references);
       if (Array.isArray(packet.parts)) packet.parts.forEach((part, i) => structuredMedia(job, part, i));
       messages.set(packet.messageId, { revision: packet.revision, markdown, fallback, text });

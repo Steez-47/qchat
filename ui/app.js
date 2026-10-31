@@ -225,12 +225,85 @@
     return template.content;
   }
 
+  // Only interpreter-created controls become interactive. Their actions never enter
+  // the WebView's JavaScript engine or native IPC, and state belongs to this reply.
+  function renderInteractive(content, source, sources) {
+    let view = content._interactive;
+    if (!view) {
+      view = content._interactive = { session: window.QInteractive.createSession(), source, sources };
+      const act = event => {
+        const control = event.target.closest('[data-qcontrol]');
+        if (!control || !content.contains(control) || control.disabled) return;
+        const click = control.tagName === 'BUTTON';
+        if (click ? event.type !== 'click' : event.type !== (control.tagName === 'SELECT' || /^(checkbox|radio)$/.test(control.type) ? 'change' : 'input')) return;
+        event.stopPropagation();
+        const value = click ? undefined : /^(checkbox|radio)$/.test(control.type) ? control.checked : control.type === 'range' || control.type === 'number' ? Number(control.value) : control.value;
+        if (view.session.dispatch(control.dataset.qcontrol,value)) {
+          renderInteractive(content,view.source,view.sources);
+          window.QMath?.renderInto(content);
+          hydrateWebImages(content);
+          queueSizes();
+        }
+      };
+      for (const name of ['click','input','change']) content.addEventListener(name,act);
+    }
+    view.source = source; view.sources = sources;
+    const result = view.session.render(source);
+    const controls = new Map(result.controls.map(control => [control.id,control]));
+    const fragment = parseReply(result.text,sources);
+    const walker = document.createTreeWalker(fragment,NodeFilter.SHOW_TEXT);
+    const texts = []; while (walker.nextNode()) texts.push(walker.currentNode);
+    const makeControl = spec => {
+      const attrs = spec.attrs || {};
+      const tag = ['slider','checkbox','switch'].includes(spec.tag) ? 'input' : spec.tag;
+      const node = document.createElement(['button','input','select','textarea'].includes(tag) ? tag : 'button');
+      node.className = 'qinteractive-control'; node.dataset.qcontrol = spec.id;
+      if (node.tagName === 'BUTTON') { node.type = 'button'; node.textContent = parseReply(spec.label || attrs.label || 'Continue',[]).textContent; }
+      if (node.tagName === 'INPUT') node.type = spec.tag === 'slider' ? 'range' : ['checkbox','switch'].includes(spec.tag) ? 'checkbox' : ['text','number','range','checkbox','radio'].includes(attrs.type) ? attrs.type : 'text';
+      for (const key of ['min','max','step','placeholder']) if (typeof attrs[key] === 'string' || typeof attrs[key] === 'number') node.setAttribute(key,String(attrs[key]).slice(0,500));
+      node.setAttribute('aria-label',String(attrs['aria-label'] || attrs.label || spec.label || (node.type === 'range' ? 'Slider' : 'Interactive control')).slice(0,500));
+      if (node.tagName === 'SELECT') for (const option of spec.options || []) {
+        const child = document.createElement('option'); child.value = window.QResponseTags.decodeEntities(option.value ?? option.label ?? ''); child.textContent = parseReply(String(option.label ?? option.value ?? ''),[]).textContent; child.disabled = Boolean(option.disabled); child.selected = Boolean(option.selected); node.append(child);
+      }
+      const initial = node.tagName === 'SELECT' ? (spec.options?.find(option => option.selected) || spec.options?.find(option => !option.disabled))?.value : node.tagName === 'TEXTAREA' ? spec.label : '';
+      if (node.tagName !== 'BUTTON') node.setAttribute('value',String(attrs.value ?? window.QResponseTags.decodeEntities(initial ?? '')));
+      if (attrs.checked) node.setAttribute('checked','');
+      node.disabled = Boolean(attrs.disabled);
+      return node;
+    };
+    for (const text of texts) {
+      if (text.parentElement?.closest('pre,code') || !text.textContent.includes('\uE300')) continue;
+      const parts = text.textContent.split(/(\uE300[^\uE301]+\uE301)/g);
+      text.replaceWith(...parts.map(part => {
+        const id = /^\uE300([^\uE301]+)\uE301$/.exec(part)?.[1];
+        return id && controls.has(id) ? makeControl(controls.get(id)) : document.createTextNode(part);
+      }));
+    }
+    syncMarkdownNodes(content,fragment);
+    for (const node of content.querySelectorAll('[data-qcontrol]')) {
+      const attrs = controls.get(node.dataset.qcontrol)?.attrs || {};
+      if (node.tagName !== 'BUTTON') {
+        const value = node.getAttribute('value') || '';
+        if (node.value !== value) node.value = value;
+        if (/^(checkbox|radio)$/.test(node.type)) node.checked = Boolean(attrs.checked ?? attrs.value);
+      }
+    }
+  }
+
   // Paragraph mode parses complete snapshots together so nested markup keeps its context.
   // Other reveal styles stabilize only the unfinished tail. Both preserve unchanged nodes.
   function renderReply(entry, text, sources, streaming) {
-    if (!streaming || QSettings.settings.streamStyle === "paragraph") {
+    if (window.QInteractive && window.QResponseTags.hasInteractive(text)) {
       entry.stable = null;
-      syncMarkdownNodes(entry.contentEl, parseReply(text, sources));
+      renderInteractive(entry.contentEl,text,sources);
+      return;
+    }
+    if (!streaming || QSettings.settings.streamStyle === "paragraph" || window.QResponseTags.hasLayout(text)) {
+      entry.stable = null;
+      // Keep template and tag scopes together across blank lines. The parser supplies
+      // temporary closing tags without changing the canonical model response.
+      const snapshot = streaming && QSettings.settings.streamStyle !== "paragraph" ? window.QStream.stabilize(text) : text;
+      syncMarkdownNodes(entry.contentEl, parseReply(snapshot, sources));
       return;
     }
     let stable = entry.stable;
@@ -538,9 +611,11 @@
       const content = row.querySelector(".turn-content");
       const template = document.createElement("template");
       if (item.role === "user") template.content.append(document.createTextNode(item.text));
-      else template.innerHTML = renderMarkdownSafe(item.text, item.sources);
+      else if (window.QInteractive && window.QResponseTags.hasInteractive(item.text)) {
+        renderInteractive(content,item.text,item.sources);
+      } else template.innerHTML = renderMarkdownSafe(item.text, item.sources);
       highlightCode(template.content);
-      syncMarkdownNodes(content, template.content);
+      if (!(item.role === 'assistant' && window.QInteractive && window.QResponseTags.hasInteractive(item.text))) syncMarkdownNodes(content, template.content);
       window.QMath?.renderInto(content);
       hydrateWebImages(content);
       row.toggleAttribute("data-media-first", Boolean(item.media?.some(file => file.before)));

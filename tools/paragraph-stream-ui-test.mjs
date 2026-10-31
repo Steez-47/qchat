@@ -138,10 +138,15 @@ try {
   }
 
   await begin('paragraph');
-  for (const source of ['```js\na\n\nb\n','$$\nx\n\ny\n','<section><div>one\n\ntwo</div>\n\n','| a | b |\n|---|---|\n| x | y |\n']) {
+  for (const source of ['```js\na\n\nb\n','$$\nx\n\ny\n','| a | b |\n|---|---|\n| x | y |\n']) {
     await emit('delta',source); await sleep(50);
     check('unfinished compound block buffered',await evalJS(`(${plain})===''`));
   }
+  await emit('delta','<section><mark>Paired paragraph.\n\nPending'); await sleep(80);
+  check('paragraph mode pairs open tags before their close arrives',await evalJS(`document.querySelector('.turn-content mark')?.textContent.trim()==='Paired paragraph.'`));
+  const openLoop='{#each [{name:"First"},{name:"Second"}] as item}<mark>{item.name}</mark>\n\n';
+  await emit('delta',openLoop); await sleep(80);
+  check('paragraph mode expands an open loop before its close arrives',await evalJS(`Array.from(document.querySelectorAll('.turn-content mark')).map(x=>x.textContent).join(',')==='First,Second'`));
   await emit('delta','Stopped final prose');
   await evalJS(`document.getElementById('btn-send').click()`); await sleep(100);
   check('Stop flushes unfinished prose',await evalJS(`(${plain})==='Stopped final prose'`));

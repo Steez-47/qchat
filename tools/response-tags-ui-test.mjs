@@ -120,6 +120,28 @@ try {
   const reviewedState=await evalJS("(()=>{const c=document.querySelector('[data-role=assistant] .turn-content');return {words:c.textContent.includes('Hello world'),math:c.querySelectorAll('.katex').length,raw:c.querySelectorAll('.math-raw,.katex-error').length,inline:[...c.querySelectorAll('code')].some(x=>x.textContent==='a \` b'),quoted:c.querySelector('blockquote pre code')?.textContent.includes('<Entity value=\"literal\"/>'),tail:c.textContent.includes('Array<object> keeps the rest of this reply.')};})()");
   check('inequalities render with KaTeX after tag processing',reviewedState.math===4 && !reviewedState.raw,JSON.stringify(reviewedState));
   check('inline spaces, nested code and generic prose survive rendering',reviewedState.words && reviewedState.inline && reviewedState.quoted && reviewedState.tail,JSON.stringify(reviewedState));
+  const loop = '{#each [{period:"First 24 hours",copies:"25M",revenue:"$2.2B"},{period:"First 7 days",copies:"43M",revenue:"$3.8B"},{period:"First 30 days",copies:"58M",revenue:"$5.1B"}] as item}\n<box><text>{item.period}</text>\n\n<strong>{item.copies}</strong>\n\n<text>{item.revenue} USD</text></box>\n';
+  await open('/',{settings:{v:4,animations:'off',autoDismiss:0,streamStyle:'instant'}});
+  await evalJS('window.__mock.hold=true'); await send('Sales template');
+  await until("__mock.last('chat_send')");
+  const emitSnapshot = text => evalJS(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(text)}})`);
+  const content = "document.querySelector('[data-role=assistant] .turn-content')";
+  await emitSnapshot('## My GTA VI sales predictions\n\n'+loop);
+  await until(`${content}?.textContent.includes('58M')`,'expanded each loop');
+  check('open each block renders all screenshot rows before its close arrives',await evalJS(`(()=>{const c=${content};return ['First 24 hours','25M','$2.2B USD','First 7 days','43M','$3.8B USD','First 30 days','58M','$5.1B USD'].every(x=>c.textContent.includes(x)) && !/[{}]/.test(c.textContent) && c.querySelectorAll('strong').length===3})()`));
+  await evalJS(`window.loopFirst=${content}.querySelector('p');window.loopBefore=${content}.innerHTML`);
+  for (const closer of ['{/', '{/ea', '{/each}']) {
+    await emitSnapshot('## My GTA VI sales predictions\n\n'+loop+closer); await sleep(60);
+    check('each closer is absorbed: '+closer,await evalJS(`${content}.innerHTML===loopBefore`));
+  }
+  if(shotsDir){await mkdir(shotsDir,{recursive:true});const shot=await cdp('Page.captureScreenshot',{format:'png'});await writeFile(path.join(shotsDir,'each-streaming.png'),Buffer.from(shot.data,'base64'));}
+  await emitSnapshot('<details><summary>Live</summary><mark>First\n\nSecond'); await sleep(60);
+  check('nested open HTML tags are paired across blank lines',await evalJS(`${content}.querySelector('details mark')?.textContent.includes('Second') && !${content}.textContent.includes('<')`));
+  await evalJS(`window.paired=${content}.innerHTML;window.markNode=${content}.querySelector('mark')`);
+  for (const closer of ['<','</','</m','</mar','</mark></details>']) {
+    await emitSnapshot('<details><summary>Live</summary><mark>First\n\nSecond'+closer); await sleep(60);
+    check('real HTML closer replaces temporary pair: '+closer,await evalJS(`${content}.innerHTML===paired && ${content}.querySelector('mark')===markNode`));
+  }
   check('no runtime errors',problems.length===0,problems.slice(0,3).join(' | '));
   if (shotsDir) { await mkdir(shotsDir,{recursive:true}); const shot=await cdp('Page.captureScreenshot',{format:'png'}); await writeFile(path.join(shotsDir,'response-tags.png'),Buffer.from(shot.data,'base64')); }
 } catch (e) { console.error(e); if (problems.length) console.error("console:", problems.slice(0, 5).join(" | ")); failed++; }

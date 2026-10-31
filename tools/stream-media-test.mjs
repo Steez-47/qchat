@@ -984,6 +984,22 @@ test('citation prefixes, math, quoted code and source titles remain safe through
   assert.equal(done(partial)?.text,'Hello [Source](https://example.com/source)');
 });
 
+test('interactive DIL source survives SSE and completion for the local interpreter', async () => {
+  const raw = '{@body const [items,setItems]=DIL.useState(["Arthur Morgan"])}\n{#each items as item}<text>{item}</text>{/each}<button onClick={()=>setItems([...items,"John Marston"])}>Add</button>';
+  const b = browser({data:sse(message([raw]),'[DONE]')});
+  await b.send(); await b.tick(2000);
+  assert.equal(done(b)?.text,raw);
+  assert.ok(b.events.some(e=>e.type==='delta' && e.text===raw));
+});
+
+test('interactive NDJSON layout is preserved even alongside static fallbackMarkdown', async () => {
+  const raw = '{@body const [n,setN]=DIL.useState(0)}<button onClick={()=>setN(n+1)}>{n}</button>';
+  const data = [{type:'content',messageId:'interactive',revision:1,markdown:raw,dil:{fallbackMarkdown:'0'}},{type:'done'}].map(JSON.stringify).join('\n')+'\n';
+  const b = browser({data,type:'application/x-ndjson'});
+  await b.send(); await b.tick(2000);
+  assert.equal(done(b)?.text,raw);
+});
+
 let failed = 0;
 for (const { name, run } of tests) {
   try { await run(); console.log(`PASS ${name}`); }

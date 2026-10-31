@@ -908,3 +908,13 @@ html[data-scrollbar="hidden"] :is(.scroll, .history-panel, .feature-results)::-w
 .turn-row[data-media-first] .turn-media { order: -1; margin: 0 0 10px; }
 .bubble-user:has(> .turn-media:not(:empty)) { display: flex; flex-direction: column; }
 .turn-content em:only-child { color: var(--text-2); font-size: 0.9em; font-style: normal; }
+/* Interpreter controls share reply typography and remain compact in the bubble. */
+.qinteractive-control { font: inherit; color: var(--text-1); max-width: 100%; border: 1px solid var(--stroke-1); border-radius: 8px; padding: 7px 11px; background: var(--fill-1); vertical-align: middle; }
+button.qinteractive-control { cursor: pointer; font-weight: 600; }
+button.qinteractive-control:hover { background: var(--fill-2); }
+.qinteractive-control:focus-visible { outline: 2px solid var(--accent, #78aaff); outline-offset: 2px; }
+.qinteractive-control:disabled { opacity: .5; cursor: default; }
+input.qinteractive-control[type=range] { padding: 4px 0; accent-color: var(--accent, #78aaff); }
+input.qinteractive-control[type=checkbox], input.qinteractive-control[type=radio] { accent-color: var(--accent, #78aaff); }
+textarea.qinteractive-control { display: block; min-height: 70px; width: 100%; resize: vertical; }
+select.qinteractive-control option { background: #252b35; color: #eee; }
