@@ -174,9 +174,9 @@ try {
   check('renaming during streaming survives completion without sending again',(await state()).current.title==='Named while streaming'&&await count('chat_send')===1&&await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).current.lastResponse==='final reply'`));
 
   await open('/?mock=1',{settings:{animations:'off',keepHistory:true}});await type('unsent fresh draft');await command('rename');
-  check('a fresh draft cannot create a phantom named chat',await evalJS(`document.getElementById('rename-chat').hidden&&document.getElementById('prompt-input').value==='unsent fresh draft'&&document.getElementById('command-feedback').textContent.includes('Start a conversation')`));
+  check('a meaningful fresh draft opens Rename without changing its text',await evalJS(`!document.getElementById('rename-chat').hidden&&document.getElementById('rename-chat-input').value==='unsent fresh draft'&&document.getElementById('prompt-input').value==='unsent fresh draft'`));
   await open('/?mock=1',{settings:{animations:'off',keepHistory:true}});await evalJS(`__mock.emit('qchat://selection','selection only')`);await command('rename');
-  check('a selection-only fresh draft remains unnamed and intact',await evalJS(`document.getElementById('rename-chat').hidden&&document.querySelector('#attachments .selection-chip')`));
+  check('a selection-only draft opens Rename with its context hidden and intact',await evalJS(`!document.getElementById('rename-chat').hidden&&document.getElementById('rename-chat-input').value==='Untitled chat'&&document.querySelector('#attachments .selection-chip')&&document.getElementById('prompt-input').value===''`));
 
   for(const privateMode of ['temporary','history-disabled']){
     await open('/?mock=1',{settings:{animations:'off',autoDismiss:0,keepHistory:privateMode!=='history-disabled'}});
