@@ -1184,10 +1184,13 @@
     const start = input.selectionStart, end = input.selectionEnd, direction = input.selectionDirection;
     const selections = chats.current.selectionTexts.slice();
     const temporary = Boolean(chats.current.temporary);
+    const chat = chats.current;
+    const title = !(chat.transcript?.length || chat.lastPrompt || chat.lastResponse || chat.lastHasMedia || chat.conversationId) ? chat.title : "";
     await startNewChat(false, { preserveFiles: true, movingDraft: true });
     input.value = draft;
     chats.current.selectionTexts = selections;
     chats.current.temporary = temporary;
+    if (title) chats.current.title = title;
     setModeLabel(temporary ? "Temporary" : "");
     renderAttachments();
     chats.current.draft = draftValue();
@@ -3028,7 +3031,7 @@
   }
   function openRenameChat() {
     const chat = chats.current;
-    if (!(chat.conversationId || chat.lastPrompt || chat.lastResponse || chat.transcript.length)) {
+    if (!hasContent(chat) && !draftValue().trim()) {
       showCommandFeedback("Start a conversation first.");
       return;
     }
@@ -3036,7 +3039,7 @@
     closeSlashMenu(); hideClearConfirm();
     if (!featureList.hidden) closeFeatureList();
     renameTarget = chat;
-    renameInput.value = normalizeChatTitle(chat.title) || "Untitled chat";
+    renameInput.value = chatDisplayTitle({ ...chat, draft: draftValue() });
     renameInput.removeAttribute("aria-invalid");
     renameError.hidden = true;
     renameError.textContent = "";
