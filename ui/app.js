@@ -417,6 +417,7 @@
   let historyChatKey = null;
   let historyHideTimer = null;
   let historyHeld = false;
+  const readingPositions = new Map();
   const backfilled = new WeakSet();
   let backfillTimer = null;
   const bridge = { ready: false, loggedIn: false, signedOut: false };
@@ -811,7 +812,50 @@
     historyChatKey = null;
   }
 
-  function setHistoryOpen(open) {
+  function rememberReadingPosition() {
+    const key = chats.current.key;
+    const state = { history: historyOpen };
+    if (historyOpen) {
+      const panel = el.historyPanel;
+      if (scrollGap(panel) > 2) {
+        const top = panel.getBoundingClientRect().top;
+        const row = [...panel.children].find(node => node.getBoundingClientRect().bottom > top);
+        if (row) state.anchor = { id: row.dataset.id, offset: top - row.getBoundingClientRect().top };
+      }
+    } else {
+      const entry = responseEntry();
+      if (entry && scrollGap(entry.scroller) > 2 && (userScrolledUp || QSettings.settings.followStream === false)) {
+        state.top = entry.scroller.scrollTop;
+      }
+    }
+    readingPositions.delete(key);
+    readingPositions.set(key, state);
+    if (readingPositions.size > 50) readingPositions.delete(readingPositions.keys().next().value);
+  }
+
+  function restoreReadingPosition(chat) {
+    const state = readingPositions.get(chat.key);
+    if (!state) return;
+    if (state.history) {
+      setHistoryOpen(true, { focus: false });
+      const panel = el.historyPanel;
+      const row = state.anchor && [...panel.children].find(node => node.dataset.id === state.anchor.id);
+      historyHeld = Boolean(row);
+      if (row) panel.scrollTop += row.getBoundingClientRect().top - panel.getBoundingClientRect().top + state.anchor.offset;
+      else panel.scrollTop = panel.scrollHeight;
+      syncHistoryEdge();
+    } else if (state.top !== undefined) {
+      const entry = responseEntry();
+      if (entry) {
+        holdStream(entry);
+        entry.scroller.scrollTop = state.top;
+        entry.followTop = entry.scroller.scrollTop;
+        syncScrollState(entry);
+      }
+    }
+  }
+
+  function setHistoryOpen(open, { focus = true } = {}) {
     if (!open) finder.close({ focus: false });
     if (open === historyOpen) return;
     closeRenameChat(false);
@@ -838,7 +882,7 @@
       fitNow();
       void panel.offsetHeight;
       clearTimeout(autoDismissTimer);
-      panel.focus({ preventScroll: true });
+      if (focus) panel.focus({ preventScroll: true });
       syncHistoryButton();
       backfillHistory(chats.current);
     } else {
@@ -1220,6 +1264,7 @@
   }
 
   function clearRecentChats() {
+    readingPositions.clear();
     chats.recent = [];
     dismissExchange();
     chats.current = freshChat();
@@ -2449,6 +2494,7 @@
     const consumeDraft = fromInput || (retrying && el.promptInput.value === prompt);
     prompts.push(prompt); recallIndex = -1;
     const chat = chats.current;
+    readingPositions.delete(chat.key);
     const previousMeta = { title: chat.title, lastPrompt: chat.lastPrompt, lastHadAttachments: chat.lastHadAttachments, lastActive: chat.lastActive };
     const reasoningEffort = effectiveReasoning(chat);
     const consumeSelections = fromInput || (selectionTexts.length > 0 && selectionTexts.every((text, index) => chat.selectionTexts[index] === text));
@@ -2602,6 +2648,7 @@
 
   async function startNewChat(notifyBackend = true) {
     if (isStreaming()) await stopStreaming();
+    rememberReadingPosition();
     chats.current.draft = draftValue();
     for (const t of turns) recordPartial(t);
     chatGeneration++;
@@ -2712,11 +2759,13 @@
     const index = chats.recent.findIndex((c) => c.key === key);
     if (index < 0) return;
     if (!await setProvider(chats.recent[index].provider || "chatgpt")) return;
+    rememberReadingPosition();
     chatGeneration++;
     discardPendingFiles();
     hideGlobalError();
     closeSlashMenu();
     hideClearConfirm();
+    setHistoryOpen(false);
     dismissExchange();
 
     const now = Date.now();
@@ -2733,11 +2782,11 @@
     renderAttachments();
     el.promptInput.value = target.draft || "";
     autoResizePrompt();
-    setHistoryOpen(false);
     saveChats();
     renderTabs();
     updateIdleChips();
     showCachedResponse(target);
+    restoreReadingPosition(target);
 
     // A chat without a server id reopens lazily: its first send starts fresh.
     if (target.conversationId) {
@@ -3030,7 +3079,7 @@
   }
 
   function chatRows() {
-    const local = chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: (chat.provider !== activeProvider ? `${providerName(chat)} · ` : "") + elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { const index = chats.recent.findIndex(c => c.key === chat.key); if (index < 0) return; offerChatUndo({ type: "remove", chat: structuredClone(chats.recent[index]), index }); chats.recent.splice(index, 1); saveChats(); renderTabs(); featureList._repaint?.(); } }));
+    const local = chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: (chat.provider !== activeProvider ? `${providerName(chat)} · ` : "") + elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { const index = chats.recent.findIndex(c => c.key === chat.key); if (index < 0) return; offerChatUndo({ type: "remove", chat: structuredClone(chats.recent[index]), index }); readingPositions.delete(chat.key); chats.recent.splice(index, 1); saveChats(); renderTabs(); featureList._repaint?.(); } }));
     const known = new Set([chats.current.conversationId, ...chats.recent.filter(chat => chat.provider === activeProvider).map(chat => chat.conversationId)]);
     const account = accountChats.items.filter(item => !known.has(item.id)).map(item => ({ title: item.title || "Untitled chat", meta: item.updated ? elapsedLabel(item.updated) : "", run: () => openAccountChat(item) }));
     return [...local, ...account];
@@ -3545,6 +3594,7 @@
   function onSettingsApplied() {
     const s = QSettings.settings;
     if (!s.keepHistory) {
+      readingPositions.clear();
       chats.recent = [];
       saveChats();
     }
