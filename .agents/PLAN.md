@@ -7,28 +7,14 @@ Gemini: hidden second webview on gemini.google.com, created lazily, same bridge 
 
 | id | task | model | owns | status |
 |---|---|---|---|---|
-| V1 | Native startup and provider routing | Sol medium | src-tauri/src, capabilities, native test | running |
-| V2 | Gemini bridge, synthetic and live guest checks | DeepSeek max | src-tauri/bridge/gemini-bridge.js, tools | running |
-| V3 | Provider picker, settings v6, launch behaviour | Sol medium | ui, provider UI test | running |
-| V4 | Integration, cross-family review, full suites, version 1.1.0, local build | parent + reviewer | integration | todo |
+| V1 | Native startup and provider routing | Sol medium | src-tauri/src, capabilities, native test | done |
+| V2 | Gemini bridge, synthetic and live guest checks | DeepSeek max | src-tauri/bridge/gemini-bridge.js, tools | done |
+| V3 | Provider picker, settings v6, launch behaviour | Sol medium | ui, provider UI test | done |
+| V4 | Integration, cross-family review, full suites, version 1.1.0, local build | parent + Terra | integration | done |
+| V5 | Polish audit fixes | Argon audit, Sol fixes | ui, chat_status | done |
 
-## v1.0.0 public Windows installer (2026-10-31)
-
-User authorized promoting the current application to v1.0.0 and explicitly chose immediate public publication. Versions updated in npm, Tauri and Cargo. Added npm run build:installer: NSIS current-user installer, offline Microsoft WebView2 dependency, Start menu shortcut and Windows uninstall support. The standard Tauri uninstaller preserves app data unless removal is selected, cleans the Run entry on uninstall, and preserves it during installer updates. No custom hooks are required. Install notes and generated third-party notices are included both in setup and the release assets; source-pinned license fallbacks are stored in packaging/licenses.
-
-Verified: Windows x64 release and NSIS bundle PASS; Rust21 PASS with one desktop fixture ignored; setup extraction PASS. Extracted application matches compiled code with only the three-byte expected NSIS bundle marker, ProductVersion 1.0.0, resources match exactly, included WebView2 signature valid (Microsoft), PE imports require no separate VC runtime, and installer manifest is asInvoker. Setup is about 210 MiB. Source UI behavior unchanged from v0.1.3; prior passing UI/bridge evidence reused. Clean-device install, first sign-in, autostart and uninstall remain for owner's external test. No installer executed on the build PC and no saved profile touched. Publication assets: dist/v1.0.0/.
-
-## v0.1.3 beta release (2026-10-31)
-
-User authorized publishing v0.1.3. Includes all commits on main since v0.1.2 plus the orb drag-only interaction and persistent command hint. Versions bumped in npm, Tauri, Cargo and both lockfiles. Format: Windows x64 QChat.exe plus SHA256SUMS.txt, prerelease.
-
-Checks: cargo test --locked PASS (21 passed, 1 desktop fixture ignored); response tags, stream-text buffering, interactive unit/UI, auth17, stream-media75, selection UI and paragraph UI PASS. Feature and UX checks passed for the same composer source in the preceding task, with screenshot inspection. Fresh signed-in chat E2E not run. Windows release compilation PASS; standard staging encountered a running executable (EPERM). Preserved it by rename, staged the compiled executable and verified ProductVersion 0.1.3 and matching SHA256 650A6CE0C63D8078FE9492C5A64F3B77F4A613064B3345D2978DD87286A91C42. Publishing authorized: https://github.com/Steez-47/qchat/releases/tag/v0.1.3. Existing session preserved.
-
-## Composer command hint (2026-10-31)
-
-Removed the orb's menu activation and button semantics; drag behavior remains. The empty composer always shows the configured placeholder followed by ' / commands' (with a middle-dot separator). Ctrl+K and slash commands remain available. Feature UI suite ALL PASS, including real browser pointer click and hint persistence after sending; headless screenshot checked at 516px. Feature and UX regression suites ALL PASS. Release npm run build PASS; dist/QChat.exe matches compiled release (SHA256 4EDB511CED95E139601CF61D368C22810727579AEBB49F66849530B67C948EC6). Running session preserved; restart to load the change.
-
-## Paragraph streaming renderer (2026-10-31)
+Verified: Rust 26 (1 ignored); all UI, bridge and native suites PASS on the final code, including tools/provider-ui-test.mjs, tools/provider-native-test.mjs, tools/settings-e2e.mjs and the real Gemini guest checks tools/live/gemini-guest-check.mjs and tools/live/gemini-app-e2e.mjs (reply, Markdown, context across turns, Stop, switching back). tools/app-e2e.mjs still fails only its known guest Stop assertion. Review fixes: send/switch race, switch serialization, Stop tail, completion settle, startup rollback; parent also fixed returning to a provider sending into its old chat. settings-e2e pointed at a stale exe and count and is corrected; snapshot fixture now waits for first paint.
+Not verified: real reboot autostart; Gemini signed in (login detection, sign-in window return, uploads, models, account chats), Google refusing a real account's sign-in in WebView2, installer run. No push, publish or merge; dist/v1.1.0 built locally; running PID32408 preserved, old exe kept as dist/QChat-before-v1.1.0-*.bak.
 
 Goal: reveal complete formatted paragraphs/blocks as streaming snapshots arrive, preserve finished content and the reader's scroll position through completion and history refresh.
 

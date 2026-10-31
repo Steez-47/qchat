@@ -64,3 +64,9 @@
 2026-10-31 | V1.1 Gemini bridge | opencode/deepseek-v4.1-flash-free max | running | guest live probe available
 2026-10-31 | V1.1 provider and startup UI | codex/gpt-6.1-sol medium | running | picker, settings v6, launch behaviour
 2026-10-31 | V1.1 Gemini bridge and polish audit | opencode/deepseek-v4.1-flash-free | failed: free usage limit reached, exhausted until about 10 minutes or more | rerouted to Argon and Luna
+2026-10-31 | V1.1 native | codex/gpt-6.1-sol medium | done | parent fixed tray label encoding and legacy Run value upgrade
+2026-10-31 | V1.1 Gemini bridge | antigravity/gemini-4-argon medium | done | live guest checks PASS
+2026-10-31 | V1.1 UI | codex/gpt-6.1-sol medium | done | parent fixed per-provider page memory
+2026-10-31 | V1.1 review | codex/gpt-6.1-terra medium | partial coverage | 6 findings, 5 fixed, retry-during-sign-in rejected because sign-in clears background
+2026-10-31 | V1.1 audit | codex/gpt-6-luna medium stalled; antigravity/gemini-4-argon low done | 10 items, fixed by codex/gpt-6.1-sol medium
+2026-10-31 | V1.1 release build | parent | done | dist/v1.1.0 local only, not published
