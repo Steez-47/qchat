@@ -590,25 +590,33 @@ fn chat_list_conversations(app: tauri::AppHandle, offset: u32) -> Result<(), Str
     eval(&app,&format!("window.__qchat && window.__qchat.listConversations({offset})"))
 }
 #[tauri::command]
-fn chat_status(app: tauri::AppHandle, reconnect: Option<bool>, provider: Option<String>) -> Result<(), String> {
+async fn chat_status(app: tauri::AppHandle, reconnect: Option<bool>, provider: Option<String>) -> Result<(), String> {
     if reconnect == Some(true) {
-        let target = {
-            let state = app.state::<Host>();
-            let mut a = state.0.lock().unwrap();
-            if a.flight_id.is_some() { return Err("busy: A request is already in progress".into()); }
-            if provider.as_ref().is_some_and(|expected| expected != &a.active) {
-                return Err("provider_mismatch: Active provider changed".into());
-            }
-            let target = a.active.clone();
-            let page = a.providers.get_mut(&target).unwrap();
-            page.loaded = Instant::now(); page.heard = false; page.retries = 0;
-            target
-        };
+        let target = active_provider(&app);
         resume_provider(&app, &target);
-        // Reload the same provider URL. New chat would clear staged draft files
-        // and detach the page from the UI's current conversation.
-        return app.get_webview_window(&target).ok_or("Provider window unavailable")?
-            .reload().map_err(|_| "Could not reload the provider".into());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let reload_app = app.clone();
+        let target_window = app.get_webview_window(&target).ok_or("Provider window unavailable")?;
+        target_window.with_webview(move |window| {
+            // Recheck on the WebView thread and keep the same lock used by send
+            // reservations/provider switches until the actual Reload call.
+            let result = (|| {
+                let state = reload_app.state::<Host>();
+                let mut a = state.0.lock().unwrap();
+                if a.flight_id.is_some() { return Err("busy: A request is already in progress".into()); }
+                if a.active != target || provider.as_ref().is_some_and(|expected| expected != &a.active) {
+                    return Err("provider_mismatch: Active provider changed".into());
+                }
+                let page = a.providers.get_mut(&target).unwrap();
+                page.loaded = Instant::now(); page.heard = false; page.retries = 0;
+                // Reload this URL without clearing staged files or reply media.
+                unsafe { window.controller().CoreWebView2().and_then(|core| core.Reload()) }
+                    .map_err(|_| "Could not reload the provider".into())
+            })();
+            let _ = tx.send(result);
+        }).map_err(|_| "Provider window unavailable")?;
+        return tokio::time::timeout(Duration::from_secs(10), rx).await
+            .map_err(|_| "Provider reload timed out")?.map_err(|_| "Provider reload ended")?;
     }
     for provider in ["chatgpt", "gemini"] {
         if let Some(w) = app.get_webview_window(provider) {
@@ -871,7 +879,7 @@ fn main() {
      // the system's default spot its home.
      if !own && w.is_visible().unwrap_or(false) { capture_anchor(w.app_handle()); }
    }
-   if let tauri::WindowEvent::CloseRequested{api,..}=e { api.prevent_close(); if w.label()=="main" { hide_main(w.app_handle().clone()); } else { background_provider(w.app_handle(),w.label()); let _=chat_status(w.app_handle().clone(),None,None); } }
+   if let tauri::WindowEvent::CloseRequested{api,..}=e { api.prevent_close(); if w.label()=="main" { hide_main(w.app_handle().clone()); } else { background_provider(w.app_handle(),w.label()); let app=w.app_handle().clone();tauri::async_runtime::spawn(async move {let _=chat_status(app,None,None).await;}); } }
  })
  .run(tauri::generate_context!()).expect("QChat runtime failed");
 }

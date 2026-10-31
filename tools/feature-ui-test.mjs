@@ -220,7 +220,7 @@ try {
   check('finding 13 autostart compares stored executable path',nativeSource.includes("parse_autostart(") && nativeSource.includes("eq_ignore_ascii_case("));
   const hostSource=await readFile(path.join(root,'src-tauri/src/main.rs'),'utf8');
   const reconnectSource=hostSource.match(/fn chat_status\([\s\S]*?(?=#\[tauri::command\])/)?.[0]||'';
-  check('finding 14 reconnect reloads the provider without clearing uploads',appSource.includes('invoke("chat_status", { reconnect: true, provider: activeProvider })')&&reconnectSource.includes('.reload()')&&!reconnectSource.includes('media::clear'));
+  check('finding 14 reconnect reloads the provider without clearing uploads',appSource.includes('invoke("chat_status", { reconnect: true, provider: activeProvider })')&&reconnectSource.includes('core.Reload()')&&!reconnectSource.includes('media::clear'));
   check('finding 15 quota trims oldest entries without erasing all recents',appSource.includes('while (recent.length > 1)') && !appSource.includes('current.transcript.slice(-2) }, recent: []'));
   check('no runtime errors', problems.length === 0, problems.slice(0, 3).join(' | '));
 } catch (e) {
