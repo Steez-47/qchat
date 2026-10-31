@@ -3128,13 +3128,38 @@
     const results = make("div", "feature-results"); results.setAttribute("role", "listbox"); results.setAttribute("aria-label", title); featureList.append(results);
     let lines = [], selected = 0;
     const mark = () => lines.forEach((entry, i) => { entry.line.setAttribute("role", "option"); entry.line.setAttribute("aria-selected", String(i === selected)); if (i === selected) entry.line.dataset.selected = ""; else delete entry.line.dataset.selected; });
-    const paint = () => {
-      results.replaceChildren(); lines = []; selected = 0;
+    const cache = new Map();
+    const paint = (preserve = false) => {
+      const previousKey = lines[selected]?.row.key, previousIndex = selected;
+      const focused = results.contains(document.activeElement) ? document.activeElement : null;
+      const scroll = results.scrollTop;
+      if (!searchable) results.replaceChildren();
+      lines = []; selected = 0;
+      const used = new Set(); let position = 0;
       const query = `${field.value}`.toLowerCase();
       for (const row of getRows().filter(row => !query || `${row.title || ""} ${row.prompt || ""}`.toLowerCase().includes(query))) {
         if (row.divider) { const divider = make("div", "feature-divider"); divider.setAttribute("role", "separator"); results.append(divider); continue; }
         if (row.heading) { results.append(make("div", "feature-heading", row.heading)); continue; }
-        const line = make("div", "feature-row");
+        const key = searchable ? row.key : null;
+        let entry = key != null ? cache.get(key) : null;
+        const line = entry?.line || make("div", "feature-row");
+        if (entry) {
+          entry.row = row;
+          entry.button.querySelector(".feature-title").textContent = row.title;
+          entry.button.querySelector(".feature-meta").textContent = row.meta || "";
+          entry.button.disabled = Boolean(row.disabled);
+          line.classList.toggle("feature-disabled", Boolean(row.disabled));
+          if (row.disabled) line.setAttribute("aria-disabled", "true"); else line.removeAttribute("aria-disabled");
+          if (!row.disabled) lines.push(entry);
+          used.add(key);
+          const at = results.children[position++];
+          if (at !== line) {
+            if (focused && line.contains(focused)) {
+              while (results.children[position - 1] !== line) results.insertBefore(results.children[position - 1], line.nextSibling);
+            } else results.insertBefore(line, at || null);
+          }
+          continue;
+        }
         if (row.selected !== undefined) {
           const check = makeIcon(GLYPH.check, "icon feature-check");
           check.style.visibility = row.selected ? "visible" : "hidden";
@@ -3144,26 +3169,39 @@
           const button = make("button", "feature-choice"); button.type = "button";
           button.append(make("span", "feature-title", row.title), make("span", "feature-meta", row.meta || ""));
           button.disabled = Boolean(row.disabled);
-          button.onclick = () => { if (!row.disabled) { closeFeatureList(); row.run(); } };
+          entry = { line, row, button };
+          button.onclick = () => { if (!entry.row.disabled) { closeFeatureList(); entry.row.run(); } };
           button.addEventListener("focus", () => { selected = lines.findIndex(entry => entry.line === line); mark(); });
-          line.append(button); if (!row.disabled) lines.push({ line, row });
+          line.append(button); if (!row.disabled) lines.push(entry);
           else { line.classList.add("feature-disabled"); line.setAttribute("aria-disabled", "true"); }
         } else {
           line.append(make("kbd", "key", row.keys), make("span", "feature-title", row.title));
         }
-        if (row.remove) { const remove = make("button", "tool-btn"); remove.type = "button"; remove.setAttribute("aria-label", "Remove chat"); remove.append(makeIcon(GLYPH.close)); remove.onclick = row.remove; line.append(remove); }
-        results.append(line);
+        if (row.remove) { const remove = make("button", "tool-btn"); remove.type = "button"; remove.setAttribute("aria-label", "Remove chat"); remove.append(makeIcon(GLYPH.close)); remove.onclick = () => entry.row.remove?.(); remove.addEventListener("focus", () => { selected = lines.findIndex(item => item.line === line); mark(); }); line.append(remove); }
+        if (key != null) { cache.set(key, entry); used.add(key); }
+        if (searchable) { const at = results.children[position++]; results.insertBefore(line, at || null); }
+        else results.append(line);
+      }
+      if (searchable) {
+        for (const [key, item] of cache) if (!used.has(key)) { item.line.remove(); cache.delete(key); }
+        while (results.children.length > position) results.lastElementChild.remove();
+        if (preserve) {
+          const found = lines.findIndex(item => item.row.key === previousKey);
+          selected = found >= 0 ? found : Math.min(previousIndex, Math.max(0, lines.length - 1));
+          if (focused && document.activeElement !== focused) (focused.isConnected ? focused : field).focus({ preventScroll: true });
+          results.scrollTop = scroll;
+        }
       }
       mark();
       if (title === "Chats" && !lines.length) results.append(make("p", "feature-heading", accountChats.loading ? "Loading your chats…" : query ? "No chats match" : "No chats yet"));
     };
-    featureList._repaint = searchable ? () => { const scroll = results.scrollTop; paint(); results.scrollTop = scroll; } : null;
-    field.oninput = paint;
+    featureList._repaint = searchable ? () => { paint(true); } : null;
+    field.oninput = () => paint();
     featureList.onkeydown = e => {
       if (e.key === "Escape") { e.stopPropagation(); closeFeatureList(); }
       else if (keysCard) { if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key !== "Shift" && e.key !== "Control" && e.key !== "Alt" && e.key !== "Meta") { e.preventDefault(); closeFeatureList(); } }
-      else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); selected = (selected + (e.key === "ArrowDown" ? 1 : -1) + lines.length) % lines.length; mark(); lines[selected]?.line.scrollIntoView({ block: "nearest" }); }
-      else if (e.key === "Enter") { e.preventDefault(); const entry = lines[selected] || lines[0]; if (entry) { closeFeatureList(); entry.row.run(); } }
+      else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); if (!lines.length) return; selected = (selected + (e.key === "ArrowDown" ? 1 : -1) + lines.length) % lines.length; mark(); lines[selected]?.line.scrollIntoView({ block: "nearest" }); }
+      else if (e.key === "Enter") { if (searchable && e.target instanceof HTMLButtonElement) return; e.preventDefault(); const entry = lines[selected] || lines[0]; if (entry) { closeFeatureList(); entry.row.run(); } }
     };
     paint(); queueSizes(); (searchable ? field : featureList).focus();
   }
@@ -3225,9 +3263,9 @@
   }
 
   function chatRows() {
-    const local = chats.recent.map(chat => ({ title: chatDisplayTitle(chat), meta: (chat.provider !== activeProvider ? `${providerName(chat)} · ` : "") + elapsedLabel(chat.lastActive), prompt: `${chat.lastPrompt || ""} ${chat.draft || ""}`, run: () => switchToChat(chat.key), remove: () => { const index = chats.recent.findIndex(c => c.key === chat.key); if (index < 0) return; offerChatUndo({ type: "remove", chat: structuredClone(chats.recent[index]), index }); readingPositions.delete(chat.key); chats.recent.splice(index, 1); saveChats(); renderTabs(); featureList._repaint?.(); } }));
+    const local = chats.recent.map(chat => ({ key: JSON.stringify(["local", chat.provider, chat.key]), title: chatDisplayTitle(chat), meta: (chat.provider !== activeProvider ? `${providerName(chat)} · ` : "") + elapsedLabel(chat.lastActive), prompt: `${chat.lastPrompt || ""} ${chat.draft || ""}`, run: () => switchToChat(chat.key), remove: () => { const index = chats.recent.findIndex(c => c.key === chat.key); if (index < 0) return; offerChatUndo({ type: "remove", chat: structuredClone(chats.recent[index]), index }); readingPositions.delete(chat.key); chats.recent.splice(index, 1); saveChats(); renderTabs(); featureList._repaint?.(); } }));
     const known = new Set([chats.current.conversationId, ...chats.recent.filter(chat => chat.provider === activeProvider).map(chat => chat.conversationId)]);
-    const account = accountChats.items.filter(item => !known.has(item.id)).map(item => ({ title: item.title || "Untitled chat", meta: item.updated ? elapsedLabel(item.updated) : "", run: () => openAccountChat(item) }));
+    const account = accountChats.items.filter(item => !known.has(item.id)).map(item => ({ key: JSON.stringify(["account", activeProvider, item.id]), title: item.title || "Untitled chat", meta: item.updated ? elapsedLabel(item.updated) : "", run: () => openAccountChat(item) }));
     return [...local, ...account];
   }
 
