@@ -3380,6 +3380,7 @@
 
   document.addEventListener("pointerdown", e => { if (!el.clearConfirm.hidden && !el.clearConfirm.contains(e.target)) hideClearConfirm(); });
   el.clearConfirm.addEventListener("keydown", e => {
+    if (e.repeat && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); return; }
     if (["ArrowLeft", "ArrowRight"].includes(e.key)) { e.preventDefault(); (document.activeElement === el.btnClearYes ? el.btnClearNo : el.btnClearYes).focus(); }
   });
   function showClearConfirm() {
@@ -4055,7 +4056,7 @@
   });
 
   el.promptInput.addEventListener("keydown", (e) => {
-    if (e.isComposing) return;
+    if (e.isComposing || e.keyCode === 229) return;
     const arrow = e.key === "ArrowUp" || e.key === "ArrowDown";
     const recalled = !arrow ? [] : chats.current.transcript.filter(item => item.role === "user" && item.text?.trim()).map(item => item.text);
     if (arrow && !recalled.length && chats.current.lastPrompt?.trim()) recalled.push(chats.current.lastPrompt);
@@ -4083,6 +4084,7 @@
       }
       if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
         e.preventDefault();
+        if (e.key === "Enter" && e.repeat) return;
         const cmd = slashMatches[slashIndex];
         if (cmd) runCommand(cmd);
         return;
