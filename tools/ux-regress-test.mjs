@@ -449,12 +449,12 @@ try {
 
   await section('19 settings upgrade', async () => {
     await open('/', { settings: { v: 1, glassOpacity: 90, shimmer: true, look: 'frost', textSize: 16 } });
-    const upgraded = await evalJS(`(()=>{const s=QSettings.settings;const stored=JSON.parse(localStorage.getItem('qchat.settings'));return {glass:s.glassOpacity,shimmer:s.shimmer,look:s.look,textSize:s.textSize,v:stored.v,storedGlass:stored.glassOpacity};})()`);
+    const upgraded = await evalJS(`(()=>{const s=QSettings.settings;const stored=JSON.parse(localStorage.getItem('qchat.settings'));return {glass:s.glassOpacity,shimmer:s.shimmer,look:s.look,textSize:s.textSize,v:stored.v,version:QSettings.VERSION,storedGlass:stored.glassOpacity};})()`);
     check('older saved settings get the new glass default and keep the rest', upgraded.glass === 62 && upgraded.shimmer === false && upgraded.look === 'frost' && upgraded.textSize === 16, JSON.stringify(upgraded));
-    check('the upgrade is written back once as the current version', upgraded.v === 4 && upgraded.storedGlass === 62, JSON.stringify(upgraded));
+    check('the upgrade is written back once as the current version', upgraded.v === upgraded.version && upgraded.storedGlass === 62, JSON.stringify(upgraded));
     await open('/', { settings: { v: 2, glassOpacity: 90 } });
-    const current = await evalJS(`(()=>{const stored=JSON.parse(localStorage.getItem('qchat.settings'));return {glass:QSettings.settings.glassOpacity,storedGlass:stored.glassOpacity,v:stored.v};})()`);
-    check('version 2 settings keep their glass through the upgrade', current.glass === 90 && current.storedGlass === 90 && current.v === 4, JSON.stringify(current));
+    const current = await evalJS(`(()=>{const stored=JSON.parse(localStorage.getItem('qchat.settings'));return {glass:QSettings.settings.glassOpacity,storedGlass:stored.glassOpacity,v:stored.v,version:QSettings.VERSION};})()`);
+    check('version 2 settings keep their glass through the upgrade', current.glass === 90 && current.storedGlass === 90 && current.v === current.version, JSON.stringify(current));
   });
 
   check('no runtime errors', problems.length === 0, problems.slice(0, 3).join(' | '));
