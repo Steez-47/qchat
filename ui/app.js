@@ -47,6 +47,7 @@
 
   const GLYPH = {
     copy: "",
+    save: "\uE74E",
     check: "",
     send: "",
     stop: "",
@@ -2854,7 +2855,7 @@
     { name: "rename", icon: "", desc: () => "Rename in QChat", run: openRenameChat },
     { name: "find", icon: GLYPH.clock, desc: () => "Find in conversation", run: openFind },
     { name: "copy", icon: GLYPH.copy, desc: () => "Copy conversation", run: copyConversation },
-    { name: "export", icon: GLYPH.copy, desc: () => "Save conversation", run: exportConversation },
+    { name: "export", icon: GLYPH.save, desc: () => "Save conversation", run: exportConversation },
     {name:"chatgpt", icon:GLYPH.account, desc:()=>"Switch to ChatGPT", run:()=>chooseProvider("chatgpt")},
     {name:"gemini", icon:GLYPH.account, desc:()=>"Switch to Gemini", run:()=>chooseProvider("gemini")},
     {name:"startup", icon:GLYPH.settings, desc:()=>"Open at startup", run:async()=>{
@@ -3573,11 +3574,16 @@
 
   let exportPending = false;
   async function exportConversation() {
-    if (exportPending) return;
+    if (exportPending) { showCommandFeedback("Saving conversation…"); return; }
     const markdown = serializeConversation();
     if (!markdown.trim()) { showCommandFeedback("No messages to save yet."); return; }
+    if (new TextEncoder().encode(markdown).length > 4 * 1024 * 1024) {
+      showCommandFeedback("This conversation is too long to save.");
+      return;
+    }
     const chat = chats.current, generation = chatGeneration, title = chat.title;
     exportPending = true;
+    showCommandFeedback("Saving conversation…");
     try {
       const name = await invoke("conversation_export", { title, markdown });
       if (chats.current === chat && chatGeneration === generation) showCommandFeedback(`Saved ${name} to Downloads.`);

@@ -9,7 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'";
-const profile = await mkdtemp(path.join(tmpdir(), 'qchat-conversation-copy-'));
+const profile = await mkdtemp(path.join(tmpdir(), 'qchat-conversation-export-'));
 const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html' };
 const server = createServer(async (req, res) => {
   const pathname = req.url.split('?')[0];
@@ -123,7 +123,7 @@ try {
     {id:'m',role:'assistant',text:'',media:[{file:'file-test-id',name:'report.csv'}]}
   ];
   await open('/',{chats:{v:1,current:chatSeed('export',{transcript}),recent:[]},settings:{animations:'off',autoDismiss:0}});
-  await evalJS("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async t=>window.copied=t}})");
+  await evalJS("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async t=>{window.copyWrites=(window.copyWrites||0)+1;window.copied=t}}})");
   await type('/copy'); await key('Enter'); await sleep(50);
   await evalJS(`__mock.emit('qchat://selection','draft selection');(()=>{const d=new DataTransfer();d.items.add(new File(['private bytes'],'keep.txt'));const i=document.getElementById('attachment-input');i.files=d.files;i.dispatchEvent(new Event('change'))})()`); await waitFor("document.querySelector('#attachments .selection-chip') && document.getElementById('attachments').textContent.includes('keep.txt')");
   await type('unsent draft'); await evalJS("(()=>{let i=document.getElementById('prompt-input');i.focus();i.setSelectionRange(2,5)})()");
@@ -133,6 +133,7 @@ try {
   check('draft and selection preserved',await evalJS("(()=>{let i=document.getElementById('prompt-input');return i.value==='unsent draft'&&i.selectionStart===2&&i.selectionEnd===5})()"));
   check('files and selection preserved',await evalJS("document.querySelector('#attachments .selection-chip') && document.getElementById('attachments').textContent.includes('keep.txt') && !__mock.last('conversation_export').args.markdown.includes('private bytes')"));
   check('success feedback',await evalJS("document.getElementById('command-feedback').textContent.includes('to Downloads')"));
+  check('export makes no additional clipboard write',await evalJS('window.copyWrites===1'));
   await open('/',{settings:{animations:'off',autoDismiss:0}}); await runExport();
   check('empty skips native',await evalJS("__mock.count('conversation_export')===0&&document.getElementById('command-feedback').textContent.includes('No messages')"));
   await open('/',{chats:{v:1,current:chatSeed('async'),recent:[chatSeed('other')]},settings:{animations:'off',autoDismiss:0}});
@@ -140,19 +141,26 @@ try {
   check('error feedback',await evalJS(`document.getElementById("command-feedback").textContent.includes("Couldn't save")`));
   await evalJS('__mock.exportError=false; __mock.exportHold=true'); await runExport(); await runExport();
   check('pending prevents duplicate',await evalJS("__mock.count('conversation_export')===2"));
+  check('pending action gives Saving feedback',await evalJS("document.getElementById('command-feedback').textContent.includes('Saving conversation')"));
   await evalJS("document.querySelector('#tabs [data-key=other]').click(); __mock.releaseExport()"); await sleep(80);
   check('switch suppresses stale feedback',await evalJS("document.getElementById('command-feedback').hidden"));
+  check('pending export keeps the original conversation snapshot',await evalJS("__mock.last('conversation_export').args.title==='async'&&__mock.last('conversation_export').args.markdown.includes('reply async')&&!__mock.last('conversation_export').args.markdown.includes('reply other')"));
   await evalJS('__mock.exportHold=false'); await runExport();
   check('retry succeeds',await evalJS("__mock.count('conversation_export')===3&&document.getElementById('command-feedback').textContent.includes('Saved')"));
   for (const mode of ['temporary','history-disabled']) {
     await open('/',{settings:{animations:'off',autoDismiss:0,keepHistory:mode!=='history-disabled',streamStyle:'paragraph'}});
     if (mode==='temporary') { await type('/temp'); await key('Enter'); await sleep(100); }
     await evalJS('__mock.hold=true'); await send('private question'); await waitFor("__mock.count('chat_send')===1");
-    await evalJS("__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:'```js\nconst received = 42;'})"); await sleep(50);
+    await evalJS(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify('```js\nconst received = 42;')}})`); await sleep(50);
     await runExport();
     check(mode+' exports streaming snapshot',await evalJS("__mock.last('conversation_export').args.markdown.includes('const received = 42;')"));
     check(mode+' keeps storage private',await evalJS("!String(localStorage.getItem('qchat.chats')).includes('private question')"));
   }
+  await open('/',{settings:{animations:'off',autoDismiss:0,streamStyle:'paragraph'}});
+  await evalJS('__mock.hold=true');await send('Large export fixture');await waitFor("__mock.count('chat_send')===1");
+  await evalJS("__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:'é'.repeat(2*1024*1024)})");
+  await paletteExport();
+  check('oversized UTF-8 conversation skips native with honest feedback',await evalJS("__mock.count('conversation_export')===0&&document.getElementById('command-feedback').textContent.includes('too long to save')"));
   check('no runtime errors',problems.length===0,problems.slice(0,3).join(' | '));
 } catch (e) {
   console.error(e);
@@ -165,7 +173,7 @@ try {
   server.closeAllConnections();
   if (app.pid && app.exitCode === null) spawnSync('taskkill.exe', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
   const resolved = path.resolve(profile);
-  if (path.dirname(resolved) === path.resolve(tmpdir()) && path.basename(resolved).startsWith('qchat-conversation-copy-')) await rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
+  if (path.dirname(resolved) === path.resolve(tmpdir()) && path.basename(resolved).startsWith('qchat-conversation-export-')) await rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
 }
 console.log(failed ? `${failed} FAILED` : 'ALL PASS');
 process.exitCode = failed ? 1 : 0;

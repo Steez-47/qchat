@@ -10,6 +10,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - Focus a recent tab and use Left/Right or Home/End to move between tabs, Enter or Space to open one, and Escape to return to the composer.
 - Switching chats remembers your reading position for the current app session, including in History.
 - `/copy` copies the current conversation as Markdown, including quoted selections and source links. Ctrl+K opens commands while keeping your draft.
+- `/export` saves the conversation as a Markdown file in Downloads, with a new filename if one already exists. It includes text received so far and also works when you explicitly export a temporary chat. Exports support up to 4 MiB of text.
 - **Ctrl+Shift+C** copies the latest reply or selected composer/reply text. **Ctrl+Shift+X** copies its last code block.
 - **Ctrl+F** or `/find` searches the whole open conversation. Enter or F3 moves to the next match; add Shift to move back. Escape closes search and keeps the conversation open.
 - Unsent drafts recover after a reload or restart when local history is enabled. Temporary chats keep their drafts out of saved history.
@@ -59,6 +60,8 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/drag-sync-native-test.mjs`: the blur stays up and aligned while the real window moves (skips while a fullscreen app is in front).
 - `node tools/feature-ui-test.mjs`: menus, model picker, chat search, tabs, the shortcuts card and temporary chats.
 - `node tools/conversation-copy-ui-test.mjs`: conversation copying, clipboard failures, draft selection, streaming and provider isolation.
+- `node tools/conversation-export-ui-test.mjs`: shared Copy formatting, export limits, pending requests, privacy and draft preservation.
+- `node tools/conversation-export-native-test.mjs`: real UTF-8 saves in an isolated profile, concurrent filenames, size bounds, failure recovery, window permissions and staged-file Undo. Requires a debug build.
 - `node tools/keyboard-copy-ui-test.mjs`: reply/code shortcuts, selected text, streamed snapshots, clipboard failures and embedded editors.
 - `node tools/draft-ui-test.mjs`: draft recovery, send failures, privacy and pending writes across chat/provider changes.
 - `node tools/edit-prompt-ui-test.mjs`, `node tools/paste-anywhere-ui-test.mjs` and `node tools/chat-undo-ui-test.mjs`: prompt reuse, pasting around the popup and reversible local chat removal.

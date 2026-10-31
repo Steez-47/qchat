@@ -336,6 +336,7 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
   animation: rise-in var(--t3) var(--ease-out) both, fade-in var(--t1) linear both;
 }
 .notice-text { flex: 0 1 auto; min-width: 0; padding: 4px 0; user-select: text; }
+#command-feedback { overflow-wrap: anywhere; }
 .notice-text strong { font-weight: 600; }
 .notice-error { --fill-a: var(--error-a); --fill-b: var(--error-b); --fill-alpha: var(--tinted-alpha); }
 .notice .icon-lead { font-size: 14px; color: var(--critical-text); }
