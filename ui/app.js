@@ -778,12 +778,22 @@
     for (const turn of turns) {
       if (turn.status !== "streaming" && !chat.transcript.some(item => item.id === turn.id)) turn.chatKey = "superseded";
     }
-    if (isBusy() || historyOpen || !turns.length || turns.some(turn => !turn.restored)) return;
-    const shown = turns[0];
+    const shown = turns.find(turn => turn.role === "assistant");
+    if (isBusy() || historyOpen || !shown?.restored) return;
     const latest = chat.transcript.findLast(item => item.role === "assistant");
-    if (latest && (latest.id !== shown.id || latest.text !== shown.text || latest.media?.length)) {
-      dismissExchange(true);
-      showCachedResponse(chat);
+    if (!latest) return;
+    // Only when the record shows more than the bubble does: the words alone often differ in
+    // Markdown detail, and rebuilding for that would flicker at the end of every reply.
+    const news = comparable(latest.text) !== comparable(shown.text) || /qchat-web:/.test(latest.text) && !/qchat-web:/.test(shown.text) ||
+      (latest.media?.length && !turnNodes.get(shown.id)?.mediaEl?.querySelector(".stored-media"));
+    if (!news) return;
+    const scroller = turnNodes.get(shown.id)?.scroller;
+    const reading = userScrolledUp && scroller ? scroller.scrollTop : null;
+    dismissExchange(true);
+    showCachedResponse(chat);
+    if (reading !== null) {
+      const entry = responseEntry();
+      if (entry) { userScrolledUp = true; entry.scroller.scrollTop = reading; syncScrollState(entry); }
     }
   }
 
@@ -1678,11 +1688,14 @@
     updateComposerMode();
     armAutoDismiss();
     if (historyOpen) backfillHistory(chats.current);
-    // A rich reply's images exist only in the saved record, so read it once the page has saved it.
-    if (turn.rich && turn.chatKey === chats.current.key) {
+    // Images in a reply exist only in the saved record, so read it once the page has saved it.
+    // Rich replies get a second look, as the page can finish saving them a little later.
+    const chat = chats.current;
+    if (turn.chatKey === chat.key && chat.conversationId && bridge.loggedIn && !chat.temporary) {
       turn.restored = true;
-      const chat = chats.current;
-      setTimeout(() => { if (chats.current === chat) { backfilled.delete(chat); backfillHistory(chat); } }, 2000);
+      const read = () => { if (chats.current === chat && !isBusy()) { backfilled.delete(chat); backfillHistory(chat); } };
+      setTimeout(read, 1500);
+      if (turn.rich) setTimeout(read, 6000);
     }
     queueSizes();
   }

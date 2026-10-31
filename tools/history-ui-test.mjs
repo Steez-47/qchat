@@ -207,6 +207,23 @@ try {
   await evalJS(`__mock.emit('bridge',{type:'transcript',conversationId:'whole-conversation',messages:${JSON.stringify(fullRecord)},complete:true})`);await settle();
   check('the whole conversation shows, including turns from the website',await evalJS(`(()=>{const rows=[...document.querySelectorAll('#history-panel .turn-row')];return rows.length===6 && rows[2].textContent.includes('Asked on the website') && rows[0].textContent.includes('First question');})()`));
   check('messages this PC already had keep their ids and sources',await evalJS(`(()=>{const t=JSON.parse(localStorage.getItem('qchat.chats')).current.transcript;return t.at(-1).id==='la' && t.at(-1).sources.length===1 && t.length===6;})()`));
+  // A finished reply picks up the record's images by itself, without reloading the chat.
+  await open('/',{settings:{v:4,animations:'off',autoDismiss:0,keepHistory:true}});await settle();
+  await evalJS(`__mock.emit('bridge',{type:'status',ready:true,loggedIn:true,url:'https://chatgpt.com/'})`);await sleep(40);
+  await evalJS(`__mock.hold=true`);
+  await send('Show me the Edge screenshots');await until(`__mock.last('chat_send')?.args.prompt==='Show me the Edge screenshots'`);
+  const plainText='Vice City waterfrontLucia armedHammerhead shark\n\nThe best places are here.';
+  await evalJS(`__mock.emit('bridge',{type:'done',id:__mock.last('chat_send').args.id,text:${JSON.stringify(plainText)},conversationId:'live-rich-chat'})`);await finishReply();
+  await until(`__mock.calls.some(c=>c.cmd==='chat_read_transcript'&&c.args.conversationId==='live-rich-chat')`,'a finished reply reads the record',400);
+  check('a plain record changes nothing about the finished bubble',await evalJS(`document.querySelectorAll('.bubble-zone .web-figure').length===0`));
+  await evalJS(`document.querySelector('.bubble-zone .bubble-response').dataset.sameBubble='yes'`);
+  await evalJS(`__mock.emit('bridge',{type:'transcript',conversationId:'live-rich-chat',messages:[{role:'user',text:'Show me the Edge screenshots'},{role:'assistant',text:${JSON.stringify(plainText)}}],complete:true})`);await sleep(120);
+  check('so an unchanged reply is not rebuilt',await evalJS(`document.querySelector('.bubble-zone .bubble-response').dataset.sameBubble==='yes'`));
+  const recordText='![Vice City waterfront](qchat-web:aHR0cHM6Ly9pbWFnZXMub3BlbmFpLmNvbS9h) ![Lucia armed](qchat-web:aHR0cHM6Ly9pbWFnZXMub3BlbmFpLmNvbS9i)\n\nThe best places are here.';
+  await evalJS(`__mock.emit('bridge',{type:'transcript',conversationId:'live-rich-chat',messages:[{role:'user',text:'Show me the Edge screenshots'},{role:'assistant',text:${JSON.stringify(recordText)}}],complete:true})`);await settle();
+  check('when the record has images, the finished reply shows them with no reload',await evalJS(`(()=>{const f=document.querySelectorAll('.bubble-zone .web-figure');return f.length===2 && f[1].querySelector('.web-caption')?.textContent==='Lucia armed' && !!f[0].querySelector('img') && !document.querySelector('.bubble-zone').textContent.includes('Hammerhead');})()`),await evalJS(`document.querySelector('.bubble-zone').innerHTML.slice(0,300)`));
+  check('and the prompt row stays in the transcript once',await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).current.transcript.length===2`));
+  await evalJS(`__mock.emit('bridge',{type:'status',ready:true,loggedIn:false,url:'https://chatgpt.com/'})`);
   // A local list longer than the record is misfiled, and the record wins.
   await open('/',{settings:{animations:'off',autoDismiss:0,keepHistory:true},chats:{v:chatsVersion,current:{key:'mixed',conversationId:'mixed-conversation',title:'Mixed',lastActive:1,lastPrompt:'Hello',lastResponse:'',lastHasMedia:true,transcript:[{id:'m1',role:'user',text:'Okay, testing'},{id:'m2',role:'user',text:'Write two paragraphs'},{id:'m3',role:'user',text:'Make an image'},{id:'m4',role:'assistant',text:'',hasMedia:true},{id:'m5',role:'user',text:'Hello'},{id:'m6',role:'assistant',text:'',hasMedia:true}],createdAt:1},recent:[]}});await settle();
   check('a broken restored reply starts as a placeholder',await evalJS(`!!document.querySelector('.bubble-zone .hyperlink-btn')`));

@@ -450,7 +450,7 @@
       const item = job.sourceRefs?.get(ref);
       return item ? `[${item.title.replace(/[\\[\]]/g, '\\$&')}](${item.url})` : '';
     }).filter(Boolean).join(' ');
-    return entityText(text).replace(/<Cite\b[^>]*\bref\s*=\s*["']([^"']*)["'][^>]*\/?>(?:\s*<\/Cite>)?/gi, (_, refs) => links(refs))
+    return entityText(text).replace(/^image_group\{.*\}[ \t]*$/gm, '').replace(/<Cite\b[^>]*\bref\s*=\s*["']([^"']*)["'][^>]*\/?>(?:\s*<\/Cite>)?/gi, (_, refs) => links(refs))
       .replace(/\uE200(?:cite|navlist|image)\uE202([^\uE201]*)\uE201/g, (_, refs) => links(refs))
       .replace(/<\/?Cite\b[^>]*>/gi, '')
       .replace(/<(?:C|Ci|Cit|Cite\b[^>]*)$|\uE200[^\uE201]*$/gi, '')
@@ -703,6 +703,8 @@
       if (packet.mode === 'append' && prior && packet.baseRevision !== prior.revision) {
         debug('Revision gap', packet.baseRevision, prior.revision); return;
       }
+      // These packets carry layout whose images only the saved record can show.
+      if (packet.dil) job.rich = true;
       const fragment = typeof packet.markdown === 'string' ? packet.markdown : '';
       const markdown = packet.mode === 'append' ? (prior?.markdown || '') + fragment : fragment;
       // DIL fallbackMarkdown is a complete snapshot even on append packets.
