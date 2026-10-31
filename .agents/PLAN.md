@@ -20,6 +20,7 @@ Goal: add useful compact features, refine and test each one, commit locally, the
 | O14 | Per-chat reading position | companion Claude + Terra, root native checks | UI and reading tests | done - b9e098c integrated; UI13, native reading6 and combined navigation13 PASS |
 | O15 | Arrow-key navigation of recent tabs | companion Claude + Terra, root native checks | UI and tab tests | done - repaired ccacd4b integrated; UI27, five repeats and native navigation13 PASS |
 | O16 | Keyboard jump to the latest message | companion Claude + Terra | separate worktree | fab7ea1 prepared; syntax only until root releases the test lane after staging |
+| O17 | Save the open conversation as Markdown | root + Terra high | isolated export UI/native implementation | starting - /export to Downloads, collision-safe names, existing copy formatting; no browser/native jobs while companion verifies O16 |
 
 Verification uses isolated headless browsers and hidden native profiles. Build to a separate executable; do not replace dist/QChat.exe while the owner's instance is running. Each completed feature gets its own commit. Free provider failures will be recorded; no claims of exhaustive edge-case coverage.
 
