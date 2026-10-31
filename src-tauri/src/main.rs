@@ -429,13 +429,35 @@ fn quit_app(app: tauri::AppHandle) {
     media::clear_all(&app);
     app.exit(0);
 }
+fn validate_reasoning_effort(value: Option<&str>) -> Result<(), String> {
+    match value {
+        None | Some("low" | "medium" | "high") => Ok(()),
+        _ => Err("invalid_reasoning_effort: Choose low, medium or high reasoning.".into()),
+    }
+}
+
+#[cfg(test)]
+mod reasoning_tests {
+    #[test]
+    fn validates_reasoning_before_send() {
+        for value in [None, Some("low"), Some("medium"), Some("high")] {
+            assert!(super::validate_reasoning_effort(value).is_ok());
+        }
+        for value in ["", "HIGH", "auto", " low"] {
+            assert!(super::validate_reasoning_effort(Some(value)).is_err());
+        }
+    }
+}
+
 #[tauri::command]
 async fn chat_send(
     app: tauri::AppHandle,
     id: String,
     prompt: String,
     attachment_ids: Option<Vec<String>>,
+    reasoning_effort: Option<String>,
 ) -> Result<(), String> {
+    validate_reasoning_effort(reasoning_effort.as_deref())?;
     chat_page(&app)?;
     resume(&app);
     {
@@ -470,7 +492,7 @@ async fn chat_send(
         return Err("Send was cancelled".into());
     }
     let data = serde_json::to_string(
-        &serde_json::json!({"id":id,"prompt":prompt,"attachmentCount":attachment_ids.len()}),
+        &serde_json::json!({"id":id,"prompt":prompt,"attachmentCount":attachment_ids.len(),"reasoningEffort":reasoning_effort}),
     )
     .map_err(|e| e.to_string())?;
     media::track_turn(&app, &id, &attachment_ids);

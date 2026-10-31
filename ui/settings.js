@@ -342,6 +342,7 @@
       groups: [
         [
           () => choiceRow({ key: "sendKey", label: "Send with", options: [["enter", "Enter"], ["ctrl", "Ctrl+Enter"]] }),
+          () => choiceRow({ key: "defaultReasoning", label: "Default reasoning", hint: "New chats start here; the composer can set each chat", options: [["low", "Low"], ["medium", "Medium"], ["high", "High"]] }),
           () => rangeRow({ key: "autoDismiss", label: "Dismiss replies automatically", format: seconds }),
           () => switchRow({ key: "alwaysOnTop", label: "Always on top" }),
           () => switchRow({ key: "hideOnBlur", label: "Hide when focus is lost" }),

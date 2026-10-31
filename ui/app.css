@@ -27,7 +27,24 @@
   gap: var(--stack-gap);
   width: var(--stack-width);
 }
-.bar { width: var(--bar-w); align-self: center; }
+.bar { width: var(--bar-w); align-self: center; container-type: inline-size; }
+
+/* Reasoning picker: a compact value chip, so a narrow bar still leaves the prompt room. */
+.reasoning-btn {
+  width: auto;
+  min-width: 0;
+  padding: 0 7px;
+  font: 500 11.5px/1 var(--font-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.reasoning-btn .reasoning-label { pointer-events: none; }
+
+@container (max-width: 360px) {
+  .bar > .bar-btn:not(.reasoning-btn) { width: 26px; }
+  .bar > .reasoning-btn { padding-inline: 4px; }
+}
 
 /* ---------------------------------------------------------------------------
    Bubble zone

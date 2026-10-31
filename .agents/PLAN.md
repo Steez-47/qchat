@@ -1,3 +1,25 @@
+## Main consolidation (2026-10-31)
+
+Owner requested merging all work into main and reopening QChat. Snapshot and reasoning are the only unmerged feature branches; older feature and polish branches are already ancestors. Preserved both composer state updates and made the icon controls/picker padding compact at narrow widths so the 340px bar still leaves at least 150px for the prompt. The narrow-layout regression covers Snapshot alongside reasoning.
+
+Verified: Rust19; reasoning UI/bridge, Snapshot UI, glass, media, auth17, stream71, feature, presets, UX, animation and history suites; native Snapshot8 and profile/default-reasoning persistence all PASS using isolated test profiles. Release npm run build PASS; dist/QChat.exe SHA256 matches the compiled release. Restart uses that executable and the existing saved profile. Original main preserved in a timestamped backup branch; original executable preserved at .tmp/QChat-before-main-merge.exe. Existing Snapshot worktree remains clean.
+
+## Reasoning picker (2026-10-31)
+
+Goal: Low / Medium / High reasoning in the composer, with a saved default in Settings (initially Medium). Use ChatGPT's own reasoning controls and preserve the running app/session.
+
+| id | task | model | owns | deps | status |
+|---|---|---|---|---|---|
+| R1 | Composer picker, default setting and focused UI checks | DeepSeek high | ui/**, tools/reasoning-ui-test.mjs | IPC contract | done |
+| R2 | Native send option, real site reasoning control and bridge checks | Sol medium + parent | src-tauri/**, tools/reasoning-bridge-test.mjs, tools/live/reasoning-live-check.mjs | IPC contract | done; live verified |
+| R3 | Integration, review, required suites and release | parent | integration | R1,R2 | done; independent review quota unavailable |
+
+Contract: UI sends optional `reasoningEffort: "low" | "medium" | "high"` on `chat_send`; Rust forwards `reasoningEffort` to bridge `send`. UI default setting is `defaultReasoning` (medium). Conversation overrides use `reasoningEffort`; absent override follows saved default. No chat API reimplementation or exposed reasoning text.
+
+Current site labels: Low maps to Instant (or legacy Light); Medium to Medium/Standard; High to High/Extended. Owner authorized restart. Live copied-profile inspection recovered the actual `data-reasoning-slider` Power menuitem and its linked status (`Medium, 2 of 3.`); the visual numeric slider is aria-hidden. Parent implemented keyboard selection with fresh label/position verification after each step. Exact production selector verified Low/Medium/High and repeated transitions on the signed-in page, restoring the original level, closing every menu and sending no chats. Original profile preserved; disposable copy recycled after automatic review rejected permanent removal. Updated dist/QChat.exe running and responsive (PID26764); hash matches compiled release.
+
+Verification: reasoning UI26, presets15, features46, glass, media, animation, history, UX, math28, highlight11, auth17, stream71, Rust16, native settings/surfaces/selection/media and persistence PASS; live guest normal send/context/new-chat PASS. Persistence harness now waits for completed initial navigation and confirms marker insertion before Quit, and verifies saved defaultReasoning on restart. One guest Stop smoke assertion fails on a completed single-chunk reply, reproduced unchanged with the older target-surfaces-test build. Deterministic Stop/cancellation suites pass. No assertion was weakened. Build PASS. Parent reviewed final integration; Antigravity Sonnet review returned only quota exhaustion (no findings). Provider work: one DeepSeek UI task, two Sol backend tasks, one unsuccessful Sonnet review attempt.
+
 ## Rich replies and the real jitter cause (2026-10-31)
 
 Rich replies are stored as a layout language (box, row, grid, grid-item, text, title, divider, icon, Entity, Cite, AsyncImage, AsyncImageGroup). Images exist only as search queries in the text; metadata.model_dil_v2.appData.opGenui.componentResults[*].state.images[] holds each image, matched by image_search_query (19 of 19 in the sample). Citations resolve through metadata.search_result_groups. fallbackMarkdown drops the images, so the bridge converts the layout itself. Generated images are on tool messages and go above the reply text. After a rich live reply finishes, the reply is rebuilt from the saved record, which is the only source of its images.

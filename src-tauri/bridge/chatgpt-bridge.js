@@ -1147,6 +1147,120 @@
     if (probe) { await probe; if (loginProbe === probe) loginProbe = null; }
     emit({ type: 'status', ready: !!find('composer'), loggedIn: !!loginCache, authPending: loginUnknown, url: location.href });
   }
+  // Select only explicitly labelled thinking controls, never model entries.
+  let reasoningSelection = false;
+  async function selectReasoning(job, composer, effort) {
+    if (effort == null) return true;
+    const alive = () => active === job && !job.cancelled;
+    const shown = node => node && node.isConnected !== false && node.getClientRects().length && !node.closest('[hidden], [aria-hidden="true"]');
+    const label = node => (node.getAttribute('aria-label') || node.innerText || node.textContent || '').trim();
+    const accessibleName = node => {
+      const ids = node.getAttribute('aria-labelledby');
+      return ids ? ids.split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ').trim() : label(node);
+    };
+    const names = { low: ['Light', 'Low', 'Instant'], medium: ['Standard', 'Medium'], high: ['Extended', 'High'] };
+    const unsupported = () => {
+      if (alive()) fail(job, 'reasoning_unavailable', 'This ChatGPT control cannot verify that thinking level. Choose Medium reasoning or a model with labelled thinking controls in ChatGPT.');
+      return false;
+    };
+    if (!names[effort]) return unsupported();
+    const controls = [...(composerArea()?.querySelectorAll('button[aria-haspopup]') || [])].filter(node =>
+      shown(node) && (/^Thinking(?: time)?(?:[:,].*)?$/i.test(label(node)) || /^(Light|Low|Standard|Medium|Extended|High)$/.test(label(node))));
+    // The model switcher may be opened, but only its Thinking group is writable.
+    const modelControls = controls.length ? [] : [...document.querySelectorAll('button[data-testid="model-switcher-dropdown-button"][aria-haspopup], button[aria-label="Select ChatGPT model"][aria-haspopup]')].filter(shown);
+    if (!controls.length && !modelControls.length) return effort === 'medium' || unsupported();
+    if ((controls.length || modelControls.length) !== 1) return unsupported();
+    const modelMenu = !controls.length;
+    const control = (modelMenu ? modelControls : controls)[0];
+    if (control.disabled || control.getAttribute('aria-disabled') === 'true' || control.getAttribute('aria-expanded') === 'true') return unsupported();
+    let opened = false;
+    reasoningSelection = true;
+    const popup = () => {
+      const id = control.getAttribute('aria-controls');
+      const menu = id && document.getElementById(id);
+      return shown(menu) && control.getAttribute('aria-expanded') === 'true' ? menu : null;
+    };
+    const scope = menu => {
+      if (!modelMenu) return menu;
+      const groups = [...menu.querySelectorAll('[role="radiogroup"], [role="group"]')].filter(node => shown(node) && /^Thinking(?: time)?$/i.test(accessibleName(node)));
+      return groups.length === 1 ? groups[0] : null;
+    };
+    const options = () => {
+      const menu = popup(), group = menu && scope(menu);
+      return group ? [...group.querySelectorAll('[role="menuitemradio"], [role="option"], [role="radio"]')].filter(shown) : [];
+    };
+    const matches = () => options().filter(node => names[effort].includes(label(node).split('\n')[0].trim()));
+    const selected = node => node.getAttribute('aria-checked') === 'true' || node.getAttribute('aria-selected') === 'true';
+    // Current ChatGPT exposes keyboard input on a Power menuitem; its visual
+    // Radix slider is aria-hidden. The linked live status names every position.
+    const selectPower = async () => {
+      const read = () => {
+        const menu = popup();
+        const powers = [...(menu?.querySelectorAll('[data-reasoning-slider][role="menuitem"][aria-label="Power"]') || [])].filter(shown);
+        if (powers.length !== 1) return null;
+        const power = powers[0];
+        if (power.getAttribute('aria-disabled') === 'true') return null;
+        const statuses = (power.getAttribute('aria-describedby') || '').split(/\s+/).map(id => document.getElementById(id))
+          .filter(node => node && menu.contains(node) && node.getAttribute('role') === 'status');
+        if (statuses.length !== 1) return null;
+        const status = (statuses[0].textContent || '').trim().match(/^(Instant|Light|Low|Medium|Standard|High|Extended), ([1-3]) of 3\.$/);
+        if (!status) return null;
+        const index = Number(status[2]), level = ['low', 'medium', 'high'][index - 1];
+        return names[level].includes(status[1]) ? { power, index, level } : null;
+      };
+      const desired = ['low', 'medium', 'high'].indexOf(effort) + 1;
+      for (let step = 0; step < 3 && alive(); step++) {
+        const before = read();
+        if (!before) return unsupported();
+        if (before.level === effort) return true;
+        const key = before.index < desired ? 'ArrowRight' : 'ArrowLeft';
+        before.power.focus?.();
+        before.power.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true }));
+        let changed;
+        for (let i = 0; i < 20 && alive(); i++) {
+          await sleep(50);
+          changed = read();
+          if (changed && changed.index !== before.index) break;
+        }
+        if (!alive()) return false;
+        if (!changed || changed.index !== before.index + (key === 'ArrowRight' ? 1 : -1)) return unsupported();
+      }
+      return alive() ? unsupported() : false;
+    };
+    try {
+      if (!alive()) return false;
+      opened = true;
+      control.focus?.();
+      control.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true, cancelable: true }));
+      await sleep(50);
+      if (!alive()) return false;
+      if (control.getAttribute('aria-expanded') !== 'true') control.click();
+      for (let i = 0; i < 30 && alive() && !popup(); i++) await sleep(50);
+      if (!alive()) return false;
+      if ([...(popup()?.querySelectorAll('[data-reasoning-slider][role="menuitem"][aria-label="Power"]') || [])].some(shown)) return await selectPower();
+      const found = matches();
+      if (found.length !== 1) return unsupported();
+      const option = found[0];
+      if (option.disabled || option.getAttribute('aria-disabled') === 'true') return unsupported();
+      if (!selected(option)) option.click();
+      let reopened = false;
+      for (let i = 0; i < 20 && alive(); i++) {
+        // Re-query live state: a detached radio's checked state is not evidence.
+        const fresh = matches();
+        if (fresh.length === 1 && selected(fresh[0])) return true;
+        if (!modelMenu && shown(control) && names[effort].includes(label(control))) return true;
+        if (!popup() && !reopened && shown(control)) { control.click(); reopened = true; }
+        await sleep(50);
+      }
+      return alive() ? unsupported() : false;
+    } finally {
+      if (opened && control.getAttribute('aria-expanded') === 'true') {
+        const target = popup() || control;
+        target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+      }
+      reasoningSelection = false;
+    }
+  }
   window.__qchat = {
     attachmentInput,
     cancelAttachmentSelection,
@@ -1154,8 +1268,9 @@
     activateMedia,
     mediaDownloadAction,
     resolveMedia,
-    async send({ id, prompt = '', attachmentCount = 0 }) {
-      if (active) { error(id, 'busy', 'A request is already in progress.'); return; }
+    async send({ id, prompt = '', attachmentCount = 0, reasoningEffort }) {
+      if (reasoningEffort != null && !['low', 'medium', 'high'].includes(reasoningEffort)) { error(id, 'invalid_reasoning_effort', 'Choose low, medium or high reasoning.'); return; }
+      if (active || reasoningSelection) { error(id, 'busy', 'A request is already in progress.'); return; }
       if (cancelledAttachments) {
         const cleared = cancelledAttachments.hadControls && uploads === 0 && attachmentRemovers(cancelledAttachments.names).length === 0;
         if (cleared) cancelledAttachments = null;
@@ -1180,6 +1295,10 @@
         }
         if (active !== job || job.cancelled) return;
         if (!composer) { fail(job, 'not_ready', 'Composer did not appear within 15 seconds.'); return; }
+        if (reasoningEffort != null && !await selectReasoning(job, composer, reasoningEffort)) return;
+        if (active !== job || job.cancelled) return;
+        composer = find('composer');
+        if (!composer) { fail(job, 'not_ready', 'ChatGPT composer changed. Please try again.'); return; }
         composer.focus();
         if (composer.tagName === 'TEXTAREA') {
           Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(composer, prompt);

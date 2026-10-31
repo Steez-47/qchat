@@ -26,3 +26,10 @@
 - 2026-10-31 | S1 window Snapshot native | codex/gpt-6.1-sol/medium | done | Rust17 and synthetic native harness PASS; parent adds real camera-to-staging check
 - 2026-10-31 | S2 Snapshot composer | opencode/deepseek-v4.1-flash-free/high | done | Snapshot27, media UI and glass UI PASS
 - 2026-10-31 | S3 Snapshot review | antigravity/claude-sonnet-5-5/medium | done | parent fixed fast activation target race, inaccessible-target fallback and transient shell targets; native8/Rust18 and full UI regressions PASS; release built
+- 2026-10-31 | Reasoning picker UI | opencode/deepseek-v4.1-flash-free high | running | composer picker, default setting, isolated UI regression
+- 2026-10-31 | Reasoning send integration | codex/gpt-6.1-sol medium | running | native IPC, real ChatGPT control, bridge regression
+- 2026-10-31 | Reasoning picker UI | opencode/deepseek-v4.1-flash-free high | done | reasoning26, presets14, features42 PASS
+- 2026-10-31 | Reasoning bridge initial + current controls | codex/gpt-6.1-sol medium | done (2 tasks) | reasoning, auth17, stream71, Rust16 PASS; signed-in DOM blocked by locked profile
+- 2026-10-31 | Reasoning cross-family review | antigravity/claude-sonnet-5-5 medium | unavailable: quota exhausted for 6 days 1 hour | no review returned; parent reviewing
+- 2026-10-31 | Reasoning final integration | parent | done | live Power slider recovered and verified, default persists across restart; release hash verified and PID26764 responsive; baseline guest Stop assertion also fails on old build
+- 2026-10-31 | Merge all work into main | parent | done | Snapshot + reasoning conflict resolution, 340px combined composer fit, UI/bridge/Rust19/native Snapshot/persistence suites and release/hash PASS; no delegation

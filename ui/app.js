@@ -11,6 +11,9 @@
   const OPEN_TIMEOUT = 12000;
   const FRESH_TIMEOUT = 2500;
   const MAX_STORED_TEXT = 40000;
+  const REASONING_LEVELS = ["low", "medium", "high"];
+  const REASONING_LABELS = { low: "Low", medium: "Medium", high: "High" };
+  const validReasoning = (value) => (REASONING_LEVELS.includes(value) ? value : null);
   const CONNECT_DEADLINE = Number(window.__mock?.connectTimeout) || 25000;
 
   // rAF stalls while the native window is hidden, so never let work depend on it alone.
@@ -259,6 +262,8 @@
     rate_limited: "You've hit ChatGPT's usage limit for now.",
     auth: "Your session expired. Sign in again to continue.",
     send_failed: "Couldn't send your message to ChatGPT.",
+    reasoning_unavailable: "ChatGPT couldn't select that reasoning level. Choose Medium or open ChatGPT to check its thinking controls.",
+    invalid_reasoning_effort: "Choose Low, Medium or High reasoning.",
     stream_failed: "The response was interrupted.",
     timeout: "ChatGPT took too long to respond.",
     open_timeout: "That chat is taking too long to open. Try sending again.",
@@ -306,6 +311,7 @@
     slashMenu: $("slash-menu"),
     tabs: $("tabs"),
     promptInput: $("prompt-input"),
+    btnReasoning: $("btn-reasoning"),
     btnSend: $("btn-send"),
     btnAttach: $("btn-attach"),
     btnSnapshot: $("btn-snapshot"),
@@ -826,6 +832,7 @@
     const text = (value, max) => (typeof value === "string" ? value.slice(0, max) : "");
     const time = (value) => (Number.isFinite(value) && value > 0 ? value : Date.now());
     const snapshot = completedSnapshot(text(raw.lastResponse, Infinity), raw.lastHasMedia === true);
+    const reasoningEffort = validReasoning(raw.reasoningEffort);
     return {
       key: raw.key,
       conversationId: typeof raw.conversationId === "string" && raw.conversationId ? raw.conversationId : null,
@@ -838,7 +845,8 @@
       lastSources: cleanSources(raw.lastSources),
       transcript: cleanTranscript(raw, snapshot),
       draft: text(raw.draft, Infinity),
-      createdAt: time(raw.createdAt)
+      createdAt: time(raw.createdAt),
+      ...(reasoningEffort ? { reasoningEffort } : {})
     };
   }
 
@@ -866,6 +874,41 @@
   }
 
   const chats = loadChats();
+
+  // Saved default for new chats; a chat's own pick overrides it until a new chat.
+  const savedReasoning = () => validReasoning(QSettings.settings.defaultReasoning) || "medium";
+  const effectiveReasoning = (chat = chats.current) => validReasoning(chat?.reasoningEffort) || savedReasoning();
+  let sentReasoning = null;
+
+  function syncReasoningButton() {
+    const busy = isBusy();
+    if (!busy) sentReasoning = null;
+    const value = busy && sentReasoning ? sentReasoning : effectiveReasoning();
+    const label = REASONING_LABELS[value];
+    el.btnReasoning.querySelector(".reasoning-label").textContent = label;
+    el.btnReasoning.setAttribute("aria-label", `Reasoning: ${label}`);
+    el.btnReasoning.dataset.value = value;
+    el.btnReasoning.disabled = busy;
+  }
+
+  function chooseReasoning(value) {
+    if (isBusy() || !validReasoning(value)) return;
+    chats.current.reasoningEffort = value;
+    saveChats();
+    syncReasoningButton();
+    queueSizes();
+  }
+
+  function showReasoningPicker() {
+    if (isBusy()) return;
+    const selected = effectiveReasoning();
+    showFeatureList("Reasoning", REASONING_LEVELS.map((value) => ({
+      title: REASONING_LABELS[value],
+      meta: value === "low" ? "Instant / Light" : value === "medium" ? "Standard" : "Extended",
+      selected: value === selected,
+      run: () => chooseReasoning(value)
+    })));
+  }
 
   function storedChat(chat, capped = false) {
     if (!capped) return chat;
@@ -2035,6 +2078,7 @@
     el.btnAttach.disabled = active || sending;
     el.btnSnapshot.disabled = active || sending || snapshotCapturing;
     el.btnSend.disabled = !active && (!bridge.ready || sending || staging || snapshotCapturing || (!el.promptInput.value.trim() && !attachable));
+    syncReasoningButton();
     syncTabsDisabled();
   }
 
@@ -2070,9 +2114,11 @@
     prompts.push(prompt); recallIndex = -1; firstRunHint = false;
     try { localStorage.setItem("qchat.introduced", "1"); } catch (_) {}
     el.promptInput.placeholder = QSettings.settings.placeholderText || "Ask anything";
-    sending = true;
-    const generation = chatGeneration;
     const chat = chats.current;
+    const reasoningEffort = effectiveReasoning(chat);
+    sending = true;
+    sentReasoning = reasoningEffort;
+    const generation = chatGeneration;
     const draft = el.promptInput.value;
     const restoreDraft = () => {
       if (fromInput && !el.promptInput.value) { el.promptInput.value = draft; autoResizePrompt(); }
@@ -2080,6 +2126,7 @@
 
     hideGlobalError();
     closeSlashMenu();
+    if (!featureList.hidden) closeFeatureList();
     hideClearConfirm();
     setHistoryOpen(false);
     dismissExchange();
@@ -2120,7 +2167,7 @@
       await ensurePage(chat);
       if (generation !== chatGeneration) return;
       if (assistantTurn.status !== "streaming") throw { code: "stopped" };
-      await invoke("chat_send", { id: assistantTurn.id, prompt, attachmentIds: files.map((f) => f.id) });
+      await invoke("chat_send", { id: assistantTurn.id, prompt, attachmentIds: files.map((f) => f.id), reasoningEffort });
       page = { ...page, key: chat.key, pristine: false };
       for (const file of files) {
         const index = pendingFiles.indexOf(file);
@@ -2859,6 +2906,7 @@
     else submitFromInput();
     el.promptInput.focus();
   });
+  el.btnReasoning.addEventListener("click", showReasoningPicker);
 
   el.btnGuestSignin.addEventListener("click", openSignin);
   el.btnGuestDismiss.addEventListener("click", () => {
