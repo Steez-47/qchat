@@ -13,7 +13,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - `/export` saves the conversation as a Markdown file in Downloads, with a new filename if one already exists. It includes text received so far and also works when you explicitly export a temporary chat. Exports support up to 4 MiB of text.
 - **Ctrl+Shift+C** copies the latest reply or selected composer/reply text. **Ctrl+Shift+X** copies its last code block.
 - **Ctrl+F** or `/find` searches the whole open conversation. Enter or F3 moves to the next match; add Shift to move back. Escape closes search and keeps the conversation open.
-- Unsent drafts recover after a reload or restart when local history is enabled. Temporary chats keep their drafts out of saved history.
+- Unsent drafts recover after a reload or restart when local history is enabled. Starting or switching chats also keeps meaningful ordinary drafts in local chat history, even before the first message. Temporary chats keep their drafts out of saved history.
 - `/rename` changes the current chat's name in QChat. Enter saves, Escape cancels, and your draft stays intact.
 - A connection error retries when the network returns or QChat regains focus, keeping the draft, staged files and current conversation. Try again is available for manual recovery.
 - `/model` picks a ChatGPT model on a signed-in account. **Ctrl+Shift+N** or `/temp` starts a temporary chat kept out of QChat's saved history. Sending requires confirmation of the provider's Temporary mode; a refusal preserves the draft and files.
