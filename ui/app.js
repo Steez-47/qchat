@@ -1184,7 +1184,7 @@
     const start = input.selectionStart, end = input.selectionEnd, direction = input.selectionDirection;
     const selections = chats.current.selectionTexts.slice();
     const temporary = Boolean(chats.current.temporary);
-    await startNewChat(false, { preserveFiles: true });
+    await startNewChat(false, { preserveFiles: true, movingDraft: true });
     input.value = draft;
     chats.current.selectionTexts = selections;
     chats.current.temporary = temporary;
@@ -2742,7 +2742,7 @@
     for (const url of [...imageURLs]) if (!retainedURLs.has(url)) releasePreview(url);
   }
 
-  async function startNewChat(notifyBackend = true, { preserveFiles = false } = {}) {
+  async function startNewChat(notifyBackend = true, { preserveFiles = false, movingDraft = false } = {}) {
     if (isStreaming()) await stopStreaming();
     rememberReadingPosition();
     chats.current.draft = draftValue();
@@ -2757,7 +2757,7 @@
     hideClearConfirm();
     dismissExchange();
 
-    if (hasContent(chats.current)) { chats.current.lastActive = Date.now(); pushRecent(chats.current); }
+    if (hasContent(chats.current) || (!movingDraft && chats.current.draft.trim())) { chats.current.lastActive = Date.now(); pushRecent(chats.current); }
     chats.current = freshChat();
     renderAttachments();
     setModeLabel("");
@@ -2847,6 +2847,8 @@
     tabs.forEach((item) => { item.tabIndex = item === tabs[next] ? 0 : -1; });
     tabs[next].focus();
   });
+  const chatDisplayTitle = (chat) => chat.title || normalizeChatTitle((chat.draft || "").split(/\r?\n/).find(line => line.trim()) || "") || "Untitled chat";
+
   function renderTabs() {
     const focused = document.activeElement?.closest?.(".tab");
     const oldTabs = [...el.tabs.querySelectorAll(".tab")];
@@ -2873,7 +2875,7 @@
       }
       const label = elapsedLabel(chat.lastActive);
       tab.querySelector(".tab-label").textContent = label;
-      const title = chat.title || "Untitled chat";
+      const title = chatDisplayTitle(chat);
       const characters = Array.from(title);
       tab.querySelector(".tab-title").textContent = characters.length > 24
         ? `${characters.slice(0, 23).join("")}…` : title;
@@ -2912,6 +2914,7 @@
     previous.draft = draftValue();
     chats.recent.splice(index, 1);
     if (hasContent(previous) && !previous.temporary) { previous.lastActive = now; chats.recent.unshift(previous); }
+    else if (previous.draft.trim()) { previous.lastActive = now; pushRecent(previous); }
     chats.recent = chats.recent.slice(0, MAX_RECENT);
     target.lastActive = now;
     chats.current = target;
@@ -3218,7 +3221,7 @@
   }
 
   function chatRows() {
-    const local = chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: (chat.provider !== activeProvider ? `${providerName(chat)} · ` : "") + elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { const index = chats.recent.findIndex(c => c.key === chat.key); if (index < 0) return; offerChatUndo({ type: "remove", chat: structuredClone(chats.recent[index]), index }); readingPositions.delete(chat.key); chats.recent.splice(index, 1); saveChats(); renderTabs(); featureList._repaint?.(); } }));
+    const local = chats.recent.map(chat => ({ title: chatDisplayTitle(chat), meta: (chat.provider !== activeProvider ? `${providerName(chat)} · ` : "") + elapsedLabel(chat.lastActive), prompt: `${chat.lastPrompt || ""} ${chat.draft || ""}`, run: () => switchToChat(chat.key), remove: () => { const index = chats.recent.findIndex(c => c.key === chat.key); if (index < 0) return; offerChatUndo({ type: "remove", chat: structuredClone(chats.recent[index]), index }); readingPositions.delete(chat.key); chats.recent.splice(index, 1); saveChats(); renderTabs(); featureList._repaint?.(); } }));
     const known = new Set([chats.current.conversationId, ...chats.recent.filter(chat => chat.provider === activeProvider).map(chat => chat.conversationId)]);
     const account = accountChats.items.filter(item => !known.has(item.id)).map(item => ({ title: item.title || "Untitled chat", meta: item.updated ? elapsedLabel(item.updated) : "", run: () => openAccountChat(item) }));
     return [...local, ...account];
