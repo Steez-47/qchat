@@ -708,7 +708,7 @@ fn main() {
             std::thread::spawn(move || responder.respond(media::protocol(&app, &label, request)));
         });
     let builder = if test_profile().is_none() {
-        builder.plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
+        builder.plugin(tauri_plugin_single_instance::init(|app, args, _| { if !args.iter().any(|a| a == "--autostart") { show(app) } }))
     } else {
         builder
     };

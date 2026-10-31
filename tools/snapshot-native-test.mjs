@@ -43,7 +43,7 @@ async function connect(page) {
   });
   return async expression => {
     const result = await call('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
-    if (result.exceptionDetails) throw Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
+    if (result.exceptionDetails) throw Error(result.exceptionDetails.exception?.description || result.exceptionDetails.exception?.value || result.exceptionDetails.text);
     return result.result?.value;
   };
 }
@@ -66,7 +66,12 @@ $f.Add_Shown({[System.IO.File]::WriteAllText('${handleFile.replaceAll("'","''")}
   const main=await until(async()=>(await pages()).find(p=>p.url.includes('tauri.localhost')&&!p.url.includes('settings.html')),'main');
   const evaluate=await connect(main);
   await until(()=>evaluate(`!!window.__TAURI__?.core`),'main IPC ready');
-  const result=await evaluate(`window.__TAURI__.core.invoke('snapshot_capture')`);
+  // The fixture reports its handle before its first paint, so only that blank capture is retried.
+  let result;
+  for (let attempt=0;;attempt++) {
+    try { result=await evaluate(`window.__TAURI__.core.invoke('snapshot_capture')`); break; }
+    catch (error) { if (attempt>=20 || !/blank or protected/.test(error.message)) throw error; await new Promise(r=>setTimeout(r,150)); }
+  }
   check('PNG contract',result.mime==='image/png'&&result.name.endsWith('.png'));
   const png=Buffer.from(result.data,'base64');
   check('PNG dimensions',png.readUInt32BE(16)===160&&png.readUInt32BE(20)===100);
