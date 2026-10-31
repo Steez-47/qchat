@@ -2,7 +2,7 @@
 
 Goal: add useful compact features, refine and test each one, commit locally, then continue. Preserve the running app, account/profile and unrelated icon.icns modification. No publication requested. The absent orchestrator playbook was read from git commit 37b5396.
 
-Current portable checkpoint: dist/overnight/20261101-074534-5b3389f/QChat.exe (source5b3389fdef9f11f665cd91ce818eab36b392347c, SHA256898a75af8ca2fe4b90cd3a309a07f2efd8a4233fbbcccc0c326d8159a23da318). O23/O24 are included. Compiled/staged/manifest/checksum match; original app and all6 older checkpoints are unchanged. Native checks use the debug build of the same source; release not launched. Goal stays active.
+Current portable checkpoint: dist/overnight/20261101-075659-ffd0ac6/QChat.exe (sourceffd0ac6f74a7079cee784230e966906966e411df, SHA256ffa7b08cadec30a5a07192b7a5b4c54273f6b6407182e096f47227a866bef9e4). O25 is included. Compiled/staged/manifest/checksum match; original app and all7 older checkpoints are unchanged. Native checks use the debug build of the same source; release not launched. Goal stays active.
 
 | id | task | model | owns | status |
 |---|---|---|---|---|
@@ -31,7 +31,7 @@ Current portable checkpoint: dist/overnight/20261101-074534-5b3389f/QChat.exe (s
 | O23 | Start a Temporary chat with Ctrl+Shift+N | Terra medium partial + root | UI shortcut/help and focused regression | done - shared /temp path, UI226/native17 PASS; explicit held-Stop ordering; Claude no findings; real OS accelerator handling unverified |
 | O24 | Recover ordinary drafts that have no sent messages | Terra high partial + root | draft-only chat preservation and tests | done -5b3389f built and staged; native baseline3 failures; final UI311/native59 PASS; provider-move duplication2 failures fixed, quote-only concern refuted; Claude no blocker |
 | O25 | Name local chats before sending their first message | Terra medium partial + root | rename eligibility and focused regression | done -921051c adopted, native baseline2 failures; final UI262/native20 PASS;20 focused cases,33 existing Rename checks, native340px inspected; Claude no findings |
-| O26 | Keep chat-list selection and focus stable as results load | Terra high + root | asynchronous chat search rendering/tests | todo - showFeatureList repaint currently resets selection to zero; reproduce late account-results changes before implementing stable selection/focus |
+| O26 | Keep chat-list selection and focus stable as results load | Terra high + root | asynchronous chat search rendering/tests | starting - deterministic7-check probe reproduces3 failures: late account batch resets Chat B highlight, Open focus and Remove focus; query/caret/no-auto-open remain correct |
 
 Verification uses isolated headless browsers and hidden native profiles. Build to a separate executable; do not replace dist/QChat.exe while the owner's instance is running. Each completed feature gets its own commit. Free provider failures will be recorded; no claims of exhaustive edge-case coverage.
 
