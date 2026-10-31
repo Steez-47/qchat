@@ -1,3 +1,9 @@
+## Rich replies and the real jitter cause (2026-10-31)
+
+Rich replies are stored as a layout language (box, row, grid, grid-item, text, title, divider, icon, Entity, Cite, AsyncImage, AsyncImageGroup). Images exist only as search queries in the text; metadata.model_dil_v2.appData.opGenui.componentResults[*].state.images[] holds each image, matched by image_search_query (19 of 19 in the sample). Citations resolve through metadata.search_result_groups. fallbackMarkdown drops the images, so the bridge converts the layout itself. Generated images are on tool messages and go above the reply text. After a rich live reply finishes, the reply is rebuilt from the saved record, which is the only source of its images.
+Jitter: press animations were already clean; a real-cursor frame capture (tools/live/button-jitter-check.mjs) showed the window resizing on 19 of 50 frames when history opened, because the webview follows the window a frame late. The window now keeps a reserved height and only moves when content cannot fit; the empty part is click-through (stale-surface guard widened from 2s to 15s, since a stalled page would otherwise block clicks over that larger area). Measured after: repeat open and close of history moved the window 0 times.
+Live: real rich reply 20 of 20 images, 0 raw tags, 0 tokens, 18 links, screenshots reviewed. Live streaming of a rich reply into this flow not run on the account.
+
 ## Owner's test bugs after the overhaul (2026-10-31)
 
 1. Garbled stream with raw `<Entity .../>`: only named layout tags switched the bridge to rendered text. Any JSX-style component now does, Entity tags become their value everywhere, and the new default stream style `paragraph` shows only finished blocks. Could not reproduce the garble on demand (it needs a rich reply), so that exact reply is unverified live.

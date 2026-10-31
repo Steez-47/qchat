@@ -73,10 +73,16 @@
   if (window.marked) {
     const renderer = new window.marked.Renderer();
 
-    renderer.html = (token) => escapeHtml(typeof token === "string" ? token : (token?.text ?? ""));
+    // Old saved replies can still hold the site's layout tags. Never reading material; their
+    // words stay. Code spans and blocks do not come through here, so examples are untouched.
+    const LAYOUT_TAG = /<\/?(?:box|row|col|column|stack|grid|grid-item|text|title|divider|icon|card|section|[A-Z][A-Za-z]*)\b[^>]*>/g;
+    renderer.html = (token) => escapeHtml(String(typeof token === "string" ? token : (token?.text ?? "")).replace(LAYOUT_TAG, ""));
     renderer.image = (href, _title, text) => {
-      const url = sanitizeHref(typeof href === "string" ? href : href?.href);
+      const raw = typeof href === "string" ? href : href?.href;
       const label = escapeHtml(typeof text === "string" ? text : (href?.text || "Image"));
+      const web = /^qchat-web:([\w-]+)$/.exec(String(raw || ""));
+      if (web) return `<span class="web-figure" data-web="${web[1]}" title="${label}"><span class="web-image"></span>${label && label !== "Image" ? `<span class="web-caption">${label}</span>` : ""}</span>`;
+      const url = sanitizeHref(raw);
       return url ? `<a href="${escapeHtml(url)}" rel="noopener noreferrer">${label || "Image source"}</a>`
         : `<button type="button" class="hyperlink-btn" data-action="view-media">${label || "Image"}</button>`;
     };
@@ -150,6 +156,9 @@
           current.hasAttribute("data-qmath") && incoming.hasAttribute("data-qmath") &&
           current.getAttribute("aria-label") === incoming.getAttribute("aria-label") &&
           current.getAttribute("data-display") === incoming.getAttribute("data-display")) continue;
+      // Same for a web image that has already loaded.
+      if (current.nodeType === Node.ELEMENT_NODE && incoming.nodeType === Node.ELEMENT_NODE && current.hasAttribute("data-web") &&
+          current.getAttribute("data-web") === incoming.getAttribute("data-web")) continue;
       if (current.nodeType !== incoming.nodeType || current.nodeName !== incoming.nodeName) {
         current.replaceWith(incoming);
       } else if (current.nodeType === Node.TEXT_NODE) {
@@ -163,6 +172,34 @@
       }
     }
     while (parent.childNodes.length > children.length + offset) parent.lastChild.remove();
+  }
+
+  // Web images in a reply load when they scroll near view, through the same broker as all media.
+  const webImageLoader = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      webImageLoader.unobserve(entry.target);
+      loadWebImage(entry.target);
+    }
+  }, { rootMargin: "600px" });
+
+  async function loadWebImage(figure) {
+    try {
+      const meta = await invoke("media_load", { mediaId: `webimage:${figure.dataset.web}`, revision: 0 });
+      if (!safeMediaSource(meta, "image")) throw new Error("Unsupported media");
+      const image = make("img");
+      image.alt = figure.title || "Image";
+      image.addEventListener("load", () => queueSizes());
+      image.src = meta.src;
+      figure.querySelector(".web-image")?.replaceChildren(image);
+    } catch (_) { figure.dataset.failed = ""; }
+  }
+
+  function hydrateWebImages(root) {
+    for (const figure of root.querySelectorAll(".web-figure:not([data-watched])")) {
+      figure.dataset.watched = "";
+      webImageLoader.observe(figure);
+    }
   }
 
   function parseReply(markdown, sources) {
@@ -340,7 +377,7 @@
     const ephemeral = /^(?:qchat-media:|sandbox:|attachment:|https?:\/\/qchat-media\.localhost(?:[/:]|$)|https?:\/\/[^/]*oaiusercontent\.com\/)/i;
     let text = String(value || "");
     text = text.replace(/(!?)\[([^\]\n]*)\]\(([^\n]*?)\)/g, (match, image, label, href) => {
-      if (!image && !ephemeral.test(href.trim().replace(/^</, ""))) return match;
+      if (/^qchat-web:/.test(href) || (!image && !ephemeral.test(href.trim().replace(/^</, "")))) return match;
       media = true;
       return "";
     });
@@ -354,7 +391,7 @@
   // Files by id only: signed URLs never go into saved chats.
   function cleanStoredMedia(items) {
     return (Array.isArray(items) ? items : []).filter(item => typeof item?.file === "string" && /^[A-Za-z0-9_-]{4,120}$/.test(item.file)).slice(0, 40)
-      .map(item => ({ file: item.file, kind: item.kind === "image" ? "image" : "file", name: String(item.name || "Attachment").slice(0, 200), ...(typeof item.mime === "string" ? { mime: item.mime.slice(0, 100) } : {}) }));
+      .map(item => ({ file: item.file, kind: item.kind === "image" ? "image" : "file", name: String(item.name || "Attachment").slice(0, 200), before: Boolean(item.before), ...(typeof item.mime === "string" ? { mime: item.mime.slice(0, 100) } : {}) }));
   }
 
   function cleanTranscript(raw, lastSnapshot) {
@@ -484,6 +521,8 @@
       highlightCode(template.content);
       syncMarkdownNodes(content, template.content);
       window.QMath?.renderInto(content);
+      hydrateWebImages(content);
+      row.toggleAttribute("data-media-first", Boolean(item.media?.some(file => file.before)));
       const media = row.querySelector(".turn-media");
       if (item.media?.length && chats.current.conversationId) {
         media.replaceChildren(...item.media.map(file => storedMediaCard(file, chats.current.conversationId)));
@@ -710,7 +749,7 @@
       }
       chat.transcript = older.map(item => {
         const mine = known.get(`${item.role}:${comparable(item.text)}`)?.shift();
-        return mine ? { ...mine, media: item.media, hasMedia: item.hasMedia || mine.hasMedia } : item;
+        return mine ? { ...mine, text: item.text || mine.text, media: item.media, sources: item.sources?.length ? item.sources : mine.sources, hasMedia: item.hasMedia || mine.hasMedia } : item;
       });
       if (chat === chats.current) refreshAfterRecord(chat);
       saveChats();
@@ -1299,13 +1338,17 @@
     }
     // Same for the history viewport: the window grows first, then the panel eases into it.
     if (historyOpen) height += Math.max(0, parseFloat(el.historyPanel.style.height || 0) - el.historyPanel.offsetHeight);
-    return { width: el.stack.offsetWidth + 2 * GUTTER, height: height + 2 * GUTTER };
+    const content = height + 2 * GUTTER;
+    // The window keeps its full height, and the empty part is click-through. Resizing it as
+    // things open and close made everything jump: the webview follows a frame behind the window.
+    const reserve = Math.round(window.screen.availHeight * QSettings.settings.maxHeightPct / 100) + 2 * GUTTER + 96;
+    return { width: el.stack.offsetWidth + 2 * GUTTER, height: Math.max(content, reserve), content };
   }
 
-  function sendFit(width, height) {
-    if (width === lastFit.width && height === lastFit.height) return;
-    lastFit = { width, height };
-    invoke("fit_window", { width, height }).catch(() => {});
+  function sendFit(width, height, content = height) {
+    if (width === lastFit.width && height === lastFit.height && content === lastFit.content) return;
+    lastFit = { width, height, content };
+    invoke("fit_window", { width, height, content }).catch(() => {});
   }
 
   function fitNow() {
@@ -1317,7 +1360,7 @@
       shrinkTimer = null;
       // wantedSize already reserves the streaming viewport.
       const height = want.height > lastFit.height ? want.height : lastFit.height;
-      sendFit(want.width, height);
+      sendFit(want.width, height, want.content);
     } else if (want.height < lastFit.height) {
       if (growing || shrinkTimer) return;
       // Shrink only after the exit animation, so nothing leaving gets clipped.
@@ -1325,11 +1368,13 @@
         shrinkTimer = null;
         if (!historyOpen && isStreaming() && responseEntry()) return;
         const now = wantedSize();
-        sendFit(now.width, now.height);
+        sendFit(now.width, now.height, now.content);
       }, QSettings.timings.t3 + 60);
     } else {
       clearTimeout(shrinkTimer);
       shrinkTimer = null;
+      // Same window, but the bar may need to come down if the content no longer fits above it.
+      if (want.content !== lastFit.content) sendFit(want.width, want.height, want.content);
     }
   }
 
@@ -1542,6 +1587,7 @@
     if (entry.renderedText !== visibleText) {
       renderReply(entry, visibleText, turn.sources, streaming);
       window.QMath?.renderInto(entry.contentEl);
+      hydrateWebImages(entry.contentEl);
       entry.renderedText = visibleText;
       if (streaming) noteRevealed(entry);
     }
@@ -1632,6 +1678,12 @@
     updateComposerMode();
     armAutoDismiss();
     if (historyOpen) backfillHistory(chats.current);
+    // A rich reply's images exist only in the saved record, so read it once the page has saved it.
+    if (turn.rich && turn.chatKey === chats.current.key) {
+      turn.restored = true;
+      const chat = chats.current;
+      setTimeout(() => { if (chats.current === chat) { backfilled.delete(chat); backfillHistory(chat); } }, 2000);
+    }
     queueSizes();
   }
 
@@ -1856,6 +1908,7 @@
     renderSources(turn);
     if (stored.length) {
       entry.mediaEl.append(...stored.map(file => storedMediaCard(file, chat.conversationId)));
+      entry.row.toggleAttribute("data-media-first", stored.some(file => file.before));
       entry.row.toggleAttribute("data-wide", true);
     }
     if (fallback) {
@@ -2879,6 +2932,7 @@
         if (turn?.status === "streaming" && !turn.backendDone) {
           // An empty final snapshot means the page lost track, not that the reply was erased.
           if (typeof evt.text === "string" && (evt.text || !turn.text)) turn.text = evt.text;
+          turn.rich = evt.rich === true;
           turn.backendDone = true;
           turn.activity = null;
           if (turnNodes.get(turn.id)?.activity) turnNodes.get(turn.id).activity.hidden = true;
@@ -2944,6 +2998,8 @@
     if (connectErrorShown) hideGlobalError();
     invoke("chat_status").catch(() => {});
     armConnectDeadline();
+    // The first placement can use a stale size. Settle it now, not on the first click.
+    lastFit = { width: 0, height: 0 };
     queueSizes();
   });
 

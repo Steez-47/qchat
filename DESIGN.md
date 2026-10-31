@@ -45,6 +45,8 @@ Segoe UI Variable. Body 15/1.65 in replies, measure capped at 72ch; the bar uses
 
 Pressing and hovering are colour only: transforms promote and demote compositor layers as they start and stop, which reads as the whole window jittering. One authored moment: a sent message rises out of the bar and becomes a bubble, and the reply grows in its place. Everything else is quiet: 120 to 200ms, exponential ease-out, transform and opacity. The default feel is calm, with no overshoot. Reduced motion is respected. No sheen passes over text by default. Scrolling is native: nothing moves, scales or fades messages as they scroll.
 
+The window keeps a fixed reserved size and its empty part is click-through. Never resize it as things open and close: the webview follows a frame behind, and everything jumps.
+
 ### Streaming
 
 Text must read as a steady flow, never as a machine catching up.

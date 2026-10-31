@@ -734,7 +734,7 @@ pub fn start(app: &tauri::AppHandle) {
                 && GetCursorPos(&mut p) != 0
             {
                 let desired = rects.as_ref().is_some_and(|rs| {
-                    !rs.is_empty() && app.state::<State>().0.lock().unwrap().reported.elapsed().as_secs_f64() < 2. && !rs.iter().any(|r| {
+                    !rs.is_empty() && app.state::<State>().0.lock().unwrap().reported.elapsed().as_secs_f64() < 15. && !rs.iter().any(|r| {
                         r.hit((p.x - bounds.left) as f64, (p.y - bounds.top) as f64, scale)
                     })
                 });

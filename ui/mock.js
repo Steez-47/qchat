@@ -194,7 +194,7 @@
             emitStatus(20);
             return null;
           case "fit_window":
-            mock.fit = { width: args.width, height: args.height };
+            mock.fit = { width: args.width, height: args.height, content: args.content ?? args.height };
             mock.fits.push(mock.fit);
             return null;
           case "open_settings": mock.settingsOpen = true; return null;

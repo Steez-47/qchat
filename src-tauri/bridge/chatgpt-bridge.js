@@ -144,7 +144,7 @@
     delta(job, true); job.finished = true; cancelTimers(job); active = null;
     disposeReader(job);
     if (job.media?.size) emit({ type: 'media', id: job.id, items: [...job.media.values()], final: true });
-    emit({ type: 'done', id: job.id, text: job.text, conversationId: job.conversationId || null });
+    emit({ type: 'done', id: job.id, text: job.text, conversationId: job.conversationId || null, rich: !!job.rich });
   }
   function assistantNodes() {
     const excluded = '[data-user-message-bubble], [data-message-author-role="user"], [data-message-channel="analysis"], [data-channel="analysis"], [data-thinking], [data-testid*="thinking"], [hidden], [aria-hidden="true"]';
@@ -251,6 +251,59 @@
   }
   // The visible branch only: walks up from the current node, then drops tool calls,
   // hidden system context and reasoning. Consecutive assistant parts form one reply.
+  // Rich replies are stored as a layout language. The text says where each image goes, by search
+  // query, and the message's component results hold the image for each query.
+  function webImageToken(image, caption) {
+    const url = image?.content_url || image?.thumbnail_url;
+    try { if (new URL(url).hostname !== 'images.openai.com') return ''; } catch (_) { return ''; }
+    // Result titles are the source page's headline, so only the reply's own caption is shown.
+    const label = String(caption || 'Image').replace(/[\[\]()\n]/g, ' ').trim().slice(0, 120);
+    return `![${label}](qchat-web:${btoa(url).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')})`;
+  }
+  function layoutToMarkdown(text, message) {
+    if (!/<(?:AsyncImage|box|row|grid|text|title|divider|icon|Cite)\b/.test(text)) return entityText(text);
+    const results = message?.metadata?.model_dil_v2?.appData?.opGenui?.componentResults || {};
+    const byQuery = new Map();
+    for (const result of Object.values(results)) {
+      for (const image of Array.isArray(result?.state?.images) ? result.state.images : []) {
+        if (image?.image_search_query && !byQuery.has(image.image_search_query)) byQuery.set(image.image_search_query, image);
+      }
+    }
+    const queries = attributes => [...attributes.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(match => match[1].replace(/\\"/g, '"'));
+    const convert = part => {
+      let out = entityText(part);
+      out = out.replace(/<grid-item\b[^>]*>([\s\S]*?)<\/grid-item>/g, (_, inner) => {
+        const image = /<AsyncImage\b[^>]*\bquery="([^"]*)"[^>]*\/?>/.exec(inner);
+        const words = inner.replace(/<AsyncImage\b[^>]*>/g, '').replace(/<\/?[a-zA-Z][^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        if (image) return `${webImageToken(byQuery.get(image[1]), words)}\n`;
+        return words ? `- ${words}\n` : '';
+      });
+      out = out.replace(/<AsyncImageGroup\b[^>]*?\bquery=\{\[([\s\S]*?)\]\}[^>]*?\/?>/g, (_, list) => `\n\n${queries(list).map(query => webImageToken(byQuery.get(query))).filter(Boolean).join(' ')}\n\n`);
+      out = out.replace(/<AsyncImage\b[^>]*?\bquery="([^"]*)"[^>]*?\/?>/g, (_, query) => `\n\n${webImageToken(byQuery.get(query))}\n\n`);
+      out = out.replace(/<Cite\b[^>]*?\brefs?=(?:\{[\[{]([\s\S]*?)[\]}]\}|"([^"]*)")[^>]*?\/?>/g, (_, list, single) => {
+        const refs = list ? queries(list) : [single];
+        return `\uE200cite\uE202${refs.join('\uE202')}\uE201`;
+      });
+      out = out.replace(/<title\b[^>]*>([\s\S]*?)<\/title>/g, '**$1** ').replace(/<divider\b[^>]*\/?>/g, '\n\n---\n\n');
+      out = out.replace(/<\/?(?:box|row|col|column|stack|grid|grid-item|text|icon|card|section)\b[^>]*>/g, '\n').replace(/<\/?[A-Z][A-Za-z]*\b[^>]*>/g, '');
+      // Indentation here is only the layout's nesting; Markdown would read it as code.
+      out = out.replace(/^[ \t]+/gm, '');
+      out = out.replace(/(qchat-web:[\w-]+\))\s*\n+\s*(!\[)/g, '$1 $2');
+      return out.replace(/\n{3,}/g, '\n\n');
+    };
+    return text.split(/(^ *`{3,}[^\n]*\n[\s\S]*?^ *`{3,} *$)/m).map((part, index) => index % 2 ? part : convert(part)).join('').trim();
+  }
+  function storedSources(message) {
+    const out = [];
+    for (const group of Array.isArray(message?.metadata?.search_result_groups) ? message.metadata.search_result_groups : []) {
+      for (const entry of Array.isArray(group?.entries) ? group.entries : []) {
+        const ref = entry?.ref_id;
+        if (!entry?.url || !ref || !Number.isInteger(ref.turn_index)) continue;
+        out.push({ id: `turn${ref.turn_index}${ref.ref_type}${ref.ref_index}`, url: entry.url, title: String(entry.title || entry.attribution || entry.url).slice(0, 300) });
+      }
+    }
+    return out;
+  }
   function storedMedia(parts, attachments) {
     const seen = new Set(), out = [];
     const add = (file, kind, name, mime) => {
@@ -275,22 +328,27 @@
       const role = message?.author?.role;
       if (message?.metadata?.is_visually_hidden_from_conversation) continue;
       // Generated images are stored on the tool's message; they belong to the next reply.
-      if (role === 'tool') { generated.push(...storedMedia(Array.isArray(message.content?.parts) ? message.content.parts : [], [])); continue; }
+      if (role === 'tool') { generated.push(...storedMedia(Array.isArray(message.content?.parts) ? message.content.parts : [], []).map(file => ({ ...file, before: true }))); continue; }
       if (role !== 'user' && role !== 'assistant') continue;
       if (role === 'assistant' && message.recipient && message.recipient !== 'all') continue;
       const content = message.content;
       if (!content || !['text', 'multimodal_text'].includes(content.content_type)) continue;
       const parts = Array.isArray(content.parts) ? content.parts : [];
-      const text = entityText(parts.filter(part => typeof part === 'string').join('\n')).replace(/\uE200[^\uE201]*\uE201/g, '').replace(/[\uE200-\uE206]/g, '').trim();
+      const raw = parts.filter(part => typeof part === 'string').join('\n');
+      const converted = role === 'assistant' ? layoutToMarkdown(raw, message) : raw;
+      const text = converted.replace(/\uE200(?!cite\uE202)[^\uE201]*\uE201/g, '').replace(/[\uE203-\uE206]/g, '').trim();
       const files = storedMedia(parts, Array.isArray(message.metadata?.attachments) ? message.metadata.attachments : []);
+      // Uploads and generated images come before the words that follow them.
+      files.forEach(file => { file.before = true; });
       if (role === 'assistant') { files.unshift(...generated); generated = []; }
       if (!text && !files.length) continue;
+      const sources = role === 'assistant' ? storedSources(message).filter(source => text.includes(source.id)) : [];
       const last = out[out.length - 1];
-      if (role === 'assistant' && last?.role === 'assistant') { last.text = [last.text, text].filter(Boolean).join('\n\n'); last.media.push(...files); last.hasMedia = last.media.length > 0; continue; }
-      out.push({ role, text, media: files, hasMedia: files.length > 0 });
+      if (role === 'assistant' && last?.role === 'assistant') { last.text = [last.text, text].filter(Boolean).join('\n\n'); last.media.push(...files); last.hasMedia = last.media.length > 0; last.sources.push(...sources); continue; }
+      out.push({ role, text, media: files, hasMedia: files.length > 0, sources });
     }
     // An image can be the last thing in a conversation, with no reply text after it.
-    if (generated.length) out.push({ role: 'assistant', text: '', media: generated, hasMedia: true });
+    if (generated.length) out.push({ role: 'assistant', text: '', media: generated, hasMedia: true, sources: [] });
     return out;
   }
   async function storedMessages(id) {
@@ -611,7 +669,7 @@
     const partial = /<([a-z]+)$/i.exec(prose)?.[1].toLowerCase();
     // Any JSX-style component is the site's own markup; only citations are handled here.
     const component = [...prose.matchAll(/<\/?([A-Z][A-Za-z]*)\b/g)].some(match => match[1] !== 'Cite');
-    return component || /<(?:row|box|text)\b/i.test(prose) ||
+    return component || /<\/?(?:row|box|text|grid|grid-item|title|divider|icon)\b/.test(prose) ||
       !!partial && ['asyncimage', 'row', 'box', 'text', 'entity'].some(name => name.startsWith(partial));
   }
   function networkText(job, text, canonicalFallback = false) {
@@ -619,6 +677,7 @@
     job.netText = text;
     job.canonicalFallback = canonicalFallback;
     job.requiresDOM = richLayout(text);
+    job.rich = job.rich || job.requiresDOM;
     if (job.requiresDOM) { sampleDOM(job); return; }
     job.text = markdownMedia(job, text) || (!canonicalFallback && job.domText) || '';
     delta(job);
@@ -980,6 +1039,11 @@
   async function resolveMedia(id) {
     const stored = /^stored:([A-Za-z0-9_-]{4,120}):([A-Za-z0-9_-]{8,80})$/.exec(id);
     if (stored) return resolveStoredMedia(stored[1], stored[2]);
+    if (id?.startsWith('webimage:')) {
+      const url = atob(id.slice(9).replace(/-/g, '+').replace(/_/g, '/'));
+      if (new URL(url).hostname !== 'images.openai.com') throw new Error('This image is unavailable.');
+      return { url, kind: 'image', name: 'Image.jpg', mime: 'image/jpeg' };
+    }
     const entry = media.get(id);
     if (!entry) throw new Error('This attachment is unavailable. View it in ChatGPT.');
     if (!entry.url && !entry.node) {

@@ -111,7 +111,7 @@ try {
   if (guestChip) await evalJS(`document.getElementById('btn-guest-dismiss').click()`);
   await settle();
   const idleFit = await evalJS(`__mock.fit`);
-  check('idle fit_window is the reading column plus gutters', idleFit.width === 640 + 56 && idleFit.height === 44 + 56, JSON.stringify(idleFit));
+  check('idle fit_window is the reading column plus gutters, at its full reserved height', idleFit.width === 640 + 56 && idleFit.content === 44 + 56 && idleFit.height >= 600, JSON.stringify(idleFit));
   check('no set_layout call or layout attribute', await count('set_layout') === 0 && await evalJS(`!document.documentElement.dataset.layout`));
   check('guest chip appears before first message', guestChip);
   check('window prefs sent on startup', await evalJS(`__mock.last('set_window_prefs')?.args.alwaysOnTop===true && __mock.last('set_window_prefs')?.args.rememberPosition===true`));
@@ -152,7 +152,7 @@ try {
   check('thinking indicator lives on the user bubble', rising.dots);
   check('send button becomes stop', rising.stop === 'stop');
   await settle();
-  const placed = await evalJS(`(()=>{const u=document.querySelector('.bubble-user').getBoundingClientRect();const b=document.getElementById('bar').getBoundingClientRect();return {above:u.bottom<=b.top, right:Math.abs(u.right-b.right)<1, lines:document.querySelector('.bubble-user .turn-content').clientHeight, fit:__mock.fit.height, stack:document.getElementById('stack').offsetHeight}})()`);
+  const placed = await evalJS(`(()=>{const u=document.querySelector('.bubble-user').getBoundingClientRect();const b=document.getElementById('bar').getBoundingClientRect();return {above:u.bottom<=b.top, right:Math.abs(u.right-b.right)<1, lines:document.querySelector('.bubble-user .turn-content').clientHeight, fit:__mock.fit.content, stack:document.getElementById('stack').offsetHeight}})()`);
   check('user bubble sits right-aligned above the bar', placed.above && placed.right, JSON.stringify(placed));
   check('fit_window grows with the bubble', placed.fit === placed.stack + 56, JSON.stringify(placed));
   await evalJS(`__mock.release()`);
@@ -161,7 +161,7 @@ try {
   const heights = [];
   const fits = [];
   for (let i = 0; i < 26; i++) {
-    const m = await evalJS(`({h:document.querySelector('.bubble-response')?.offsetHeight||0, inner:document.querySelector('.bubble-inner')?.offsetHeight||0, f:__mock.fit.height, s:document.getElementById('stack').offsetHeight, top:document.querySelector('.bubble-response')?.getBoundingClientRect().top??0})`);
+    const m = await evalJS(`({h:document.querySelector('.bubble-response')?.offsetHeight||0, inner:document.querySelector('.bubble-inner')?.offsetHeight||0, f:__mock.fit.content, s:document.getElementById('stack').offsetHeight, top:document.querySelector('.bubble-response')?.getBoundingClientRect().top??0})`);
     heights.push(m.h); fits.push(m);
     await sleep(45);
   }
@@ -171,8 +171,8 @@ try {
   check('streaming does not resize the window on every line', resizes < 22, String(resizes));
   await finishReply();
   await settle();
-  await until(`__mock.fit.height===document.getElementById('stack').offsetHeight+56`, 'final window fit after response animation');
-  const done = await evalJS(`({inline:document.querySelector('.bubble-response').style.height,prompt:document.getElementById('prompt-input').offsetHeight,promptStyle:document.getElementById('prompt-input').style.height,zone:document.getElementById('bubble-zone').offsetHeight,pct:QSettings.settings.maxHeightPct,avail:screen.availHeight,lastFits:__mock.fits.slice(-12),fit:__mock.fit.height, stack:document.getElementById('stack').offsetHeight, h:document.querySelector('.bubble-response').offsetHeight, inner:document.querySelector('.bubble-inner').offsetHeight, capped:document.querySelector('[data-role=assistant]').hasAttribute('data-capped'), max:Math.round(screen.availHeight*0.6), overflow:getComputedStyle(document.querySelector('.bubble-scroll')).overflowY, send:document.getElementById('btn-send').dataset.mode})`);
+  await until(`__mock.fit.content===document.getElementById('stack').offsetHeight+56`, 'final window fit after response animation');
+  const done = await evalJS(`({inline:document.querySelector('.bubble-response').style.height,prompt:document.getElementById('prompt-input').offsetHeight,promptStyle:document.getElementById('prompt-input').style.height,zone:document.getElementById('bubble-zone').offsetHeight,pct:QSettings.settings.maxHeightPct,avail:screen.availHeight,lastFits:__mock.fits.slice(-12),fit:__mock.fit.content, stack:document.getElementById('stack').offsetHeight, h:document.querySelector('.bubble-response').offsetHeight, inner:document.querySelector('.bubble-inner').offsetHeight, capped:document.querySelector('[data-role=assistant]').hasAttribute('data-capped'), max:Math.round(screen.availHeight*0.6), overflow:getComputedStyle(document.querySelector('.bubble-scroll')).overflowY, send:document.getElementById('btn-send').dataset.mode})`);
   check('response stays after done and fit is exact', done.fit === done.stack + 56 && done.send === 'send', JSON.stringify(done));
   check('long reply caps at the height limit and scrolls itself', done.capped && done.h <= done.max && done.overflow === 'auto' && done.inner > done.h, JSON.stringify(done));
   const bar = await evalJS(`(()=>{const s=document.querySelector('.bubble-scroll');return s.offsetWidth-s.clientWidth;})()`);
@@ -196,7 +196,7 @@ try {
   await sleep(20);
   check('Esc then dismisses the bubble', await evalJS(`!document.querySelector('[data-role=assistant]')`) && await count('hide_main') === hidesBefore);
   await settle();
-  check('window shrinks back after the exit animation', await evalJS(`__mock.fit.height===document.getElementById('stack').offsetHeight+56 && document.getElementById('bubble-zone').hidden`));
+  check('window shrinks back after the exit animation', await evalJS(`__mock.fit.content===document.getElementById('stack').offsetHeight+56 && document.getElementById('bubble-zone').hidden`));
   await key('Escape');
   check('Esc finally hides the window', await count('hide_main') === hidesBefore + 1);
 
@@ -352,7 +352,7 @@ try {
   await open('/', { settings:{barWidth:340}, chats:seeded(chat('cur','conv-current',MIN),chat('a','conv-a',MIN,'A long conversation title for testing'),chat('b','conv-b',HOUR,'Another long conversation title to shorten'),chat('c','conv-c',DAY,'😀'.repeat(12)+' a longer title')) });
   await settle();
   check('long recent titles are capped and keep the full accessible name', await evalJS(`(()=>{const tabs=[...document.querySelectorAll('#tabs .tab')];return tabs.every(t=>Array.from(t.querySelector('.tab-title').textContent).length<=24 && t.querySelector('.tab-title').textContent.endsWith('…')) && tabs[0].getAttribute('aria-label').includes('A long conversation title for testing');})()`));
-  check('recent chats fit the narrow composer and contribute to window height', await evalJS(`(()=>{const s=document.getElementById('stack').getBoundingClientRect(),bar=document.getElementById('bar').getBoundingClientRect(),nav=document.getElementById('tabs').getBoundingClientRect();return [...document.querySelectorAll('#tabs .tab')].every(t=>{const r=t.getBoundingClientRect();return r.left>=s.left && r.right<=s.right+1 && r.top>=s.top && Math.abs(r.bottom-bar.top)<4;}) && nav.height>20 && __mock.fit.height>=document.getElementById('stack').offsetHeight+56;})()`));
+  check('recent chats fit the narrow composer and contribute to window height', await evalJS(`(()=>{const s=document.getElementById('stack').getBoundingClientRect(),bar=document.getElementById('bar').getBoundingClientRect(),nav=document.getElementById('tabs').getBoundingClientRect();return [...document.querySelectorAll('#tabs .tab')].every(t=>{const r=t.getBoundingClientRect();return r.left>=s.left && r.right<=s.right+1 && r.top>=s.top && Math.abs(r.bottom-bar.top)<4;}) && nav.height>20 && __mock.fit.content>=document.getElementById('stack').offsetHeight+56;})()`));
   for (const zoom of [1, 1.5]) {
     check(`tabs touch bar at ${zoom * 100}% zoom`, await evalJS(`(()=>{document.body.style.zoom=${zoom};const b=document.getElementById('bar').getBoundingClientRect(),t=document.getElementById('tabs').getBoundingClientRect();document.body.style.zoom='';return Math.abs(b.top-t.bottom)<.6;})()`));
   }

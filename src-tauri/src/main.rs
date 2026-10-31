@@ -66,6 +66,7 @@ fn tool_window(w: &tauri::WebviewWindow, tool: bool) {
     }
 }
 struct Activity {
+    content: Option<f64>,
     hidden: Instant,
     background: bool,
     flight_id: Option<String>,
@@ -179,13 +180,19 @@ fn nearest_anchor(a: Anchor, areas: &[Rect]) -> Option<(Anchor, Rect)> {
     }).min_by_key(|v| v.0).map(|(_,a,r)| (a,r))
 }
 fn fit_geometry(a: Anchor, r: Rect, width: f64, height: f64, scale: f64) -> (Anchor, i32, i32) {
+    fit_content(a, r, width, height, height, scale)
+}
+// The window can be taller than what it shows, and its empty top may hang off the screen, so only
+// the visible content limits how high the bar can sit.
+fn fit_content(a: Anchor, r: Rect, width: f64, height: f64, content: f64, scale: f64) -> (Anchor, i32, i32) {
     let min = (120.0*scale).round() as i32;
     let gap = (12.0*scale).round() as i32;
     let w = ((width*scale).round() as i32).max(min).min((r.w-gap).max(1));
     let h = ((height*scale).round() as i32).max(min).min((r.h-gap).max(1));
     // Keep the requested content height when there is too little room above the
     // bar. Move it down into the work area instead of cropping the command menu.
-    let bottom = a.bottom.clamp(r.y+h, r.y+r.h);
+    let visible = ((content*scale).round() as i32).clamp(min, h);
+    let bottom = a.bottom.clamp(r.y+visible, r.y+r.h);
     let cx = a.cx.clamp(r.x+w/2, r.x+r.w-(w-w/2));
     (Anchor { cx, bottom }, w, h)
 }
@@ -204,28 +211,32 @@ fn place_main(app: &tauri::AppHandle, w: &tauri::WebviewWindow) {
     let (anchor,r) = saved.and_then(|a| nearest_anchor(a,&areas)).unwrap_or((Anchor { cx:r.x+r.w/2, bottom:r.y+r.h-(r.h as f64*0.06) as i32 },r));
     if let Ok(size)=w.outer_size() {
         let scale=w.scale_factor().unwrap_or(1.0);
-        let (anchor,width,height)=fit_geometry(anchor,r,size.width as f64/scale,size.height as f64/scale,scale);
+        let content=app.state::<Host>().0.lock().unwrap().content.unwrap_or(size.height as f64/scale);
+        let (anchor,width,height)=fit_content(anchor,r,size.width as f64/scale,size.height as f64/scale,content,scale);
         let _=w.set_size(tauri::PhysicalSize::new(width as u32,height as u32));
         app.state::<Host>().0.lock().unwrap().anchor=Some(anchor);
         position(w,anchor,width,height);
     }
 }
 #[tauri::command]
-fn fit_window(app: tauri::AppHandle, width: f64, height: f64) {
+fn fit_window(app: tauri::AppHandle, width: f64, height: f64, content: Option<f64>) {
     if !width.is_finite() || !height.is_finite() || offscreen_test() { return }
+    let content = content.filter(|c| c.is_finite()).unwrap_or(height);
+    app.state::<Host>().0.lock().unwrap().content = Some(content);
     let Some(w)=app.get_webview_window("main") else { return };
     let (Ok(Some(m)),Ok(old),Ok(pos))=(w.current_monitor(),w.outer_size(),w.outer_position()) else { return };
     let saved=app.state::<Host>().0.lock().unwrap().anchor;
     // Sizing before the first show must not turn the hidden window's default position into its home.
     if saved.is_none() && !w.is_visible().unwrap_or(false) {
-        let (_,width,height)=fit_geometry(Anchor { cx:pos.x+old.width as i32/2,bottom:pos.y+old.height as i32 },rect(&m),width,height,w.scale_factor().unwrap_or(1.0));
+        let (_,width,height)=fit_content(Anchor { cx:pos.x+old.width as i32/2,bottom:pos.y+old.height as i32 },rect(&m),width,height,content,w.scale_factor().unwrap_or(1.0));
         let _=w.set_size(tauri::PhysicalSize::new(width as u32,height as u32));
         return;
     }
     let anchor=saved.unwrap_or(Anchor { cx:pos.x+old.width as i32/2,bottom:pos.y+old.height as i32 });
-    let (anchor,width,height)=fit_geometry(anchor,rect(&m),width,height,w.scale_factor().unwrap_or(1.0));
+    let (anchor,width,height)=fit_content(anchor,rect(&m),width,height,content,w.scale_factor().unwrap_or(1.0));
     app.state::<Host>().0.lock().unwrap().anchor=Some(anchor);
-    if (width-old.width as i32).abs()<=1 && (height-old.height as i32).abs()<=1 { return }
+    let unchanged=(width-old.width as i32).abs()<=1 && (height-old.height as i32).abs()<=1 && (pos.y+old.height as i32-anchor.bottom).abs()<=1;
+    if unchanged { return }
     // Size and position in one call: two calls show a frame with the old bottom edge.
     app.state::<Host>().0.lock().unwrap().positioned=Instant::now();
     surfaces::place_window(&w,anchor.cx-width/2,anchor.bottom-height,width,height);
@@ -571,7 +582,7 @@ fn main() {
         builder
     };
     builder
- .manage(Host(Mutex::new(Activity{hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0,logged_in:false,signin_was_logged_in:false,anchor:None,remember_position:true,always_on_top:true,positioned:Instant::now(),save_due:None,save_generation:0})))
+ .manage(Host(Mutex::new(Activity { content: None, hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0,logged_in:false,signin_was_logged_in:false,anchor:None,remember_position:true,always_on_top:true,positioned:Instant::now(),save_due:None,save_generation:0})))
 
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,shortcut,event|{if event.state()==ShortcutState::Pressed{if selection::matches(app,shortcut) { selection::activate(app); } else { toggle(app); }}}).build())
  .invoke_handler(tauri::generate_handler![surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,chat_list_conversations,surfaces::get_hotkey, surfaces::get_hotkey_available, selection::get_selection_hotkey_available,surfaces::set_hotkey,selection::get_selection_hotkey,selection::set_selection_hotkey,selection::set_selection_clipboard,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_models,chat_model_choose,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy])
@@ -675,6 +686,16 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{is_chat_url, should_auto_return, Anchor, Rect, nearest_anchor, fit_geometry};
+    #[test]
+    fn a_tall_window_only_needs_room_for_its_content() {
+        let r=Rect{x:0,y:0,w:1200,h:900};
+        // High on the screen, tall reserved window, short content: the bar stays where it was put.
+        let (a,w,h)=super::fit_content(Anchor{cx:600,bottom:200},r,700.,600.,100.,1.);
+        assert_eq!((a.bottom,w,h),(200,700,600));
+        // Content taller than the space above the bar brings it down, as before.
+        let (a,_,_)=super::fit_content(Anchor{cx:600,bottom:200},r,700.,600.,500.,1.);
+        assert_eq!(a.bottom,500);
+    }
     #[test]
     fn anchor_uses_containing_or_nearest_work_area() {
         let areas=[Rect{x:-1000,y:0,w:1000,h:800},Rect{x:0,y:0,w:1200,h:900}];

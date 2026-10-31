@@ -539,6 +539,7 @@ fn allowed_media_url(raw: &str) -> bool {
             "oaiusercontent.com",
             "oaistatic.com",
             "cdn.openai.com",
+            "images.openai.com",
         ]
         .iter()
         .any(|h| host == *h || host.ends_with(&format!(".{h}")))
