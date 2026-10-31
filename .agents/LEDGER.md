@@ -104,3 +104,6 @@
 2026-11-01 | Paste / prompt-reuse review | codex/gpt-6.1-terra medium | done | 3 concrete findings fixed by companion in e07bc81; strict undo, selection-only preservation and nonempty prompt copying verified
 2026-11-01 | Native integrated candidate | parent | pass | e07bc81: Rust26 (1 ignored), 8 native suites; extended native search/edit11 and independent edit38/paste17 PASS serially
 2026-11-01 | Production checkpoint | parent | built locally | e07bc81; dist/overnight/20261101-003952-e07bc81/QChat.exe; SHA256 55f2fb0bf184c5a5dfde70523a259a3415cc3c2f71b208c0bdd71fefffcb0bd0; original EXE/hash/PID34592 preserved
+2026-11-01 | Keyboard copy | companion Terra high + root integration | done | integrated 316c51a; root added 4 edge fixes and shared safe copy formatting; keyboard24 and native13 PASS, copy/media/history/features PASS
+2026-11-01 | Attachment retry review | codex/gpt-6.1-terra high | done | 4 findings: early staging exit loses ownership, stale native dispatch association, orphan expiry/UI reload, pending/terminal settlement race; not integrated
+2026-11-01 | Companion availability | Claude | quota exhausted | terminal at review stage; root adopts completed worker commits without editing peer worktrees; reset notice 1:20am Auckland

@@ -132,6 +132,11 @@
     return window.QResponseTags.toMarkdown(markdownText, { citation });
   }
 
+  function copyReplyMarkdown(markdownText, sources) {
+    return window.QResponseTags.protect(replyMarkdown(completedSnapshot(markdownText).text, sources), prose =>
+      prose.replace(/!\[([^\]\n]*)\]\(qchat-web:[\w-]+\)/g, (_, label) => label ? `[Image: ${label}]` : "[Image]"));
+  }
+
   function renderMarkdownSafe(markdownText, sources = []) {
     const src = replyMarkdown(markdownText, sources);
     if (!src) return "";
@@ -527,11 +532,11 @@
     let media = Boolean(hasMedia);
     const ephemeral = /^(?:qchat-media:|sandbox:|attachment:|https?:\/\/qchat-media\.localhost(?:[/:]|$)|https?:\/\/[^/]*oaiusercontent\.com\/)/i;
     let text = String(value || "");
-    text = text.replace(/(!?)\[([^\]\n]*)\]\(([^\n]*?)\)/g, (match, image, label, href) => {
+    text = window.QResponseTags.protect(text, prose => prose.replace(/(!?)\[([^\]\n]*)\]\(([^\n]*?)\)/g, (match, image, label, href) => {
       if (/^qchat-web:/.test(href) || (!image && !ephemeral.test(href.trim().replace(/^</, "")))) return match;
       media = true;
       return "";
-    });
+    }));
     text = text.replace(/(?:qchat-media:|sandbox:|attachment:|https?:\/\/qchat-media\.localhost\/|https?:\/\/[^\s/]*oaiusercontent\.com\/)[^\s<>)]*/gi, () => {
       media = true;
       return "";
@@ -2736,6 +2741,7 @@
       let selectionKey = "Ctrl+Alt+Q"; try { selectionKey = await invoke("get_selection_hotkey"); } catch (_) {}
       const shortcuts = [[selectionKey || "Disabled", "Ask about selection"], [hotkey, "Show QChat"], [QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter", "Send"], ["Shift+Enter", "New line"], ["Esc", "Close"], ["Ctrl+N", "New chat"], ["Ctrl+K", "Menu"], ["Ctrl+P", "Chats"], ["Ctrl+.", "Stop"], ["ArrowUp / ArrowDown", "Recall prompts"], ["Paste / drop", "Attach files"]];
       shortcuts.splice(8, 0, ["Ctrl+F", "Find in conversation"], ["F3 / Shift+F3", "Next / previous match"]);
+      shortcuts.push(["Ctrl+Shift+C", "Copy reply"], ["Ctrl+Shift+X", "Copy last code block"]);
       showFeatureList("Keyboard shortcuts", shortcuts.map(([key, action]) => ({ keys: key, title: action })));
     } }
   );
@@ -3304,8 +3310,7 @@
       items.unshift({role:"user",text:chats.current.lastPrompt,hadAttachments:chats.current.lastHadAttachments});
     }
     const messages = items.map(item => {
-      const text = item.role === "user" ? wirePrompt(item.text, item.selectionTexts || []) : replyMarkdown(item.text, item.sources)
-        .replace(/!\[([^\]\n]*)\]\(qchat-web:[\w-]+\)/g, (_, label) => label ? `[Image: ${label}]` : "[Image]");
+      const text = item.role === "user" ? wirePrompt(item.text, item.selectionTexts || []) : copyReplyMarkdown(item.text, item.sources);
       const names = (item.media || []).map(file => file.name).filter(Boolean);
       const media = names.length ? names.map(name => `[Attachment: ${name.replace(/[\r\n]+/g, " ")}]`).join("\n") : item.hasMedia || item.hadAttachments ? "[Attachment]" : "";
       const body = [text, media].filter(Boolean).join("\n\n");
@@ -3319,6 +3324,7 @@
   }
 
   async function copyWithFeedback(text, buttonEl) {
+    if (!String(text ?? "")) { showCommandFeedback("No text to copy"); return false; }
     if (!await writeClipboardText(text)) {
       if (buttonEl?._copyTimer) {
         clearTimeout(buttonEl._copyTimer); buttonEl._copyTimer = null;
@@ -3414,7 +3420,8 @@
       const code = button.closest(".code-block")?.querySelector("pre code");
       if (code) copyWithFeedback(code.textContent, button);
     } else if (button?.dataset.action === "history-copy") {
-      copyWithFeedback(button.closest(".history-row")?._copyText || "", button);
+      const item = historyItems(true).find(item => item.id === button.closest(".history-row")?.dataset.id);
+      if (item) copyWithFeedback(copyReplyMarkdown(item.text, item.sources), button);
     } else if (button?.dataset.action === "view-media") {
       const media = button.closest(".turn-row")?.querySelector(".turn-media .media-card");
       if (media) media.scrollIntoView({ block: "nearest" });
@@ -3460,7 +3467,7 @@
       if (codeEl) copyWithFeedback(codeEl.textContent, actionBtn);
     } else if (action === "copy-turn") {
       const turn = turns.find((t) => t.id === actionBtn.dataset.id);
-      if (turn) copyWithFeedback(turn.text, actionBtn);
+      if (turn) copyWithFeedback(copyReplyMarkdown(turn.text, turn.sources), actionBtn);
     } else if (action === "dismiss-turn") {
       dismissExchange();
       el.promptInput.focus();
@@ -3521,6 +3528,46 @@
   el.orb.addEventListener("pointercancel", () => { orbDown = null; });
   document.addEventListener("pointerdown", e => { if (!el.slashMenu.contains(e.target) && e.target !== el.promptInput) closeSlashMenu(); });
   window.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCommandMenu(); } });
+  window.addEventListener("keydown", e => {
+    if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey || e.isComposing || e.keyCode === 229) return;
+    const key = e.key.toLowerCase();
+    if (key !== "c" && key !== "x") return;
+    const focused = document.activeElement;
+    if (focused !== el.promptInput && (focused?.matches("input, textarea, select") || focused?.isContentEditable)) return;
+    let selected = "";
+    if (key === "c" && focused === el.promptInput) selected = focused.value.slice(focused.selectionStart, focused.selectionEnd);
+    if (key === "c" && !selected) {
+      const selection = window.getSelection();
+      if (selection?.rangeCount && selection.anchorNode?.parentElement?.closest('[data-role="assistant"]') && selection.focusNode?.parentElement?.closest('[data-role="assistant"]')) selected = selection.toString();
+    }
+    e.preventDefault();
+    const reply = historyItems(true).filter(item => item.role === "assistant" && item.text).at(-1);
+    let text = selected || (reply && key === "c" ? copyReplyMarkdown(reply.text, reply.sources) : "");
+    if (!selected && key === "x" && reply) {
+      const entry = turnNodes.get(reply.id);
+      const live = turns.find(turn => turn.id === reply.id);
+      let codes = live?.status === "streaming" ? null : entry?.contentEl?.querySelectorAll(".code-block pre code");
+      if (!codes?.length) {
+        const template = document.createElement("template");
+        template.innerHTML = renderMarkdownSafe(reply.text, reply.sources);
+        codes = template.content.querySelectorAll(".code-block pre code");
+      }
+      text = codes.length ? codes[codes.length - 1].textContent : "";
+    }
+    const generation = ++copyGeneration;
+    clearTimeout(commandFeedbackTimer);
+    if (!text) { showCommandFeedback(key === "c" ? "No reply to copy yet" : "No code in this reply"); return; }
+    const chatKey = chats.current.key;
+    void writeClipboardText(text).then(copied => {
+      if (chats.current.key !== chatKey || generation !== copyGeneration) return;
+      if (copied) showCommandFeedback(selected ? "Selection copied" : key === "c" ? "Reply copied" : "Code copied");
+      else {
+        if (pendingChatUndo.length) paintChatUndo();
+        else hideCommandFeedback();
+        showGlobalError(null, "Couldn't copy. Try again.");
+      }
+    });
+  });
   let filePickerOpen = false;
   el.btnAttach.addEventListener("click", () => { filePickerOpen = true; el.attachmentInput.click(); });
   el.btnSnapshot.addEventListener("click", () => { void captureSnapshot(); });

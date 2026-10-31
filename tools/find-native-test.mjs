@@ -87,6 +87,15 @@ try {
   const kept=await evaluate("(()=>{const original=document.execCommand;document.execCommand=()=>false;try{document.querySelector('#history-panel [data-id=\"native-u\"] [data-action=\"edit-prompt\"]').click();return document.getElementById('prompt-input').value==='Preserve this draft 🌏'&&document.getElementById('command-feedback').textContent.includes(\"Couldn't replace your draft\")}finally{document.execCommand=original}})()");
   check('native failed undoable insertion keeps the existing draft',kept);
   await until("JSON.parse(localStorage.getItem('qchat.chats')).current.draft==='Preserve this draft 🌏'");
+  await evaluate("window.nativeCopies=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>nativeCopies.push(text)}});window.editCommand=document.execCommand;document.execCommand=function(command,...args){return command==='copy'?false:editCommand.call(document,command,...args)};getSelection().removeAllRanges();const input=document.getElementById('prompt-input');input.focus();input.setSelectionRange(input.value.length,input.value.length)");
+  await command('Input.dispatchKeyEvent',{type:'keyDown',key:'C',code:'KeyC',windowsVirtualKeyCode:67,modifiers:10});
+  await command('Input.dispatchKeyEvent',{type:'keyUp',key:'C',code:'KeyC',windowsVirtualKeyCode:67,modifiers:10});
+  await until('nativeCopies.length===1');
+  check('native keyboard reply copy routes to the clipboard stub',await evaluate("nativeCopies[0].includes('Older NEEDLE')&&nativeCopies[0].includes('const value = 42;')&&document.getElementById('prompt-input').value==='Preserve this draft 🌏'"));
+  await command('Input.dispatchKeyEvent',{type:'keyDown',key:'X',code:'KeyX',windowsVirtualKeyCode:88,modifiers:10});
+  await command('Input.dispatchKeyEvent',{type:'keyUp',key:'X',code:'KeyX',windowsVirtualKeyCode:88,modifiers:10});
+  await until('nativeCopies.length===2');
+  check('native keyboard code copy selects only code',await evaluate("nativeCopies[1].trim()==='const value = 42;'&&document.getElementById('prompt-input').value==='Preserve this draft 🌏'"));
   check('native search has no runtime exceptions',problems.length===0,problems.join(' | '));
 } catch(error) {console.error('FAIL harness ::',error.message);failed++;}
 finally {
