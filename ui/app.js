@@ -3443,9 +3443,32 @@
   el.btnSnapshot.addEventListener("click", () => { void captureSnapshot(); });
   el.attachmentInput.addEventListener("cancel", () => { filePickerOpen = false; });
   el.attachmentInput.addEventListener("change", () => { filePickerOpen = false; addFiles(el.attachmentInput.files); el.attachmentInput.value = ""; updateIdleChips(); });
+  function clipboardFiles(data) {
+    const files = Array.from(data?.files || []);
+    return files.length ? files : Array.from(data?.items || [])
+      .filter(item => item.kind === "file").map(item => item.getAsFile()).filter(Boolean);
+  }
   el.promptInput.addEventListener("paste", (e) => {
-    const files = Array.from(e.clipboardData?.files || []);
+    if (!el.clearConfirm.hidden || snapshotCapturing) return;
+    const files = clipboardFiles(e.clipboardData);
     if (files.length && addFiles(files)) e.preventDefault();
+  });
+  document.addEventListener("paste", (e) => {
+    if (e.defaultPrevented || !el.clearConfirm.hidden || snapshotCapturing) return;
+    const target = e.target;
+    if (target instanceof Element && (target.closest("input, textarea, [contenteditable]:not([contenteditable='false'])") || target.isContentEditable)) return;
+    const files = clipboardFiles(e.clipboardData);
+    if (files.length) {
+      if (addFiles(files)) { e.preventDefault(); el.promptInput.focus(); }
+      return;
+    }
+    const text = e.clipboardData?.getData("text/plain");
+    if (!text) return;
+    e.preventDefault();
+    const input = el.promptInput;
+    input.setRangeText(text, input.selectionStart, input.selectionEnd, "end");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
   });
   el.stage.addEventListener("dragover", (e) => {
     if (Array.from(e.dataTransfer?.types || []).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = isBusy() ? "none" : "copy"; }
