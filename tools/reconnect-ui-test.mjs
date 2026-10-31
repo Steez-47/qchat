@@ -134,6 +134,15 @@ try {
   await evalJS(`window.originalInvoke=__TAURI__.core.invoke;window.sent=[];window.recoveries=0;__TAURI__.core.invoke=(c,a)=>c==='chat_send'?(sent.push(a),Promise.resolve()):c==='chat_status'||c==='chat_new'?(recoveries++,Promise.resolve()):originalInvoke(c,a)`);
   await send('busy'); await waitFor('sent.length===1'); await evalJS(`__mock.emit('bridge',{type:'error',code:'offline'});window.dispatchEvent(new Event('online'));window.dispatchEvent(new Event('focus'));__mock.emit('qchat://shown',{})`);
   check('busy turn untouched', await evalJS(`sent.length===1&&recoveries===0&&!document.getElementById('global-error').hidden`));
+  await open('/?mock=1&connect=150'); await sleep(250);
+  await evalJS(`window.attempts=[];window.originalInvoke=__TAURI__.core.invoke;__TAURI__.core.invoke=(c,a)=>{if(c==='chat_status'||c==='chat_new'){attempts.push(c);return Promise.resolve()}return originalInvoke(c,a)};${ready};__mock.emit('bridge',{type:'error',code:'not_ready',message:'x'})`); await sleep(40);
+  check('ready bridge can still show the retry error', await evalJS(`!document.getElementById('global-error').hidden&&document.getElementById('btn-error-signin').textContent==='Try again'`));
+  await evalJS(`document.getElementById('btn-error-signin').click()`); await sleep(30);
+  check('Try again shows it is working', await evalJS(`attempts.length===1&&document.getElementById('btn-error-signin').disabled&&document.getElementById('btn-error-signin').textContent.startsWith('Reconnecting')`));
+  await sleep(300);
+  check('attempt with no status event ends by itself', await evalJS(`!document.getElementById('btn-error-signin').disabled&&document.getElementById('btn-error-signin').textContent==='Try again'`));
+  await evalJS(`document.getElementById('btn-error-signin').click()`); await sleep(30);
+  check('Try again still works after a silent attempt', await evalJS('attempts.length===2'));
   check('no runtime errors', problems.length===0, problems.join(' | '));
 
 } catch (e) {

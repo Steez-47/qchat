@@ -3097,6 +3097,7 @@
   let reconnectInvokePending = false;
   let reconnectHadError = false;
   let lastReconnectAttempt = 0;
+  let reconnectTimer;
   function updateStatusHeader({ ready, loggedIn, signedOut }) {
     bridge.ready = Boolean(ready);
     bridge.loggedIn = Boolean(loggedIn);
@@ -3113,8 +3114,7 @@
         hideGlobalError();
         if (reconnecting && reconnectHadError) showCommandFeedback("Reconnected");
       }
-      reconnecting = false;
-      reconnectHadError = false;
+      endReconnectAttempt();
     }
     updateGuestNotice();
     updateComposerMode();
@@ -3126,8 +3126,7 @@
     if (bridge.ready) return;
     connectTimer = setTimeout(() => {
       connectTimer = null;
-      reconnecting = false;
-      reconnectHadError = false;
+      endReconnectAttempt();
       if (!bridge.ready && (el.globalError.hidden || connectErrorShown)) showGlobalError("offline");
     }, CONNECT_DEADLINE);
   }
@@ -3153,6 +3152,7 @@
     el.globalErrorText.textContent = formatErrorCopy(code, message);
     const retry = code === "offline" || code === "not_ready";
     el.btnErrorSignin.hidden = !(code === "auth" || retry);
+    el.btnErrorSignin.disabled = false;
     el.btnErrorSignin.textContent = retry ? "Try again" : "Sign in";
     el.btnErrorSignin.dataset.action = retry ? "retry-connect" : "signin";
     connectErrorShown = retry;
@@ -3179,11 +3179,21 @@
     reconnecting = true;
     reconnectInvokePending = true;
     reconnectHadError = connectErrorShown;
-    invoke(bridge.loggedIn && !bridge.ready ? "chat_new" : "chat_status").catch(() => {
-      reconnecting = false;
-      reconnectHadError = false;
-    }).finally(() => { reconnectInvokePending = false; });
+    if (connectErrorShown) { el.btnErrorSignin.disabled = true; el.btnErrorSignin.textContent = "Reconnecting…"; }
+    // No status event may ever arrive, and armConnectDeadline does nothing while
+    // the bridge still reads as ready, so every attempt ends on its own.
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(endReconnectAttempt, CONNECT_DEADLINE);
+    invoke(bridge.loggedIn && !bridge.ready ? "chat_new" : "chat_status").catch(endReconnectAttempt).finally(() => { reconnectInvokePending = false; });
     armConnectDeadline();
+  }
+
+  function endReconnectAttempt() {
+    clearTimeout(reconnectTimer);
+    reconnecting = false;
+    reconnectHadError = false;
+    el.btnErrorSignin.disabled = false;
+    if (connectErrorShown) el.btnErrorSignin.textContent = "Try again";
   }
 
   window.addEventListener("online", () => {
