@@ -754,6 +754,19 @@ html[data-motion="off"] .history-panel { transition: none; }
 .attachments .attachment-thumbnail { width: 22px; height: 22px; }
 
 .feature-list { border-radius: 16px; padding: 8px; margin: 0 var(--bar-inset) 8px; max-height: 340px; display: flex; flex-direction: column; }
+/* Closing picker: fade and collapse back into the bar instead of vanishing. */
+.feature-list[data-leaving] {
+  pointer-events: none;
+  overflow: hidden;
+  transform-origin: 50% 100%;
+  animation: feature-leave var(--t2) var(--ease-move) both;
+}
+.feature-list[data-leaving] .feature-results { overflow: hidden; }
+@keyframes feature-leave {
+  from { max-height: var(--leave-height, 340px); }
+  to { max-height: 0; margin-bottom: 0; padding-block: 0; opacity: 0; transform: translateY(4px) scale(0.98); }
+}
+html[data-motion="off"] .feature-list[data-leaving] { animation: none; }
 .feature-results { flex: 1; min-height: 0; overflow-y: auto; }
 .feature-heading { padding: 8px 8px 6px; color: var(--text-2); font-size: 12px; font-weight: 600; }
 .feature-row { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 8px; border-radius: 10px; }

@@ -1,3 +1,6 @@
+- 2026-10-31 | Paragraph stream renderer | codex/gpt-6.1-sol medium | done; parent integrated | complete-block buffering and atomic reveal; parent retained explicit stream styles and updated saved records in place; focused and wider suites PASS
+- 2026-10-31 | Paragraph stream review | opencode/deepseek-v4.1-flash-free high | done | read-only review; parent fixed stray backticks, comparison prefixes, loose-list commits and motion-off fading; added actual transcript refresh regression
+- 2026-10-31 | Paragraph stream release | parent | done | boundary/paragraph, animation, tag, history, media, math, glass, UX, feature, reasoning, presets/highlight/auth17/stream73/Rust19 PASS; release build and SHA256 verified; original running session preserved
 - 2026-10-30 00:30 | M1 bubble UI | claudeAgent/claude-opus-5-5/high | running | user-requested Opus high
 - 2026-10-30 00:30 | M2 native+bridge | codex/gpt-6.1-sol/medium | running | fit_window, settings window, chat_open
 - 2026-10-30 23:33 | M2 native+bridge | codex/gpt-6.1-sol/medium | done (interrupted at report; T0 verified) | cargo test 8/8, auth-bridge 14/14, stream-media 49/49
@@ -33,6 +36,8 @@
 - 2026-10-31 | Reasoning cross-family review | antigravity/claude-sonnet-5-5 medium | unavailable: quota exhausted for 6 days 1 hour | no review returned; parent reviewing
 - 2026-10-31 | Reasoning final integration | parent | done | live Power slider recovered and verified, default persists across restart; release hash verified and PID26764 responsive; baseline guest Stop assertion also fails on old build
 - 2026-10-31 | Merge all work into main | parent | done | Snapshot + reasoning conflict resolution, 340px combined composer fit, UI/bridge/Rust19/native Snapshot/persistence suites and release/hash PASS; no delegation
+- 2026-10-31 | Reasoning picker toggle + close animation | parent | done | opener-aware pointer-down stops the flash; t2 fade/collapse close; reasoning31, feature, history and animation suites PASS
+- 2026-10-31 | Reasoning toggle release build | parent | done | npm run build PASS; dist/QChat.exe SHA256 2773EB51..., v0.1.1, launched PID 33096 from the worktree with the saved profile
 - 2026-10-31 | Response tags parser and rendering | codex/gpt-6.1-sol medium | running | security-sensitive shared parser replaces regex handling across bridge/UI; parent researching and verifying
 - 2026-10-31 | Response tag evidence inventory | opencode/deepseek-v4.1-flash-free high | running | official-source distinction, existing bridge inventory and optional public guest asset inspection; dedicated search service disabled
 - 2026-10-31 | Response tags integration | parent | verified pending release | parser/stream72/auth17/UI/Rust19/native injection checks PASS; fixed sanitizer, nested code shields/lists and literal payload regressions
@@ -40,3 +45,4 @@
 - 2026-10-31 | Response tag evidence inventory | opencode/deepseek-v4.1-flash-free high | done | official docs and indexes checked; fresh guest bundle probe blocked by Cloudflare; no account access or model messages
 - 2026-10-31 | Response tags cross-family review | antigravity/gemini-4-argon low | done | six findings; parent fixed all and added parser/native-stream/Edge regression cases, no additional review delegates
 - 2026-10-31 | Response tags release | parent | done | final parser/stream73/auth17/all UI/history/Rust19/native checks and npm build PASS; previous exe backed up, final hash verified; running other-worktree QChat preserved, update ready for next launch after that copy quits
+- 2026-10-31 | v0.1.2 release integration | parent | verified for publication | release build/version/hash PASS; both merged PRs integrated into main; Rust19/parser/stream73/auth17/reasoning/UI/history/animation/media PASS; no delegation

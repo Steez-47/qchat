@@ -105,7 +105,7 @@ try {
   const emitDelta = (text) => emit('delta', text);
   const visible = (text) => until(`(document.querySelector('[data-role=assistant] .turn-content')?.textContent||'').includes(${JSON.stringify(text)})`, `text ${text.slice(0, 30)}`);
   const begin = async () => {
-    await open('/', { settings: { animations: 'off', autoDismiss: 0, keepHistory: true } });
+    await open('/', { settings: { v: 4, animations: 'off', autoDismiss: 0, keepHistory: true, streamStyle: 'instant' } });
     await evalJS(`__mock.hold=true`);
     const before = await evalJS(`__mock.calls.length`);
     await send('Maths fixture');

@@ -225,10 +225,10 @@
     return template.content;
   }
 
-  // While streaming, finished blocks are parsed once and left alone; only the tail is
-  // reparsed, with its unfinished syntax closed so markers never flash and then jump.
+  // Paragraph mode parses complete snapshots together so nested markup keeps its context.
+  // Other reveal styles stabilize only the unfinished tail. Both preserve unchanged nodes.
   function renderReply(entry, text, sources, streaming) {
-    if (!streaming) {
+    if (!streaming || QSettings.settings.streamStyle === "paragraph") {
       entry.stable = null;
       syncMarkdownNodes(entry.contentEl, parseReply(text, sources));
       return;
@@ -808,13 +808,28 @@
     const news = comparable(latest.text) !== comparable(shown.text) || /qchat-web:/.test(latest.text) && !/qchat-web:/.test(shown.text) ||
       (latest.media?.length && !turnNodes.get(shown.id)?.mediaEl?.querySelector(".stored-media"));
     if (!news) return;
-    const scroller = turnNodes.get(shown.id)?.scroller;
-    const reading = userScrolledUp && scroller ? scroller.scrollTop : null;
-    dismissExchange(true);
-    showCachedResponse(chat);
-    if (reading !== null) {
-      const entry = responseEntry();
-      if (entry) { userScrolledUp = true; entry.scroller.scrollTop = reading; syncScrollState(entry); }
+    const entry = turnNodes.get(shown.id);
+    if (!entry) return;
+    const reading = userScrolledUp || QSettings.settings.followStream === false;
+    const top = entry.scroller.scrollTop;
+    const edge = entry.scroller.getBoundingClientRect().top;
+    const anchor = reading ? Array.from(entry.contentEl.children).find(node => node.getBoundingClientRect().bottom > edge) : null;
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    shown.text = latest.text;
+    shown.sources = latest.sources?.length ? latest.sources : shown.sources;
+    if (entry.reveal) entry.reveal.visible = shown.text;
+    if (latest.media?.length && !entry.mediaEl.querySelector(".stored-media")) {
+      entry.mediaEl.replaceChildren(...latest.media.map(file => storedMediaCard(file, chat.conversationId)));
+      entry.row.toggleAttribute("data-media-first", latest.media.some(file => file.before));
+      entry.row.toggleAttribute("data-wide", true);
+    }
+    renderSources(shown);
+    renderTurnNow(shown.id);
+    syncBubbleSize(entry);
+    if (reading) {
+      userScrolledUp = true;
+      entry.scroller.scrollTop = anchor?.isConnected ? top + anchor.getBoundingClientRect().top - anchorTop : top;
+      syncScrollState(entry);
     }
   }
 
@@ -897,13 +912,14 @@
 
   function showReasoningPicker() {
     if (isBusy()) return;
+    if (featureListAnchor === el.btnReasoning) { closeFeatureList(); return; }
     const selected = effectiveReasoning();
     showFeatureList("Reasoning", REASONING_LEVELS.map((value) => ({
       title: REASONING_LABELS[value],
       meta: value === "low" ? "Instant / Light" : value === "medium" ? "Standard" : "Extended",
       selected: value === selected,
       run: () => chooseReasoning(value)
-    })));
+    })), false, el.btnReasoning);
   }
 
   function storedChat(chat, capped = false) {
@@ -1735,7 +1751,7 @@
   // Keep transport snapshots separate from their paced presentation. The full
   // text remains on the turn for history/copy even while the visible tail drains.
   const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-  const streamStyle = () => QSettings.motionOn ? QSettings.settings.streamStyle || "paragraph" : "instant";
+  const streamStyle = () => QSettings.settings.streamStyle || "paragraph";
 
   // New words surface from low contrast. This is paint only (the CSS Highlight API), so it
   // adds no DOM, keeps selections intact and cannot change the layout of the text around it.
@@ -1749,7 +1765,7 @@
   }
 
   function noteRevealed(entry) {
-    if (!fadeHighlights || !["fade", "paragraph"].includes(streamStyle())) return;
+    if (!QSettings.motionOn || !fadeHighlights || !["fade", "paragraph"].includes(streamStyle())) return;
     const length = entry.contentEl.textContent.length;
     const fade = entry.fade ||= { length: 0, recent: [], running: false };
     if (length > fade.length) fade.recent.push({ count: Math.min(length - fade.length, 800), at: performance.now() });
@@ -1810,7 +1826,7 @@
     const chat = chats.current;
     if (turn.chatKey === chat.key && chat.conversationId && bridge.loggedIn && !chat.temporary) {
       turn.restored = true;
-      // Stops as soon as the bubble has been rebuilt from the record.
+      // Refresh the existing bubble with saved images/corrections without resetting its viewport.
       const read = () => { if (chats.current === chat && !isBusy() && turns.some(t => t.id === turn.id)) { backfilled.delete(chat); backfillHistory(chat); } };
       setTimeout(read, 700);
       if (turn.rich) { setTimeout(read, 2200); setTimeout(read, 6000); }
@@ -1834,7 +1850,7 @@
       // Live tokens can be rough until a block is finished, so only finished blocks show.
       clearTimeout(state.holdTimer);
       state.holdTimer = null;
-      return window.QStream.revealStops(turn.backendDone ? turn.text : turn.text.slice(0, window.QStream.completeBoundary(turn.text)));
+      return [turn.backendDone ? turn.text.length : window.QStream.completeBoundary(turn.text)];
     }
     if (style === "type") {
       const stops = [];
@@ -1885,7 +1901,16 @@
       state.index = state.stops.findIndex(stop => stop > shown);
       if (state.index < 0) state.index = state.stops.length;
     }
-    if (streamStyle() === "instant") {
+    if (streamStyle() === "paragraph") {
+      cancelReveal(entry);
+      state.visible = turn.text.slice(0, state.stops.at(-1) || 0);
+      state.index = state.stops.length;
+      if (state.visible) revealResponse(turn);
+      renderTurnNow(turn.id);
+      finishReveal(turn, entry);
+      return;
+    }
+    if (streamStyle() === "instant" || !QSettings.motionOn) {
       flushReveal(turn);
       if (turn.text) revealResponse(turn);
       renderTurnNow(turn.id);
@@ -2275,7 +2300,7 @@
   allChatsTab.title = "All chats (Ctrl+P)";
   allChatsTab.setAttribute("aria-label", "All chats");
   allChatsTab.append(makeIcon("\uE81C"));
-  allChatsTab.addEventListener("click", () => showChatList());
+  allChatsTab.addEventListener("click", () => showChatList(allChatsTab));
 
   function tabsVisible() {
     const s = QSettings.settings;
@@ -2390,9 +2415,40 @@
   );
   const featureList = make("section", "feature-list glass");
   featureList.hidden = true; featureList.tabIndex = -1; el.slashMenu.before(featureList);
-  function closeFeatureList() { featureList.hidden = true; queueSizes(); el.promptInput.focus(); }
-  function showFeatureList(title, rows, searchable = false) {
+  // The control that opened the list. A pointer-down on it must not close the
+  // list, or its click would reopen it and the panel would flash.
+  let featureListAnchor = null;
+  let featureListHideTimer = null;
+  function hideFeatureList() {
+    clearTimeout(featureListHideTimer);
+    featureListHideTimer = null;
+    featureList.hidden = true;
+    featureList.removeAttribute("data-leaving");
+    featureList.style.removeProperty("--leave-height");
+    featureListAnchor = null;
+    queueSizes();
+  }
+  function closeFeatureList() {
+    featureListAnchor = null;
+    if (featureList.hidden || featureList.hasAttribute("data-leaving")) return;
+    clearTimeout(featureListHideTimer);
+    featureListHideTimer = null;
+    if (QSettings.motionOn) {
+      // Fade and collapse first; the list leaves the layout only once it is gone.
+      featureList.style.setProperty("--leave-height", `${featureList.offsetHeight}px`);
+      featureList.setAttribute("data-leaving", "");
+      featureListHideTimer = setTimeout(hideFeatureList, QSettings.timings.t2 + 30);
+    } else hideFeatureList();
+    queueSizes();
+    el.promptInput.focus();
+  }
+  function showFeatureList(title, rows, searchable = false, anchor = null) {
     closeSlashMenu();
+    clearTimeout(featureListHideTimer);
+    featureListHideTimer = null;
+    featureList.removeAttribute("data-leaving");
+    featureList.style.removeProperty("--leave-height");
+    featureListAnchor = anchor;
     const keysCard = typeof rows !== "function" && rows.some(row => row.keys);
     featureList.classList.toggle("feature-keys", keysCard);
     featureList.replaceChildren(); featureList.hidden = false;
@@ -2477,11 +2533,16 @@
     return [...local, ...account];
   }
 
-  function showChatList() {
+  function showChatList(anchor = null) {
     loadAccountChats();
-    showFeatureList("Chats", chatRows, true);
+    showFeatureList("Chats", chatRows, true, anchor);
   }
-  document.addEventListener("pointerdown", e => { if (!featureList.hidden && !featureList.contains(e.target)) closeFeatureList(); });
+  document.addEventListener("pointerdown", e => {
+    if (featureList.hidden || featureList.contains(e.target)) return;
+    // Let the opener's click decide; closing here would flash before it runs.
+    if (featureListAnchor?.contains(e.target)) return;
+    closeFeatureList();
+  });
   window.addEventListener("keydown", e => {
     if (e.key === "Escape" && !featureList.hidden) { e.stopImmediatePropagation(); e.preventDefault(); closeFeatureList(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); showChatList(); }
@@ -2742,7 +2803,7 @@
   // otherwise repeat every streamed snapshot.
   el.zone.setAttribute("aria-live", "off");
   el.historyButton.addEventListener("click", () => setHistoryOpen(!historyOpen));
-  el.btnAllChats.addEventListener("click", () => showChatList());
+  el.btnAllChats.addEventListener("click", () => showChatList(el.btnAllChats));
   el.historyPanel.addEventListener("scroll", () => {
     syncHistoryEdge();
     if (el.historyPanel.scrollHeight - el.historyPanel.scrollTop - el.historyPanel.clientHeight <= 2) historyHeld = false;

@@ -265,7 +265,7 @@ try {
   check('and once it has finished',await evalJS(`!(${plain}).includes('Entity') && (${plain}).includes('More text here.')`));
   const whole=(input)=>evalJS(`QStream.completeBoundary(${JSON.stringify(input)})`);
   check('a paragraph is finished by its blank line',await whole('One line\nstill going')===0 && await whole('One.\n\nTwo')===6);
-  check('list items and code lines finish at their newline',await whole('- one\n- tw')===6 && await whole('```js\nconst a;\nconst')===15);
+  check('lists and fenced code wait for a complete block',await whole('- one\n- tw')===0 && await whole('```js\nconst a;\nconst')===0 && await whole('```js\nconst a;\n```\n\n')==='```js\nconst a;\n```\n\n'.length);
 
   // Pressing a button must not disturb anything else, at any point in its animation.
   await open('/',{settings:{animations:'on',autoDismiss:0}});
@@ -309,10 +309,10 @@ try {
   const stops=await evalJS(`QStream.revealStops('Hello brave new world')`);
   check('reveal stops carry their trailing space',JSON.stringify(stops)==='[6,12,16,21]',JSON.stringify(stops));
 
-  await open('/',{settings:{animations:'off',autoDismiss:0}});
+  await open('/',{settings:{v:4,animations:'off',autoDismiss:0,streamStyle:'word'}});
   await evalJS(`__mock.hold=true`);await send('Reduced motion');await until(`__mock.last('chat_send')`);
   await emit('delta',burst);await sleep(30);
-  check('reduced motion displays snapshots without a typing delay',await evalJS(`(${plain})===${JSON.stringify(burst)}`));
+  check('reduced motion displays word-mode snapshots without a typing delay',await evalJS(`(${plain})===${JSON.stringify(burst)}`));
   check('no runtime errors',problems.length===0,problems.join(' | '));
 } catch (e) { console.error(e); if (problems.length) console.error("console:", problems.slice(0, 5).join(" | ")); failed++; }
 finally {

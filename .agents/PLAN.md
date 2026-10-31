@@ -1,3 +1,22 @@
+## Paragraph streaming renderer (2026-10-31)
+
+Goal: reveal complete formatted paragraphs/blocks as streaming snapshots arrive, preserve finished content and the reader's scroll position through completion and history refresh.
+
+| id | task | model | owns | status |
+|---|---|---|---|---|
+| P1 | Complete-block buffering, atomic reveal and regression checks | Sol medium + parent integration | ui/stream-text.js, ui/app.js, tools/paragraph-stream-ui-test.mjs, tools/stream-text-test.mjs | done |
+| P2 | Integration, scroll/history review, runtime suites and release | parent + DeepSeek read-only review | integration and project logs | done |
+
+Complete paragraphs now appear atomically even with motion off; incomplete fences, nested tags, display math and loose lists remain buffered. Stop/error/DONE flush the final tail. The stream and completed parse share full context in paragraph mode, and unchanged DOM/selection survives. Saved transcript corrections and images update the existing bubble and preserve a reader's position. Explicit word/type/fade modes retain their stabilizer. Cross-family review found stray-backtick, comparison, loose-list and reduced-motion issues; fixed with regression fixtures. Existing media/math tests now explicitly select instant streaming when inspecting incomplete snapshots rather than relying on the old motion-off bypass.
+
+Verified: new boundary and paragraph suites (including actual delayed transcript event and streaming screenshot inspection); animation, response tags/parser, history, media, math, glass, UX, feature, reasoning, presets, highlight, auth17, stream73 and Rust19 PASS. npm run build PASS; dist/QChat.exe SHA256 63AFE3AF5CF17A716DE3E24509C49A8A914E758B4788B0102E22CD383A5D2520. Saved-account streaming was not exercised; original running session preserved and its previous executable retained in .tmp/QChat-before-paragraph-20261031-184000.exe. Restart QChat to load the new build.
+
+## Reasoning picker close animation (2026-10-31)
+
+Owner reported the reasoning picker flashing closed and staying open on a second click. Cause: the document pointer-down closed the shared feature list before the button's click reopened it. The list now remembers its opener, so pointer-down on the opener is left to its click; the reasoning button toggles its own picker closed. Closing (button toggle, pointer away, Escape, choosing a row) now fades and collapses the panel over `--t2` before it leaves the layout, while motion-off hides immediately. All chats triggers register as openers so they cannot flash either.
+
+Verified: reasoning UI 31 checks (5 new toggle and close-animation checks), feature UI, history UI and animation UI ALL PASS; JavaScript syntax checks pass. Release build PASS: `dist/QChat.exe` (SHA256 `2773EB51…`, v0.1.1) launched from this worktree as PID 33096 with the saved profile; the previous instance was already closed.
+
 ## Main consolidation (2026-10-31)
 
 Owner requested merging all work into main and reopening QChat. Snapshot and reasoning are the only unmerged feature branches; older feature and polish branches are already ancestors. Preserved both composer state updates and made the icon controls/picker padding compact at narrow widths so the 340px bar still leaves at least 150px for the prompt. The narrow-layout regression covers Snapshot alongside reasoning.
@@ -276,3 +295,9 @@ Review: Argon returned six findings, all fixed and covered: adjacent inline spac
 Verified after review fixes: parser unit PASS; stream73/auth17/reasoning bridge; animation59/media48/features46/UX48/presets15/math28/highlight11/Snapshot27/reasoning UI26/glass160/history ALL PASS. Focused Edge UI8 checks include streaming, XSS, four real KaTeX inequalities, nested code, numbered lists and generic prose. Screenshot .tmp/tag-shots/response-tags.png inspected. Rust19 PASS; debug build and native guest smoke PASS (both WebView parser injection and actual rich reply rendering). npm run build PASS. dist/QChat.exe SHA256 91784389805D2DDABC2328B164D54361B970C63D54CFEC301B0BB4D236B38FEB matches compiled release. Previous executable preserved at .tmp/QChat-before-tags-20261031-180745.exe. Existing root-process PID38840 had exited; launch attempts correctly forwarded to the globally running QChat PID33096 from another worktree (.t3/worktrees/qchat/t3-c361152a/dist/QChat.exe). That session was preserved; the new release is ready but will load only after quitting the running copy and opening this checkout's dist/QChat.exe. No account chat messages were sent; saved profile preserved.
 
 Limitations: guest bundle inventory was blocked by Cloudflare; no exhaustive private component registry verified. Proprietary interactive widgets need separate data channels and remain readable fallbacks. Research/probe in tools/tag-research.md distinguishes documented XML/citations, historical DIL observations and compatibility aliases. Delegation: one Sol implementation, one DeepSeek research, one Argon review. Local feature branch feat/response-tags; no publication.
+
+## v0.1.2 beta release (2026-10-31)
+
+User authorized publishing v0.1.2 with the two recent merged PRs. PR #3 (reasoning picker toggle/close animation) was on main; PR #2 (safe response-tag parsing) had merged into t3/add-window-snapshot. Integrated that branch into main, preserving both ledger histories and the clean automatic UI merge. Bumped npm, Tauri and Cargo versions and lockfiles to 0.1.2. Release follows v0.1.1: portable unsigned Windows x64 QChat.exe plus SHA256SUMS.txt, marked prerelease.
+
+Verified combined source: Rust19, parser, stream73, auth17, reasoning bridge, response-tag UI8, reasoning UI31, feature46, history, animation59 and media48 ALL PASS. Response-tag browser screenshot inspected. Signed-in chat E2E not run. npm run build PASS; EXE ProductVersion 0.1.2 and SHA256 match compiled release. Publication prepared with executable and checksum; see GitHub v0.1.2 release. No delegates; tightly coupled release work. Referenced .agents/ORCHESTRATOR.md is absent in this checkout.

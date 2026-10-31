@@ -61,6 +61,8 @@ try {
   await cdp('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
   for (let i = 0; i < 80; i++) { if (await evalJS(`!!window.test?.handlers.bridge`)) break; await sleep(50); }
   const results = await evalJS(`(async()=>{
+    // These fixtures inspect each media/security snapshot; paragraph buffering has its own suite.
+    QSettings.apply(document.documentElement,{...QSettings.settings,streamStyle:'instant'});
     const results=[]; const check=(name,ok)=>results.push({name,ok:!!ok});
     const $=id=>document.getElementById(id); const wait=ms=>new Promise(r=>setTimeout(r,ms));
     const until=async fn=>{for(let i=0;i<100;i++){if(fn())return;await wait(10);}throw Error('UI wait timed out');};
