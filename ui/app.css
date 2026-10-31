@@ -256,6 +256,9 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
 .tool-btn[data-action="dismiss-turn"] .icon { font-size: 10px; }
 .tool-btn:hover { background: var(--fill-2); color: var(--text-1); }
 .tool-btn:focus-visible { outline-offset: -2px; }
+.turn-row[data-role="user"] > .bubble-tools { transform: none; transition: opacity var(--t1) linear; }
+.user-copy-icon::before { content: "\e8c8"; }
+.user-edit-icon::before { content: "\e70f"; }
 
 /* The topmost reply reserves room for its floating toolbar inside the stack, so
    the window height measured on the stack already accounts for it. The toolbar

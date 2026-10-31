@@ -598,6 +598,23 @@
     return items.filter(hasTurnContent);
   }
 
+  function userTools(item) {
+    const tools = make("div", "bubble-tools glass glass-tiny");
+    const copy = make("button", "tool-btn");
+    copy.type = "button"; copy.dataset.action = "copy-user";
+    copy.title = "Copy"; copy.setAttribute("aria-label", "Copy prompt");
+    const copyIcon = make("span", "icon user-copy-icon");
+    copyIcon.setAttribute("aria-hidden", "true"); copy.append(copyIcon);
+    const edit = make("button", "tool-btn");
+    edit.type = "button"; edit.dataset.action = "edit-prompt";
+    edit.title = "Edit in composer"; edit.setAttribute("aria-label", edit.title);
+    const editIcon = make("span", "icon user-edit-icon");
+    editIcon.setAttribute("aria-hidden", "true"); edit.append(editIcon);
+    edit.hidden = !(item.text || item.selectionTexts?.length);
+    tools.append(copy, edit);
+    return tools;
+  }
+
   // The same bubble markup as the live view, without its per-reply viewport:
   // the panel is the only scroller, so a message never gets its own cutoff.
   function createHistoryRow(item) {
@@ -610,7 +627,7 @@
     if (item.role === "user") {
       const bubble = make("div", "bubble bubble-user glass glass-tiny");
       bubble.append(content, media);
-      row.append(bubble);
+      row.append(bubble, userTools(item));
     } else {
       const bubble = make("div", "bubble bubble-response glass");
       const inner = make("div", "bubble-inner turn-body");
@@ -666,6 +683,9 @@
       if (row._historyFingerprint === fingerprint) continue;
       row._historyFingerprint = fingerprint;
       row._copyText = item.text;
+      row._userTurn = item.role === "user" ? item : null;
+      const edit = row.querySelector('[data-action="edit-prompt"]');
+      if (edit) edit.hidden = !(item.text || item.selectionTexts?.length);
       row.toggleAttribute("data-wide", /\n/.test(item.text));
       const content = row.querySelector(".turn-content");
       const template = document.createElement("template");
@@ -1781,7 +1801,8 @@
     thinking.setAttribute("aria-label", `${providerName()} is thinking`);
     thinking.append(make("span"), make("span"), make("span"));
 
-    row.append(bubble, thinking);
+    row._userTurn = turn;
+    row.append(bubble, userTools(turn), thinking);
     turnNodes.set(turn.id, { row, contentEl, mediaEl, mediaItems: new Map() });
     return row;
   }
@@ -3221,6 +3242,40 @@
     commandFeedbackTimer = setTimeout(hideCommandFeedback, 2200);
   }
 
+  function editUserPrompt(row) {
+    const item = row?._userTurn;
+    if (!item || (item.chatKey && item.chatKey !== chats.current.key)) return;
+    const input = el.promptInput;
+    const text = item.text || "";
+    const replaced = Boolean(input.value && input.value !== text);
+    const notices = [];
+    if (input.value !== text) {
+      input.focus();
+      input.select();
+      let inputFired = false;
+      const markInput = () => { inputFired = true; };
+      input.addEventListener("input", markInput, { once: true });
+      let inserted = false;
+      try { inserted = document.execCommand("insertText", false, text); } catch {}
+      input.removeEventListener("input", markInput);
+      if (!inserted) input.setRangeText(text, 0, input.value.length, "end");
+      if (!inputFired) input.dispatchEvent(new Event("input", { bubbles: true }));
+      if (replaced) notices.push("Replaced draft, Ctrl+Z restores it");
+    }
+    const selections = chats.current.selectionTexts;
+    const selectionCount = selections.length;
+    for (const selection of cleanSelections(item.selectionTexts)) if (!selections.includes(selection)) selections.push(selection);
+    if (selections.length !== selectionCount) {
+      renderAttachments();
+      updateIdleChips();
+      updateDraft(true);
+    }
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    if (item.hadAttachments || item.attachments?.length || item.hasMedia || item.media?.length) notices.push("Attachments aren't included");
+    if (notices.length) showCommandFeedback(notices.join(" · "));
+  }
+
   async function copyConversation() {
     hideCommandFeedback();
     const generation = copyGeneration;
@@ -3332,7 +3387,11 @@
       if (url) invoke("open_external", { url }).catch(() => {});
     }
     const button = e.target.closest("[data-action]");
-    if (button?.dataset.action === "copy-code") {
+    if (button?.dataset.action === "edit-prompt") {
+      editUserPrompt(button.closest(".history-row"));
+    } else if (button?.dataset.action === "copy-user") {
+      copyWithFeedback(button.closest(".history-row")?._userTurn?.text || "", button);
+    } else if (button?.dataset.action === "copy-code") {
       const code = button.closest(".code-block")?.querySelector("pre code");
       if (code) copyWithFeedback(code.textContent, button);
     } else if (button?.dataset.action === "history-copy") {
@@ -3372,7 +3431,11 @@
     const actionBtn = e.target.closest("[data-action]");
     if (!actionBtn) return;
     const action = actionBtn.dataset.action;
-    if (action === "copy-code") {
+    if (action === "edit-prompt") {
+      editUserPrompt(actionBtn.closest(".turn-row"));
+    } else if (action === "copy-user") {
+      copyWithFeedback(actionBtn.closest(".turn-row")?._userTurn?.text || "", actionBtn);
+    } else if (action === "copy-code") {
       const codeEl = actionBtn.closest(".code-block")?.querySelector("pre code");
       if (codeEl) copyWithFeedback(codeEl.textContent, actionBtn);
     } else if (action === "copy-turn") {
@@ -3479,15 +3542,17 @@
 
   el.promptInput.addEventListener("keydown", (e) => {
     if (e.isComposing) return;
-    if (!slashOpen() && prompts.length && (e.key === "ArrowUp" || e.key === "ArrowDown") && (!el.promptInput.value || recallIndex >= 0)) {
+    const recalled = prompts.length ? prompts : (chats.current.transcript.filter(item => item.role === "user" && item.text?.trim()).map(item => item.text));
+    if (!recalled.length && !prompts.length && chats.current.lastPrompt?.trim()) recalled.push(chats.current.lastPrompt);
+    if (!slashOpen() && recalled.length && (e.key === "ArrowUp" || e.key === "ArrowDown") && (!el.promptInput.value || recallIndex >= 0)) {
       if (recallIndex >= 0 && el.promptInput.value.includes("\n")) {
         const input = el.promptInput;
         if ((e.key === "ArrowUp" && input.value.slice(0, input.selectionStart).includes("\n")) ||
             (e.key === "ArrowDown" && input.value.slice(input.selectionEnd).includes("\n"))) return;
       }
       e.preventDefault();
-      recallIndex = e.key === "ArrowUp" ? Math.min(prompts.length - 1, recallIndex + 1) : Math.max(-1, recallIndex - 1);
-      el.promptInput.value = recallIndex < 0 ? "" : prompts[prompts.length - 1 - recallIndex] || "";
+      recallIndex = e.key === "ArrowUp" ? Math.min(recalled.length - 1, recallIndex + 1) : Math.max(-1, recallIndex - 1);
+      el.promptInput.value = recallIndex < 0 ? "" : recalled[recalled.length - 1 - recallIndex] || "";
       updateDraft(true); autoResizePrompt(); return;
     }
     if (slashOpen()) {
