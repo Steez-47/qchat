@@ -2707,7 +2707,10 @@
 
   function syncTabsDisabled() {
     const busy = isBusy();
-    for (const tab of el.tabs.children) tab.disabled = busy;
+    for (const tab of el.tabs.children) {
+      if (tab === allChatsTab) tab.disabled = busy;
+      else tab.setAttribute("aria-disabled", String(busy));
+    }
   }
 
   function makeProviderLogo(provider) {
@@ -2720,7 +2723,31 @@
     svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("class", "icon"); svg.setAttribute("aria-hidden", "true"); svg.dataset.provider = provider || "chatgpt";
     const path = document.createElementNS(svg.namespaceURI, "path"); path.setAttribute("d", paths[provider] || paths.chatgpt); svg.append(path); return svg;
   }
+  let tabStopKey = null;
+  el.tabs.addEventListener("keydown", (e) => {
+    const tab = e.target.closest(".tab");
+    if (!tab || !el.tabs.contains(tab) || e.isComposing || e.keyCode === 229) return;
+    const tabs = [...el.tabs.querySelectorAll(".tab")];
+    const index = tabs.indexOf(tab);
+    let next = index;
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); el.promptInput.focus(); return; }
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (!isBusy()) void switchToChat(tab.dataset.key); return; }
+    if (tabs.length < 2) return;
+    if (e.key === "ArrowRight") next = (index + 1) % tabs.length;
+    else if (e.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = tabs.length - 1;
+    else return;
+    e.preventDefault();
+    tabStopKey = tabs[next].dataset.key;
+    tabs.forEach((item) => { item.tabIndex = item === tabs[next] ? 0 : -1; });
+    tabs[next].focus();
+  });
   function renderTabs() {
+    const focused = document.activeElement?.closest?.(".tab");
+    const oldTabs = [...el.tabs.querySelectorAll(".tab")];
+    const focusedIndex = oldTabs.indexOf(focused);
+    const focusedKey = focusedIndex >= 0 ? focused.dataset.key : null;
     const visible = tabsVisible();
     el.tabs.hidden = !visible;
     if (!visible) { el.tabs.replaceChildren(); queueSizes(); return; }
@@ -2733,6 +2760,7 @@
         tab = make("button", "tab glass glass-tiny pop");
         tab.type = "button";
         tab.dataset.key = chat.key;
+        tab.addEventListener("focus", () => { tabStopKey = tab.dataset.key; for (const item of el.tabs.querySelectorAll(".tab")) item.tabIndex = item === tab ? 0 : -1; });
         tab.style.setProperty("--i", String(fresh++));
         tab.append(makeProviderLogo(chat.provider), make("span", "tab-title"), make("span", "tab-label"));
         tab.addEventListener("animationend", () => tab.classList.remove("pop"), { once: true });
@@ -2749,7 +2777,11 @@
       tab.setAttribute("aria-label", `Switch to ${providerName(chat)} chat: ${title}, last active ${when}`);
       return tab;
     });
+    const stop = nodes.find((tab) => tab.dataset.key === (focusedKey || tabStopKey)) || nodes[Math.min(Math.max(focusedIndex, 0), nodes.length - 1)];
+    tabStopKey = stop?.dataset.key || null;
+    nodes.forEach((tab) => { tab.tabIndex = tab === stop ? 0 : -1; });
     el.tabs.replaceChildren(...nodes, allChatsTab);
+    if (focusedKey && stop) stop.focus();
     syncTabsDisabled();
     queueSizes();
   }
