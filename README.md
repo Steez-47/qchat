@@ -16,7 +16,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - Unsent drafts recover after a reload or restart when local history is enabled. Temporary chats keep their drafts out of saved history.
 - `/rename` changes the current chat's name in QChat. Enter saves, Escape cancels, and your draft stays intact.
 - A connection error retries when the network returns or QChat regains focus, keeping the draft, staged files and current conversation. Try again is available for manual recovery.
-- `/model` picks a ChatGPT model on a signed-in account. `/temp` starts a temporary chat kept out of QChat's saved history. Sending requires confirmation of the provider's Temporary mode; a refusal preserves the draft and files.
+- `/model` picks a ChatGPT model on a signed-in account. **Ctrl+Shift+N** or `/temp` starts a temporary chat kept out of QChat's saved history. Sending requires confirmation of the provider's Temporary mode; a refusal preserves the draft and files.
 - Hover a reply to copy it, retry it or open it in ChatGPT. Up arrow recalls earlier prompts.
 - Your prompts have Copy and Edit in composer actions. Editing loads the prompt and quoted selections so you can revise and send it; reattach files when needed. Ctrl+Z recovers a draft replaced by an edit.
 - Removing recent chats or clearing local chats offers Undo for six seconds.

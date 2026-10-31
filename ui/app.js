@@ -2777,6 +2777,14 @@
     el.promptInput.focus();
   }
 
+  async function startTemporaryChat() {
+    await startNewChat(false);
+    chats.current.temporary = true;
+    setModeLabel("Temporary");
+    pageSync = freshInPage(chats.current);
+    pageSync.catch(() => {});
+  }
+
   // ---------------------------------------------------------------------------
   // 10. Recent-chat tabs
   // ---------------------------------------------------------------------------
@@ -2965,14 +2973,14 @@
       } catch (_) { showGlobalError(null,"Couldn't read open at startup."); }
     }},
     { name: "model", icon: GLYPH.settings, desc: () => "Model", run: requestModels },
-    { name: "temp", icon: GLYPH.newChat, desc: () => "Temporary chat", run: async () => { await startNewChat(false); chats.current.temporary = true; setModeLabel("Temporary"); pageSync = freshInPage(chats.current); pageSync.catch(() => {}); } },
+    { name: "temp", icon: GLYPH.newChat, desc: () => "Temporary chat", run: startTemporaryChat },
     { name: "chats", icon: GLYPH.clock, desc: () => "Chats", run: showChatList },
     { name: "keys", icon: GLYPH.settings, desc: () => "Keyboard shortcuts", run: async () => {
       let hotkey = "Alt+Q"; try { hotkey = await invoke("get_hotkey") || hotkey; } catch (_) {}
       let selectionKey = "Ctrl+Alt+Q"; try { selectionKey = await invoke("get_selection_hotkey"); } catch (_) {}
       const shortcuts = [[selectionKey || "Disabled", "Ask about selection"], [hotkey, "Show QChat"], [QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter", "Send"], ["Shift+Enter", "New line"], ["Esc", "Close"], ["Ctrl+N", "New chat"], ["Ctrl+K", "Menu"], ["Ctrl+P", "Chats"], ["Ctrl+.", "Stop"], ["ArrowUp / ArrowDown", "Recall prompts"], ["Paste / drop", "Attach files"]];
       shortcuts.splice(8, 0, ["Ctrl+F", "Find in conversation"], ["F3 / Shift+F3", "Next / previous match"]);
-      shortcuts.push(["Ctrl+End", "Jump to latest"], ["Ctrl+Shift+C", "Copy reply"], ["Ctrl+Shift+X", "Copy last code block"]);
+      shortcuts.push(["Ctrl+Shift+N", "Temporary chat"], ["Ctrl+End", "Jump to latest"], ["Ctrl+Shift+C", "Copy reply"], ["Ctrl+Shift+X", "Copy last code block"]);
       showFeatureList("Keyboard shortcuts", shortcuts.map(([key, action]) => ({ keys: key, title: action })));
     } }
   );
@@ -4115,6 +4123,13 @@
       e.preventDefault();
       stopStreaming();
     } else if ((e.ctrlKey || e.metaKey) && (e.key === "n" || e.key === "N")) {
+      if (e.shiftKey) {
+        const target = e.target;
+        if (e.altKey || e.repeat || (target instanceof Element && target !== el.promptInput && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'))) return;
+        e.preventDefault();
+        void startTemporaryChat();
+        return;
+      }
       e.preventDefault();
       startNewChat(true);
     }
