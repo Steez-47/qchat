@@ -10,8 +10,9 @@ Goal: add useful compact features, refine and test each one, commit locally, the
 | O4 | Recover unsent drafts across reload and quit | Terra high + parent, Argon review | ui/app.js, tools/draft-ui-test.mjs, tools/persist-e2e.mjs | done |
 | O5 | Find text in long conversations | Terra matcher, parent UI/integration, Terra review | ui/find*.js, ui/app.*, ui/index.html, tools/find* | done |
 | O6 | Reversible local chat removal | companion Claude thread | ui/app.js, tools/chat-undo-ui-test.mjs | done - integrated 6e84bdb |
-| O7 | Paste anywhere in popup | companion Claude thread | branch t3/paste-anywhere-popup, 1ceada0 | peer verified; waiting to integrate after O5 |
-| O8 | Edit and resend messages | companion Claude thread | separate worktree | in progress per coordination note |
+| O7 | Paste anywhere in popup | companion Claude thread | ui/app.js, tools/paste-anywhere-ui-test.mjs | done - integrated 2f1dd01 |
+| O8 | Edit and resend messages | companion Claude thread, Terra review, parent native checks | ui/app.js/css, tools/edit-prompt-ui-test.mjs | done - fixed e07bc81 |
+| O10 | Keyboard copy of last reply/code | companion Claude thread + Terra | separate worktree | implementation only until build handoff |
 
 Verification uses isolated headless browsers and hidden native profiles. Build to a separate executable; do not replace dist/QChat.exe while the owner's instance is running. Each completed feature gets its own commit. Free provider failures will be recorded; no claims of exhaustive edge-case coverage.
 
@@ -25,7 +26,11 @@ O5 verification: find UI 47 checks and native WebView2 8 checks PASS, plus match
 
 Coordination: 651f337 and 17a552b audit fixes are already on the shared branch and preserved. Root keeps O4/O5; companion owns O6 onward. Browser/native suites now run one at a time, per owner instruction. O5 leaves app.js clean after its commit so the companion can rebase and integrate O7/O8 safely.
 
-Next sequence in this checkout: draft recovery, then find-in-conversation. Owner's coordination note assigns O6 and later increments to the companion Claude thread in a separate worktree; do not duplicate O6 or touch that worktree. Integrate its verified commits only with clean affected files. Keep each increment separately verified and committed.
+Integrated candidate: e07bc81. Paste 2f1dd01 and prompt reuse 33a19c0/e73d03a were reviewed by Terra; three data-loss/copy findings were fixed in e07bc81 before building. Parent independently verified edit38 and paste17, and extended native find checks to 11 to prove actual WebView2 keyboard undo restores the exact draft and blocked insertion keeps it. Fresh debug build, Rust26 (1 ignored), find native, persistence, settings, provider, surfaces, selection, snapshot and media native suites all PASS on this candidate. Snapshot fixture checked outside the actual virtual screen; no visible windows, OS input or real clipboard writes used. Companion reports 17 UI suites PASS serially on the same code; root's remaining ten UI suites passed before this integration, with affected native/paste/edit checks repeated afterward.
+
+Production build PASS from exactly e07bc81b48686a24aea3f4f05567a301ac72f83e. Staged at dist/overnight/20261101-003952-e07bc81/QChat.exe, 6094848 bytes, ProductVersion 1.2.0, SHA256 55f2fb0bf184c5a5dfde70523a259a3415cc3c2f71b208c0bdd71fefffcb0bd0. BUILD.json and SHA256SUMS.txt sit beside it. Compiled/staged hashes match; original dist/QChat.exe hash is unchanged and PID34592 is still running. This portable checkpoint is local only. The release executable has not been launched; native runtime checks used the fresh debug build of the same code to preserve the owner's live profile/session. Signed-in/paid provider flows and real reboot startup were not retested overnight. Quit the current tray instance before opening the staged executable to load it.
+
+Next: hand browser/native test ownership back to the companion for O10 keyboard copy, then review and verify that increment before refreshing the staged build. Attachment retry is its next proposed backend increment. Do not duplicate those tasks or edit its worktrees. Keep each increment separately verified and committed, and continue preserving the running production app. The first build checkpoint is complete; the owner's ongoing feature-iteration goal remains active.
 
 ## v1.2.0: one picker, tab logos, Gemini images (2026-10-31, branch feat/v1.2)
 

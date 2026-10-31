@@ -100,3 +100,7 @@
 2026-11-01 | Search implementation review | codex/gpt-6.1-terra medium | done | sole hidden-display finding disproved by existing glass.css [hidden] !important; added actual computed-display/rect checks
 2026-11-01 | Search final integration | parent | done | matcher, find47, native8, nine serial regression suites PASS; sibling-boundary optimization measured 38ms on 3500-paragraph fixture
 2026-11-01 | Shared audit fixes | companion Claude | integrated | 651f337 and 17a552b preserved; browser test count updated for Copy/Find, no assertion weakened
+2026-11-01 | O9 edit and resend (Claude thread) | codex/gpt-6.1-terra medium | done after one re-brief | parent fixed recall overwriting drafts after a chat switch and tools covering prompts; other thread's Terra review found 3 more issues, fixed; 17 UI suites PASS serially
+2026-11-01 | Paste / prompt-reuse review | codex/gpt-6.1-terra medium | done | 3 concrete findings fixed by companion in e07bc81; strict undo, selection-only preservation and nonempty prompt copying verified
+2026-11-01 | Native integrated candidate | parent | pass | e07bc81: Rust26 (1 ignored), 8 native suites; extended native search/edit11 and independent edit38/paste17 PASS serially
+2026-11-01 | Production checkpoint | parent | built locally | e07bc81; dist/overnight/20261101-003952-e07bc81/QChat.exe; SHA256 55f2fb0bf184c5a5dfde70523a259a3415cc3c2f71b208c0bdd71fefffcb0bd0; original EXE/hash/PID34592 preserved

@@ -12,6 +12,8 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - Unsent drafts recover after a reload or restart when local history is enabled. Temporary chats keep their drafts out of saved history.
 - `/model` picks a ChatGPT model on a signed-in account. `/temp` starts a temporary chat that isn't saved.
 - Hover a reply to copy it, retry it or open it in ChatGPT. Up arrow recalls earlier prompts.
+- Your prompts have Copy and Edit in composer actions. Editing loads the prompt and quoted selections so you can revise and send it; reattach files when needed. Ctrl+Z recovers a draft replaced by an edit.
+- Removing recent chats or clearing local chats offers Undo for six seconds.
 - **Ctrl+Alt+Q** opens QChat with the text selected in the current app quoted in the box.
 - The desktop is really blurred behind the glass, and clicks pass through the empty space around it. Desktop blur can be turned off in Settings.
 - Code is highlighted and maths is rendered.
@@ -20,7 +22,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - **Gemini:** `/gemini` and `/chatgpt`, or the last row of the picker beside the prompt, switch provider. That picker sets reasoning on ChatGPT and the model on Gemini. Tabs show each chat's provider logo. Each chat stays with the provider it started on, and Settings has a default provider and a sign-in for each. Gemini loads only once you first use it.
 - **Sign in:** Settings or the tray -> Sign in. Log in once in the window that opens, and you stay signed in.
 - Without signing in it chats as a ChatGPT guest.
-- Attach files with the paperclip, paste from the clipboard, or drop them onto the chat. Attachments can be sent with or without text.
+- Attach files with the paperclip, paste from the clipboard, or drop them onto the chat. Pasting text or files outside an editing field sends them to the composer. Attachments can be sent with or without text.
 - Replies support image previews, audio/video controls, and files saved to Downloads without overwriting existing files. Unsupported previews can be opened in ChatGPT.
 - Images show thumbnails before sending and previews in the chat. **Copy image** copies pixels to the Windows clipboard. Image requests show a preparation/generation graphic, with ChatGPT's percentage when the site supplies one.
 
@@ -50,8 +52,9 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/feature-ui-test.mjs`: menus, model picker, chat search, tabs, the shortcuts card and temporary chats.
 - `node tools/conversation-copy-ui-test.mjs`: conversation copying, clipboard failures, draft selection, streaming and provider isolation.
 - `node tools/draft-ui-test.mjs`: draft recovery, send failures, privacy and pending writes across chat/provider changes.
+- `node tools/edit-prompt-ui-test.mjs`, `node tools/paste-anywhere-ui-test.mjs` and `node tools/chat-undo-ui-test.mjs`: prompt reuse, pasting around the popup and reversible local chat removal.
 - `node tools/find-text-test.mjs` and `node tools/find-ui-test.mjs`: literal Unicode search, inline/code ranges, keyboard navigation, streaming and menu/undo interactions.
-- `node tools/find-native-test.mjs`: search and highlight rendering in an isolated hidden native app. Requires a debug build.
+- `node tools/find-native-test.mjs`: search, highlight rendering and native prompt-edit undo in an isolated hidden app. Requires a debug build.
 - `node tools/math-ui-test.mjs`: maths rendering in replies.
 - `node tools/highlight-test.mjs`: code highlighting round trip, token typing and speed. Plain Node, no browser.
 - `node tools/surfaces-native-test.mjs`: blur and click-through surfaces, shortcut validation and autostart. Requires a debug build.

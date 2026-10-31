@@ -1,4 +1,4 @@
-// Real hidden WebView2 search checks. Isolated profile, local fixture only; no
+// Real hidden WebView2 search and prompt-edit checks. Isolated profile only; no
 // account messages, OS input or clipboard access.
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -79,6 +79,14 @@ try {
   await writeFile(path.join(shots,'native-find.png'),Buffer.from((await command('Page.captureScreenshot',{format:'png'})).data,'base64'));
   await key('Escape');
   check('native Escape closes search and preserves draft',await evaluate("document.getElementById('find-bar').hidden&&getComputedStyle(document.getElementById('find-bar')).display==='none'&&document.getElementById('find-bar').getClientRects().length===0&&!CSS.highlights.has('qchat-find')&&!CSS.highlights.has('qchat-find-current')&&!document.getElementById('history-panel').hidden&&document.getElementById('prompt-input').value==='Preserve this draft 🌏'&&document.activeElement.id==='prompt-input'"));
+  await evaluate("document.querySelector('#history-panel [data-id=\"native-u\"] [data-action=\"edit-prompt\"]').click()");
+  check('native prompt edit loads text without sending',await evaluate("document.getElementById('prompt-input').value==='Needle in a saved question.'&&!document.querySelector('[data-status=streaming]')&&JSON.parse(localStorage.getItem('qchat.chats')).current.transcript.length===2"));
+  await command('Input.dispatchKeyEvent',{type:'keyDown',key:'z',code:'KeyZ',windowsVirtualKeyCode:90,modifiers:2});
+  await command('Input.dispatchKeyEvent',{type:'keyUp',key:'z',code:'KeyZ',windowsVirtualKeyCode:90,modifiers:2});
+  check('native keyboard undo recovers the exact previous draft',await evaluate("document.getElementById('prompt-input').value==='Preserve this draft 🌏'"));
+  const kept=await evaluate("(()=>{const original=document.execCommand;document.execCommand=()=>false;try{document.querySelector('#history-panel [data-id=\"native-u\"] [data-action=\"edit-prompt\"]').click();return document.getElementById('prompt-input').value==='Preserve this draft 🌏'&&document.getElementById('command-feedback').textContent.includes(\"Couldn't replace your draft\")}finally{document.execCommand=original}})()");
+  check('native failed undoable insertion keeps the existing draft',kept);
+  await until("JSON.parse(localStorage.getItem('qchat.chats')).current.draft==='Preserve this draft 🌏'");
   check('native search has no runtime exceptions',problems.length===0,problems.join(' | '));
 } catch(error) {console.error('FAIL harness ::',error.message);failed++;}
 finally {
