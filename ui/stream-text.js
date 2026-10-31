@@ -47,21 +47,57 @@
     return boundary;
   }
 
-  // Everything before the returned index is finished for reading: paragraphs end at a blank
-  // line, while list items, table rows, quotes, headings and code lines end at their newline.
+  // Commit whole blocks at blank lines outside fences, math, inline code and nested tags.
   function completeBoundary(text) {
-    let fence = null, offset = 0, end = 0;
-    const lines = text.split("\n");
-    for (let i = 0; i < lines.length - 1; i++) {
-      const line = lines[i];
+    let fence = null, offset = 0, end = 0, math = null, inline = null, container = false;
+    const tags = [];
+    let skipUntil = 0;
+    for (const line of text.split("\n").slice(0, -1)) {
       const next = offset + line.length + 1;
       const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-      if (match) {
+      if (!fence && !math && !tags.length && /^ {0,3}(?:[-+*]\s|\d+[.)]\s|>)/.test(line)) container = true;
+      if (!math && !inline && !tags.length && match) {
         if (!fence) fence = { marker: match[1][0], size: match[1].length };
         else if (match[1][0] === fence.marker && match[1].length >= fence.size && !match[2].trim()) fence = null;
-        end = next;
-      } else if (fence || !line.trim() || /^\s*(?:[-*+]\s|\d+[.)]\s|>|\||#{1,6}\s)/.test(line)) {
-        end = next;
+      } else if (!fence) {
+        for (let i = Math.max(0, skipUntil - offset); i < line.length;) {
+          if (math) { if (line.startsWith(math, i)) { i += math.length; math = null; } else i += line[i] === '\\' ? 2 : 1; continue; }
+          // HTML code and inert script bodies are literal until their matching closer.
+          const raw = tags.at(-1);
+          if (/^(pre|code|script|style|iframe|svg|object|template)$/.test(raw || '') && (line[i] !== '<' || !new RegExp('^</' + raw + '\\s*>', 'i').test(line.slice(i)))) { i++; continue; }
+          const run = /^`+/.exec(line.slice(i));
+          if (run) { if (!inline) inline = run[0]; else if (inline === run[0]) inline = null; i += run[0].length; continue; }
+          if (inline) { i++; continue; }
+          const opener = line.startsWith('$$', i) ? '$$' : line.startsWith('\\[', i) ? '\\]' : line.startsWith('\\(', i) ? '\\)' : null;
+          if (opener) { math = opener; i += 2; continue; }
+          if (line[i] === '\\') { i += 2; continue; }
+          if (line[i] === '<' && /^<\/?[a-zA-Z]/.test(line.slice(i))) {
+            // Share the renderer's quote/JSX-aware tokenizer; comparisons aren't tag prefixes.
+            const at = offset + i;
+            const tag = window.QResponseTags.tagAt(text, at);
+            const semantic = tag && /^(?:[A-Z]|a$|b$|i$|s$|u$|em$|strong$|del$|ins$|mark$|sub$|sup$|span$|code$|pre$|div$|p$|box$|text$|section$|blockquote$|h[1-6]$)/.test(tag.name);
+            if (!tag || (/[\p{L}\p{N}]/u.test(text[at - 1] || '') && !tag.close && !semantic)) { i++; continue; }
+            if (tag.partial) return end;
+            const name = tag.name.toLowerCase();
+            if (tag.close) { const index = tags.lastIndexOf(name); if (index >= 0) tags.length = index; }
+            else if (!tag.self && !/^(area|base|br|col|embed|hr|img|input|meta|param|source|track|wbr|divider|asyncimage|asyncimagegroup|entity|cite|icon)$/.test(name)) tags.push(name);
+            // Skip the complete token, including any following physical lines.
+            const tokenEnd = tag.end;
+            skipUntil = tokenEnd;
+            i = tokenEnd - offset;
+            continue;
+          }
+          i++;
+        }
+        // Inline math cannot span physical lines; display math remains buffered.
+        if (math === '\\)') math = null;
+        if (!line.trim() && skipUntil <= offset) {
+          // An unmatched backtick is literal once its paragraph ends.
+          inline = null;
+          const following = container ? /^(?:[ \t\r]*\n)*([^\n]*)/.exec(text.slice(next))[1] : '';
+          const continuation = container && (!following || /^(?:\s|[-+*](?:\s|$)|\d+(?:[.)](?:\s|$)|$)|>)/.test(following));
+          if (!math && !tags.length && (!container || !continuation)) { end = next; container = false; }
+        }
       }
       offset = next;
     }

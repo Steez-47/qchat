@@ -1,3 +1,16 @@
+## Paragraph streaming renderer (2026-10-31)
+
+Goal: reveal complete formatted paragraphs/blocks as streaming snapshots arrive, preserve finished content and the reader's scroll position through completion and history refresh.
+
+| id | task | model | owns | status |
+|---|---|---|---|---|
+| P1 | Complete-block buffering, atomic reveal and regression checks | Sol medium + parent integration | ui/stream-text.js, ui/app.js, tools/paragraph-stream-ui-test.mjs, tools/stream-text-test.mjs | done |
+| P2 | Integration, scroll/history review, runtime suites and release | parent + DeepSeek read-only review | integration and project logs | done |
+
+Complete paragraphs now appear atomically even with motion off; incomplete fences, nested tags, display math and loose lists remain buffered. Stop/error/DONE flush the final tail. The stream and completed parse share full context in paragraph mode, and unchanged DOM/selection survives. Saved transcript corrections and images update the existing bubble and preserve a reader's position. Explicit word/type/fade modes retain their stabilizer. Cross-family review found stray-backtick, comparison, loose-list and reduced-motion issues; fixed with regression fixtures. Existing media/math tests now explicitly select instant streaming when inspecting incomplete snapshots rather than relying on the old motion-off bypass.
+
+Verified: new boundary and paragraph suites (including actual delayed transcript event and streaming screenshot inspection); animation, response tags/parser, history, media, math, glass, UX, feature, reasoning, presets, highlight, auth17, stream73 and Rust19 PASS. npm run build PASS; dist/QChat.exe SHA256 63AFE3AF5CF17A716DE3E24509C49A8A914E758B4788B0102E22CD383A5D2520. Saved-account streaming was not exercised; original running session preserved and its previous executable retained in .tmp/QChat-before-paragraph-20261031-184000.exe. Restart QChat to load the new build.
+
 ## Reasoning picker close animation (2026-10-31)
 
 Owner reported the reasoning picker flashing closed and staying open on a second click. Cause: the document pointer-down closed the shared feature list before the button's click reopened it. The list now remembers its opener, so pointer-down on the opener is left to its click; the reasoning button toggles its own picker closed. Closing (button toggle, pointer away, Escape, choosing a row) now fades and collapses the panel over `--t2` before it leaves the layout, while motion-off hides immediately. All chats triggers register as openers so they cannot flash either.

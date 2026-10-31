@@ -1,3 +1,6 @@
+- 2026-10-31 | Paragraph stream renderer | codex/gpt-6.1-sol medium | done; parent integrated | complete-block buffering and atomic reveal; parent retained explicit stream styles and updated saved records in place; focused and wider suites PASS
+- 2026-10-31 | Paragraph stream review | opencode/deepseek-v4.1-flash-free high | done | read-only review; parent fixed stray backticks, comparison prefixes, loose-list commits and motion-off fading; added actual transcript refresh regression
+- 2026-10-31 | Paragraph stream release | parent | done | boundary/paragraph, animation, tag, history, media, math, glass, UX, feature, reasoning, presets/highlight/auth17/stream73/Rust19 PASS; release build and SHA256 verified; original running session preserved
 - 2026-10-30 00:30 | M1 bubble UI | claudeAgent/claude-opus-5-5/high | running | user-requested Opus high
 - 2026-10-30 00:30 | M2 native+bridge | codex/gpt-6.1-sol/medium | running | fit_window, settings window, chat_open
 - 2026-10-30 23:33 | M2 native+bridge | codex/gpt-6.1-sol/medium | done (interrupted at report; T0 verified) | cargo test 8/8, auth-bridge 14/14, stream-media 49/49

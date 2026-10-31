@@ -225,10 +225,10 @@
     return template.content;
   }
 
-  // While streaming, finished blocks are parsed once and left alone; only the tail is
-  // reparsed, with its unfinished syntax closed so markers never flash and then jump.
+  // Paragraph mode parses complete snapshots together so nested markup keeps its context.
+  // Other reveal styles stabilize only the unfinished tail. Both preserve unchanged nodes.
   function renderReply(entry, text, sources, streaming) {
-    if (!streaming) {
+    if (!streaming || QSettings.settings.streamStyle === "paragraph") {
       entry.stable = null;
       syncMarkdownNodes(entry.contentEl, parseReply(text, sources));
       return;
@@ -808,13 +808,28 @@
     const news = comparable(latest.text) !== comparable(shown.text) || /qchat-web:/.test(latest.text) && !/qchat-web:/.test(shown.text) ||
       (latest.media?.length && !turnNodes.get(shown.id)?.mediaEl?.querySelector(".stored-media"));
     if (!news) return;
-    const scroller = turnNodes.get(shown.id)?.scroller;
-    const reading = userScrolledUp && scroller ? scroller.scrollTop : null;
-    dismissExchange(true);
-    showCachedResponse(chat);
-    if (reading !== null) {
-      const entry = responseEntry();
-      if (entry) { userScrolledUp = true; entry.scroller.scrollTop = reading; syncScrollState(entry); }
+    const entry = turnNodes.get(shown.id);
+    if (!entry) return;
+    const reading = userScrolledUp || QSettings.settings.followStream === false;
+    const top = entry.scroller.scrollTop;
+    const edge = entry.scroller.getBoundingClientRect().top;
+    const anchor = reading ? Array.from(entry.contentEl.children).find(node => node.getBoundingClientRect().bottom > edge) : null;
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    shown.text = latest.text;
+    shown.sources = latest.sources?.length ? latest.sources : shown.sources;
+    if (entry.reveal) entry.reveal.visible = shown.text;
+    if (latest.media?.length && !entry.mediaEl.querySelector(".stored-media")) {
+      entry.mediaEl.replaceChildren(...latest.media.map(file => storedMediaCard(file, chat.conversationId)));
+      entry.row.toggleAttribute("data-media-first", latest.media.some(file => file.before));
+      entry.row.toggleAttribute("data-wide", true);
+    }
+    renderSources(shown);
+    renderTurnNow(shown.id);
+    syncBubbleSize(entry);
+    if (reading) {
+      userScrolledUp = true;
+      entry.scroller.scrollTop = anchor?.isConnected ? top + anchor.getBoundingClientRect().top - anchorTop : top;
+      syncScrollState(entry);
     }
   }
 
@@ -1736,7 +1751,7 @@
   // Keep transport snapshots separate from their paced presentation. The full
   // text remains on the turn for history/copy even while the visible tail drains.
   const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-  const streamStyle = () => QSettings.motionOn ? QSettings.settings.streamStyle || "paragraph" : "instant";
+  const streamStyle = () => QSettings.settings.streamStyle || "paragraph";
 
   // New words surface from low contrast. This is paint only (the CSS Highlight API), so it
   // adds no DOM, keeps selections intact and cannot change the layout of the text around it.
@@ -1750,7 +1765,7 @@
   }
 
   function noteRevealed(entry) {
-    if (!fadeHighlights || !["fade", "paragraph"].includes(streamStyle())) return;
+    if (!QSettings.motionOn || !fadeHighlights || !["fade", "paragraph"].includes(streamStyle())) return;
     const length = entry.contentEl.textContent.length;
     const fade = entry.fade ||= { length: 0, recent: [], running: false };
     if (length > fade.length) fade.recent.push({ count: Math.min(length - fade.length, 800), at: performance.now() });
@@ -1811,7 +1826,7 @@
     const chat = chats.current;
     if (turn.chatKey === chat.key && chat.conversationId && bridge.loggedIn && !chat.temporary) {
       turn.restored = true;
-      // Stops as soon as the bubble has been rebuilt from the record.
+      // Refresh the existing bubble with saved images/corrections without resetting its viewport.
       const read = () => { if (chats.current === chat && !isBusy() && turns.some(t => t.id === turn.id)) { backfilled.delete(chat); backfillHistory(chat); } };
       setTimeout(read, 700);
       if (turn.rich) { setTimeout(read, 2200); setTimeout(read, 6000); }
@@ -1835,7 +1850,7 @@
       // Live tokens can be rough until a block is finished, so only finished blocks show.
       clearTimeout(state.holdTimer);
       state.holdTimer = null;
-      return window.QStream.revealStops(turn.backendDone ? turn.text : turn.text.slice(0, window.QStream.completeBoundary(turn.text)));
+      return [turn.backendDone ? turn.text.length : window.QStream.completeBoundary(turn.text)];
     }
     if (style === "type") {
       const stops = [];
@@ -1886,7 +1901,16 @@
       state.index = state.stops.findIndex(stop => stop > shown);
       if (state.index < 0) state.index = state.stops.length;
     }
-    if (streamStyle() === "instant") {
+    if (streamStyle() === "paragraph") {
+      cancelReveal(entry);
+      state.visible = turn.text.slice(0, state.stops.at(-1) || 0);
+      state.index = state.stops.length;
+      if (state.visible) revealResponse(turn);
+      renderTurnNow(turn.id);
+      finishReveal(turn, entry);
+      return;
+    }
+    if (streamStyle() === "instant" || !QSettings.motionOn) {
       flushReveal(turn);
       if (turn.text) revealResponse(turn);
       renderTurnNow(turn.id);
