@@ -350,6 +350,13 @@ pub fn track_turn(app: &tauri::AppHandle, id: &str, files: &[String]) {
             .insert(id.into(), files.to_vec());
     }
 }
+pub fn terminal_turn(app: &tauri::AppHandle, id: &str, error: bool, code: Option<&str>) {
+    if error && matches!(code, Some("send_failed" | "stream_failed" | "timeout" | "not_ready")) {
+        app.state::<MediaState>().sent.lock().unwrap().remove(id);
+    } else {
+        finish_turn(app, id);
+    }
+}
 pub fn finish_turn(app: &tauri::AppHandle, id: &str) {
     let state = app.state::<MediaState>();
     let ids = state.sent.lock().unwrap().remove(id).unwrap_or_default();

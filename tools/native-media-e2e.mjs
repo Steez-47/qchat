@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const exe = path.join(root, 'src-tauri', 'target', 'debug', 'qchat.exe');
+const exe = path.join(process.env.CARGO_TARGET_DIR || path.join(root, 'src-tauri', 'target'), 'debug', 'qchat.exe');
 const port = 9344;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function cdp(wsUrl) {
@@ -65,6 +65,13 @@ try {
   await ui.evaluate(`window.__TAURI__.core.invoke('attachment_remove',{id:${JSON.stringify(removed.id)}})`);
   check('reject removed attachment token', await safeError(ui.evaluate(`window.__TAURI__.core.invoke('attachment_chunk',{id:${JSON.stringify(removed.id)},offset:0,data:''})`)));
 
+  await site.evaluate(`(()=>{const f=document.createElement('input');f.type='file';f.id='qchat-fixture-upload';document.body.append(f);window.__qchat.attachmentInput=async()=> '#qchat-fixture-upload';window.__qchat.send=p=>window.__QCHAT_EMIT__({type:'error',id:p.id,code:'send_failed'})})()`);
+  await ui.evaluate(`window.__TAURI__.core.invoke('chat_send',{id:'failed-upload',prompt:'fixture',attachmentIds:[${JSON.stringify(id)}]})`);
+  await sleep(300);
+  check('error retains quota', await safeError(ui.evaluate("window.__TAURI__.core.invoke('attachment_begin',{name:'quota.txt',mime:'text/plain',size:536870912})")));
+  check('error retains staged file', !!await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(id)}})`));
+  await site.call('Page.reload');
+  for(let i=0;i<80;i++){if(await site.evaluate('!!window.__qchat'))break;await sleep(250);}
   await site.evaluate(`(()=>{const f=document.createElement('input');f.type='file';f.id='qchat-fixture-upload';f.hidden=true;document.body.append(f);window.__qchat.attachmentInput=async()=> '#qchat-fixture-upload';window.__qchat.send=async p=>{const file=document.querySelector('#qchat-fixture-upload').files[0];const b=new Uint8Array(await file.arrayBuffer());let s='';for(let i=0;i<b.length;i+=0x8000)s+=String.fromCharCode(...b.subarray(i,i+0x8000));window.__qchatFixtureSent={name:file.name,type:file.type,b64:btoa(s),count:1};await window.__QCHAT_EMIT__({type:'done',id:p.id})}})()`);
   await ui.evaluate(`window.__TAURI__.core.invoke('chat_send',{id:'native-media-fixture',prompt:'fixture',attachmentIds:[${JSON.stringify(id)}]})`);
   let uploaded = null;

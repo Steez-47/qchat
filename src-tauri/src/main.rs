@@ -399,7 +399,7 @@ fn bridge_event(app: tauri::AppHandle, window: tauri::WebviewWindow, mut event: 
     event["provider"]=provider.into();
     if matches!(event["type"].as_str(), Some("done" | "error")) {
         if let Some(id) = event["id"].as_str() {
-            media::finish_turn(&app, id);
+            media::terminal_turn(&app, id, event["type"].as_str() == Some("error"), event["code"].as_str());
         }
     }
     let auto_return = {
@@ -537,7 +537,8 @@ async fn chat_send(
 }
 #[tauri::command]
 fn chat_stop(app: tauri::AppHandle) -> Result<(), String> {
-    app.state::<Host>().0.lock().unwrap().flight_id = None;
+    let id = app.state::<Host>().0.lock().unwrap().flight_id.take();
+    if let Some(id) = id { media::finish_turn(&app, &id); }
     eval(&app, "window.__qchat && window.__qchat.stop()")
 }
 #[tauri::command]
