@@ -64,6 +64,9 @@ try {
   check('a fresh window stays put when content first opens and closes', settled === withMenu && withMenu === afterMenu, JSON.stringify({ settled, withMenu, afterMenu }));
 
   const [L, T, Ri] = settled.split(',').map(Number);
+  const screen = ps(`$c=New-Object System.Drawing.Point;[void][A]::GetCursorPos([ref]$c);$s=[System.Windows.Forms.Screen]::FromPoint($c).WorkingArea;"$($s.Left),$($s.Right)"`).stdout.trim().split(',').map(Number);
+  const off = Math.abs((L + Ri) / 2 - (screen[0] + screen[1]) / 2);
+  check('a fresh profile opens centred on the screen', off <= 2, JSON.stringify({ settled, screen, off }));
   const emptyX = Math.round((L + Ri) / 2), emptyY = T + 40;
   const bar = await ev(`(()=>{const r=document.getElementById('prompt-input').getBoundingClientRect(),d=devicePixelRatio;return {x:Math.round((r.left+r.width/2)*d),y:Math.round((r.top+r.height/2)*d)};})()`);
   const under = (x, y) => ps(`[A]::Under(${x},${y})`).stdout.trim();

@@ -677,7 +677,9 @@ fn main() {
    }
    if w.label()=="main" && matches!(e,tauri::WindowEvent::Moved(_)) {
      let own=w.app_handle().state::<Host>().0.lock().unwrap().positioned.elapsed()<Duration::from_millis(150);
-     if !own { capture_anchor(w.app_handle()); }
+     // Only a visible window can be moved by the user. Sizing a hidden one must not make
+     // the system's default spot its home.
+     if !own && w.is_visible().unwrap_or(false) { capture_anchor(w.app_handle()); }
    }
    if let tauri::WindowEvent::CloseRequested{api,..}=e { api.prevent_close(); if w.label()=="main" { hide_main(w.app_handle().clone()); } else { background(w.app_handle()); let _=chat_status(w.app_handle().clone()); } }
  })
