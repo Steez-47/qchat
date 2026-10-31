@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const isolatedExe = path.join(root, 'src-tauri/target-surfaces-test/debug/qchat.exe');
-const testExe = process.env.QCHAT_SURFACES_EXE || (existsSync(isolatedExe) ? isolatedExe : path.join(root, 'src-tauri/target/debug/qchat.exe'));
+const testExe = process.env.QCHAT_SURFACES_EXE || path.join(root, 'src-tauri/target/debug/qchat.exe');
 const profile = mkdtempSync(path.join(tmpdir(), 'qchat-surfaces-'));
 const port = 9347;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));

@@ -339,7 +339,7 @@
               const id = 'q' + controls.length, safe = record();
               for (const key of ['type', 'value', 'checked', 'disabled', 'min', 'max', 'step', 'placeholder', 'name', 'multiple', 'required', 'aria-label']) if (own(attrs, key) && ['string', 'number', 'boolean'].includes(typeof attrs[key])) safe[key] = attrs[key];
               if (tag.attrs.some(attr => /^on/.test(attr.key)) && ![attrs.onclick, attrs.onchange, attrs.oninput].some(fn => validHandler(fn, scope))) safe.disabled = true;
-              const descriptor = {id, tag: name, attrs: safe, label: '', options: []};
+              const descriptor = {id, tag: name, attrs: safe, label: '', options: [], self: !!tag.self};
               controls.push(descriptor); handlers.set(id, {click: attrs.onclick, change: attrs.onchange ?? attrs.oninput, disabled: !!safe.disabled});
               return '\uE300' + id + '\uE301';
             }
@@ -357,7 +357,8 @@
         // Consume labels only after expansion, allowing expressions/each inside a control.
         for (const control of controls) {
           const token = '\uE300' + control.id + '\uE301';
-          if (['input', 'slider', 'checkbox', 'switch'].includes(control.tag)) continue;
+          // A self-closing control has no body, so the text after it is not its label.
+          if (control.self || ['input', 'slider', 'checkbox', 'switch'].includes(control.tag)) continue;
           const start = text.indexOf(token), close = '</' + control.tag + '>', end = text.indexOf(close, start + token.length);
           if (start < 0) continue;
           const body = text.slice(start + token.length, end < 0 ? text.length : end);

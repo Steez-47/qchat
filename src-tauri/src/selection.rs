@@ -75,10 +75,9 @@ pub fn set_selection_hotkey(
         std::fs::write(p, serde_json::to_vec(&accelerator).unwrap()).map_err(|e| e.to_string())
     }) {
         if real {
+            // `new` was registered above. state.2 still describes `old`, so it cannot gate this.
             if let Some(v) = new {
-                if *state.2.lock().unwrap() {
-                    let _ = app.global_shortcut().unregister(v);
-                }
+                let _ = app.global_shortcut().unregister(v);
             }
             if let Some(v) = old {
                 *state.2.lock().unwrap() = app.global_shortcut().register(v).is_ok();
@@ -409,6 +408,13 @@ fn key(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
         },
     }
 }
+/// Whether the clipboard change after our Ctrl+C can be attributed to it. An app that
+/// opened the clipboard without an owner window reports process 0. A different owner
+/// means another app copied something, which must not be overwritten by a restore.
+fn copy_came_from_capture(source_pid: u32, clipboard_pid: u32) -> bool {
+    clipboard_pid == 0 || clipboard_pid == source_pid
+}
+
 unsafe fn copy_selection(foreground: HWND) -> Result<String, String> {
     if GetForegroundWindow() != foreground {
         return Err("Selection capture cancelled because the active window changed.".into());
@@ -465,32 +471,35 @@ unsafe fn copy_selection(foreground: HWND) -> Result<String, String> {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    let (result, copied_sequence) = {
-        let _open = ClipboardOpen::new(None)?;
-        let copied_sequence = GetClipboardSequenceNumber();
-        if copied_sequence == sequence {
-            return Err("No text was copied. Select text and try again. Elevated or protected apps may not allow capture.".into());
-        }
-        let mut source_pid = 0;
-        let mut clipboard_pid = 0;
-        GetWindowThreadProcessId(foreground, Some(&mut source_pid));
-        if let Ok(clipboard_owner) = GetClipboardOwner() {
-            GetWindowThreadProcessId(clipboard_owner, Some(&mut clipboard_pid));
-        }
-        if source_pid != clipboard_pid || GetForegroundWindow() != foreground {
-            return Err(
-                "Selection capture cancelled because another app changed the clipboard or focus."
-                    .into(),
-            );
-        }
-        (
-            read_text()
-                .filter(|s| !s.trim().is_empty())
-                .ok_or_else(|| "The selection did not contain readable text.".to_string()),
+    if GetClipboardSequenceNumber() == sequence {
+        return Err("No text was copied. Select text and try again. Elevated or protected apps may not allow capture.".into());
+    }
+    let mut source_pid = 0;
+    let mut clipboard_pid = 0;
+    GetWindowThreadProcessId(foreground, Some(&mut source_pid));
+    if let Ok(clipboard_owner) = GetClipboardOwner() {
+        GetWindowThreadProcessId(clipboard_owner, Some(&mut clipboard_pid));
+    }
+    let cancelled = "Selection capture cancelled because another app changed the clipboard or focus.";
+    if !copy_came_from_capture(source_pid, clipboard_pid) {
+        // Another app's copy belongs to the user, so it is left in place.
+        return Err(cancelled.into());
+    }
+    let (result, copied_sequence) = match ClipboardOpen::new(None) {
+        Err(busy) => (Err(busy), GetClipboardSequenceNumber()),
+        Ok(_open) => (
+            if source_pid != clipboard_pid || GetForegroundWindow() != foreground {
+                Err(cancelled.to_string())
+            } else {
+                read_text()
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| "The selection did not contain readable text.".to_string())
+            },
             // Reading a delayed-rendered format can itself advance the sequence.
             GetClipboardSequenceNumber(),
-        )
+        ),
     };
+    // Every failure past this point still replaced the user's clipboard, so all of them restore.
     if let Some(snapshot) = snapshot {
         // A busy clipboard during restoration must not discard text already captured.
         let _ = snapshot.restore(owner.0, copied_sequence);
@@ -501,6 +510,12 @@ unsafe fn copy_selection(foreground: HWND) -> Result<String, String> {
 #[cfg(test)]
 mod native_capture_tests {
     use super::*;
+    #[test]
+    fn failed_capture_restores_only_its_own_copy() {
+        assert!(copy_came_from_capture(42, 42), "the source app's copy is ours to undo");
+        assert!(copy_came_from_capture(42, 0), "an ownerless copy after our Ctrl+C is ours to undo");
+        assert!(!copy_came_from_capture(42, 77), "another app's copy must be left in place");
+    }
     use windows::Win32::Foundation::{LPARAM, WPARAM};
 
     unsafe fn put(format: u32, bytes: &[u8]) {

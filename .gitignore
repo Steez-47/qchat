@@ -6,3 +6,4 @@ dist/
 *.log
 .tmp/
 src-tauri/target-*/
+src-tauri/resources/THIRD-PARTY-NOTICES.txt

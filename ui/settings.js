@@ -177,6 +177,15 @@
     return row;
   }
 
+  const shortcutRefreshers = [];
+  function dynamicShortcut(label, command) {
+    const nodes = shortcut(label, "Loading…");
+    const refresh = () => invoke(command).then(key => {
+      const replacement = shortcut(label, ...(key ? key.split("+") : ["Disabled"]));
+      nodes.replaceChildren(...replacement.childNodes);
+    }).catch(() => {});
+    shortcutRefreshers.push(refresh); refresh(); return nodes;
+  }
   function arrowNavigate(group, buttons, select) {
     group.addEventListener("keydown", (e) => {
       const index = buttons.indexOf(document.activeElement);
@@ -191,6 +200,7 @@
       for (const button of buttons) button.tabIndex = -1;
       buttons[next].tabIndex = 0;
       buttons[next].focus();
+      select(buttons[next]);
     });
   }
 
@@ -241,12 +251,17 @@
   const accountStatus = make("small");
   accountStatus.id = "account-status";
   accountStatus.dataset.state = "connecting";
-  accountStatus.textContent = "Connecting…";
+  accountStatus.textContent = "Not connected yet";
   const accountButton = make("button", "pill-btn pill-accent", "Sign in");
   accountButton.type = "button";
   accountButton.id = "btn-signin";
-  accountButton.addEventListener("click", () => invoke("show_signin").catch(() => {}));
+  accountButton.addEventListener("click", () => invoke("show_signin", {provider:"chatgpt"}).catch(() => {}));
 
+  const geminiStatus = make("small", "", "Not connected yet");
+  geminiStatus.id = "gemini-account-status";
+  const geminiButton = make("button", "pill-btn", "Sign in");
+  geminiButton.id = "btn-signin-gemini";
+  geminiButton.onclick = () => invoke("show_signin", {provider:"gemini"}).catch(() => {});
   function actionRow(title, note, button) {
     const row = make("div", "action-row");
     const text = make("div", "action-text");
@@ -331,7 +346,7 @@
         () => rangeRow({ key: "barWidth", label: "Bar width" }),
         () => choiceRow({ key: "density", label: "Bar size", options: [["compact", "Compact"], ["cozy", "Cozy"], ["roomy", "Roomy"]] }),
         () => switchRow({ key: "showTabs", label: "Recent-chat tabs" }),
-        () => switchRow({ key: "showTabClock", label: "Clock icon on tabs" }),
+        () => switchRow({ key: "showTabClock", label: "Show logo on tabs" }),
         () => switchRow({ key: "showSuggestions", label: "Suggestion chips on an empty chat" }),
         () => switchRow({ key: "showStatusDot", label: "Connection dot on the orb" })
       ]]
@@ -341,6 +356,7 @@
       groups: [
         [
           () => choiceRow({ key: "sendKey", label: "Send with", options: [["enter", "Enter"], ["ctrl", "Ctrl+Enter"]] }),
+          () => choiceRow({key:"defaultProvider", label:"Default provider", hint:"Provider for new sessions", options:[["chatgpt","ChatGPT"],["gemini","Gemini"]]}),
           () => choiceRow({ key: "defaultReasoning", label: "Default reasoning", hint: "New chats start here; the composer can set each chat", options: [["low", "Low"], ["medium", "Medium"], ["high", "High"]] }),
           () => rangeRow({ key: "autoDismiss", label: "Dismiss replies automatically", format: seconds }),
           () => switchRow({ key: "alwaysOnTop", label: "Always on top" }),
@@ -363,12 +379,16 @@
       groups: [
         [
           () => actionRow("ChatGPT account", accountStatus, accountButton),
+          () => actionRow("Gemini account", geminiStatus, geminiButton),
           () => actionRow("Quit QChat", "Closes the app and its tray icon", actionButton("btn-quit", "Quit", () => invoke("quit_app").catch(() => {})))
         ],
         [() => {
           const list = make("dl", "shortcut-list");
           list.append(
-            shortcut("Show or hide QChat", "Alt", "Q"),
+            dynamicShortcut("Show or hide QChat", "get_hotkey"),
+            dynamicShortcut("Ask about selection", "get_selection_hotkey"),
+            shortcut("Commands menu", "Ctrl", "K"),
+            shortcut("All chats", "Ctrl", "P"),
             shortcut("New chat", "Ctrl", "N"),
             shortcut("Stop generating", "Ctrl", "."),
             shortcut("Commands", "/"),
@@ -383,7 +403,7 @@
       id: "about", title: "About", glyph: "",
       groups: [[() => {
         const line = make("p", "about-line");
-        line.append(make("strong", "", "QChat"), document.createTextNode(" keeps ChatGPT one shortcut away, using your own signed-in session. Type /settings in the bar to come back here."));
+        line.append(make("strong", "", "QChat"), document.createTextNode(" keeps your AI chats one shortcut away, using your own signed-in sessions. Type /settings in the bar to come back here."));
         return line;
       }]]
     }
@@ -421,6 +441,7 @@
     return ({range:rangeRow,bool:switchRow,enum:choiceRow,color:colorRow,text:textRow})[spec.type]({key,label,hint,options:spec.options?.map(v => [v,v.charAt(0).toUpperCase()+v.slice(1)])});
   }));
   let refreshPresets = () => {};
+  let reapplySearch = () => {};
   function presetGallery() {
     const wrap = make("div","preset-area"), gallery = make("div","preset-gallery"), status = make("p","section-note"); status.id = "preset-status";
     const name = make("input","text-input"); name.placeholder = "Preset name"; name.maxLength = 60; name.setAttribute("aria-label","Preset name");
@@ -440,37 +461,40 @@
         gallery.append(card);
       }
       status.textContent = active;
+      reapplySearch();
     }; refreshPresets(); return wrap;
   }
   SECTIONS.unshift({id:"presets",title:"Presets",glyph:"",groups:[[presetGallery]]});
+  let autostartEnabled = false;
   function desktopControl(kind) {
     const isHotkey = kind === "hotkey" || kind === "selection";
     const command = kind === "selection" ? "selection_hotkey" : "hotkey";
     const button = make("button", "pill-btn", "Loading...");
-    const hint = make("small", "", "");
-    const row = actionRow(isHotkey ? (kind === "selection" ? "Ask about selection" : "Global shortcut") : "Launch at login", hint, button);
+    const hint = make("small", "", isHotkey ? "" : "Starts quietly in the tray. Alt+Q (or your shortcut) opens it.");
+    if (!isHotkey) invoke("get_hotkey").then(key => { if (key) hint.textContent = `Starts quietly in the tray. ${key} opens it.`; }).catch(() => {});
+    const row = actionRow(isHotkey ? (kind === "selection" ? "Ask about selection" : "Global shortcut") : "Open at startup", hint, button);
     let current = isHotkey ? "Record shortcut" : false;
-    const sync = () => { button.textContent = isHotkey ? (current || "Disabled") : current ? "On" : "Off"; if (!isHotkey) button.setAttribute("aria-checked", String(current)); };
-    if (!isHotkey) { button.setAttribute("role", "switch"); button.setAttribute("aria-label", "Launch at login"); }
+    const sync = () => { if (!isHotkey) { autostartEnabled = current; syncDependents(); } button.textContent = isHotkey ? (current || "Disabled") : current ? "On" : "Off"; if (!isHotkey) button.setAttribute("aria-checked", String(current)); };
+    if (!isHotkey) { button.setAttribute("role", "switch"); button.setAttribute("aria-label", "Open at startup"); }
     invoke(isHotkey ? "get_" + command : "get_autostart").then(v => { if (isHotkey ? typeof v === "string" : typeof v === "boolean") current = v; sync(); }).catch(() => { sync(); hint.textContent = "Available in the desktop app"; });
     if (isHotkey) invoke("get_" + command + "_available").then(available => { if (!available) hint.textContent = "Shortcut unavailable"; }).catch(() => {});
     button.addEventListener("click", async () => {
       if (isHotkey) { button.dataset.recording = "true"; button.textContent = "Press a key combination"; return; }
-      try { await invoke("set_autostart", {enabled: !current}); current = !current; sync(); hint.textContent = ""; } catch (e) { hint.textContent = String(e.message || e); }
+      try { await invoke("set_autostart", {enabled: !current}); current = !current; sync(); } catch (e) { hint.textContent = String(e.message || e); }
     });
     button.addEventListener("keydown", async e => {
       if (!button.dataset.recording) return;
       e.preventDefault(); e.stopPropagation();
       if (e.key === "Escape") { delete button.dataset.recording; sync(); return; }
       if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return;
-      if (kind === "selection" && e.key === "Backspace") { await invoke("set_selection_hotkey", {accelerator: ""}); current = ""; delete button.dataset.recording; sync(); return; }
+      if (kind === "selection" && e.key === "Backspace") { await invoke("set_selection_hotkey", {accelerator: ""}); current = ""; shortcutRefreshers.forEach(refresh => refresh()); delete button.dataset.recording; sync(); return; }
       if (!e.ctrlKey && !e.altKey && !e.metaKey) { hint.textContent = "Include Ctrl, Alt or Windows"; return; }
-      const accelerator = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super", e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join("+");
-      try { await invoke("set_" + command, {accelerator}); current = accelerator; sync(); hint.textContent = ""; delete button.dataset.recording; } catch (err) { hint.textContent = String(err.message || err); }
+      const accelerator = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super", e.key === " " ? "Space" : e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join("+");
+      try { await invoke("set_" + command, {accelerator}); current = accelerator; shortcutRefreshers.forEach(refresh => refresh()); sync(); hint.textContent = ""; delete button.dataset.recording; } catch (err) { hint.textContent = String(err.message || err); }
     });
     return row;
   }
-  SECTIONS.find(s => s.id === "behavior").groups.unshift([() => desktopControl("hotkey"), () => desktopControl("selection"), () => switchRow({key: "selectionClipboard", label: "Copy selection if needed", hint: "Copies selected text when needed; restores the clipboard when possible"}), () => desktopControl("autostart")]);
+  SECTIONS.find(s => s.id === "behavior").groups.unshift([() => desktopControl("hotkey"), () => desktopControl("selection"), () => switchRow({key: "selectionClipboard", label: "Copy selection if needed", hint: "Copies selected text when needed; restores the clipboard when possible"}), () => desktopControl("autostart"), () => switchRow({key:"showBarAtStartup", label:"Show the bar at startup", hint:"Show the bar when QChat opens at startup"})]);
   SECTIONS.find(s => s.id === "shape").groups.unshift([() => switchRow({key:"nativeBlur",label:"Bar desktop blur",hint:"Blur the desktop behind the bar and menus"})]);
   const sectionOrder = ["presets","appearance","shape","chatpanel","text","streaming","motion","layout","behavior","chats","account","about"];
   SECTIONS.sort((a,b) => sectionOrder.indexOf(a.id)-sectionOrder.indexOf(b.id));
@@ -526,13 +550,16 @@
     const query = search.value.trim().toLowerCase(); let count = 0;
     for (const {node,section} of sectionNodes) {
       const rows = [...node.querySelectorAll(".row,.action-row,.preset-entry,.look-swatch")];
-      for (const row of rows) row.hidden = !!query && !row.textContent.toLowerCase().includes(query);
+      const titleMatch = !!query && section.title.toLowerCase().includes(query);
+      for (const row of rows) row.hidden = !!query && !titleMatch && !row.textContent.toLowerCase().includes(query);
       const visible = !query || rows.some(r => !r.hidden) || section.title.toLowerCase().includes(query);
       node.hidden = !visible; links.get(section.id).hidden = !visible; if (visible) count++;
       for (const detail of node.querySelectorAll("details")) if (query) detail.open = true;
     }
     $("search-empty").hidden = count > 0;
   });
+  // Rebuilt preset cards must not come back unfiltered under an active search.
+  reapplySearch = () => { if (search.value.trim()) search.dispatchEvent(new Event("input")); };
   search.addEventListener("keydown",e => { if (e.key === "Escape" && search.value) { e.stopPropagation(); search.value = ""; search.dispatchEvent(new Event("input")); } });
   let activeId = null;
   let spyPausedUntil = 0;
@@ -572,6 +599,7 @@
       row.style.opacity = off ? "0.5" : "";
       for (const c of row.querySelectorAll("input, .switch, .segmented button")) c.disabled = off;
     };
+    dim("showBarAtStartup", !autostartEnabled);
     const noMotion = !QSettings.motionOn;
     dim("tintColor", settings.tintSource !== "custom");
     dim("streamSpeed", settings.streamStyle === "instant");
@@ -624,7 +652,8 @@
 
   listen("bridge", ({ payload: evt }) => {
     if (!evt || typeof evt !== "object") return;
-    if (evt.type === "status") updateAccount({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
+    if ((evt.provider || "chatgpt") === "gemini") { if (evt.type === "error" && evt.code === "auth") { geminiStatus.textContent = "Signed out"; geminiButton.textContent = "Sign in"; } if (evt.type === "status") { geminiStatus.textContent = evt.loggedIn ? "Signed in" : evt.ready ? "Guest" : "Not connected yet"; geminiButton.textContent = evt.loggedIn ? "Manage account" : "Sign in"; } return; }
+    if (evt.type === "status") { updateAccount({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) }); if (!evt.ready && !evt.loggedIn) accountStatus.textContent = "Not connected yet"; }
     else if (evt.type === "error" && evt.code === "auth") updateAccount({ ready: true, loggedIn: false, signedOut: true });
   });
 

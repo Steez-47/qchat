@@ -10,13 +10,14 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::Manager;
 use windows::core::HSTRING;
 
 const LIMIT: u64 = 512 * 1024 * 1024;
 const CHUNK: usize = 512 * 1024;
+const RETRY_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Serialize)]
 pub struct Attachment {
@@ -31,6 +32,9 @@ struct Staged {
     path: PathBuf,
     written: u64,
     ready: bool,
+    owner: Option<String>,
+    retry_until: Option<Instant>,
+    dispatched: bool,
 }
 #[derive(Clone)]
 struct Cached {
@@ -48,7 +52,7 @@ pub struct MediaState {
     cached: Mutex<HashMap<String, Cached>>,
     download_gate: tokio::sync::Mutex<()>,
     generation: AtomicU64,
-    sent: Mutex<HashMap<String, Vec<String>>>,
+    upload_generation: AtomicU64,
     pending: Mutex<Option<PendingDownload>>,
 }
 struct PendingDownload {
@@ -91,6 +95,7 @@ impl Drop for PendingCleanup {
 #[derive(Clone)]
 enum Scope {
     Turn(String),
+    Send(String),
     Media(u64),
 }
 
@@ -223,6 +228,7 @@ pub fn attachment_begin(
     name: String,
     mime: String,
     size: u64,
+    upload_generation: u64,
 ) -> Result<Attachment, String> {
     main_only(&window)?;
     if name.contains(['/', '\\']) || name.chars().any(char::is_control) {
@@ -230,12 +236,16 @@ pub fn attachment_begin(
     }
     if size > LIMIT {
         return Err(
-            "Files must be 512 MiB or smaller. ChatGPT may have lower limits for this format."
+            "Files must be 512 MiB or smaller. Provider may have lower limits for this format."
                 .into(),
         );
     }
     let state = app.state::<MediaState>();
     let mut staged = state.staged.lock().unwrap();
+    if upload_generation != state.upload_generation.load(Ordering::SeqCst) {
+        return Err("Attachment session ended. Attach the file again.".into());
+    }
+    reap_staged(&mut staged, Instant::now());
     if staged.len() >= 32 || staged.values().map(|v| v.meta.size).sum::<u64>() + size > LIMIT {
         return Err("Attachment cache is full. Start a new chat to clear it.".into());
     }
@@ -260,6 +270,9 @@ pub fn attachment_begin(
             path,
             written: 0,
             ready: false,
+            owner: None,
+            retry_until: None,
+            dispatched: false,
         },
     );
     Ok(meta)
@@ -335,30 +348,94 @@ pub fn clear_uploads(app: &tauri::AppHandle) {
         remove_cached_file(&item.path);
     }
 }
+pub fn upload_generation(app: &tauri::AppHandle) -> u64 {
+    app.state::<MediaState>().upload_generation.load(Ordering::SeqCst)
+}
+pub fn draft_uploads(app: &tauri::AppHandle) -> Vec<String> {
+    app.state::<MediaState>().staged.lock().unwrap().iter()
+        .filter(|(_, item)| item.owner.is_none()).map(|(id, _)| id.clone()).collect()
+}
+pub fn reset_uploads(app: &tauri::AppHandle) {
+    let state = app.state::<MediaState>();
+    let mut staged = state.staged.lock().unwrap();
+    state.upload_generation.fetch_add(1, Ordering::SeqCst);
+    for (_, item) in staged.drain() { remove_cached_file(&item.path); }
+}
+fn reap_staged(staged: &mut HashMap<String, Staged>, now: Instant) {
+    staged.retain(|_, item| {
+        let expired = item.retry_until.is_some_and(|deadline| now >= deadline);
+        if expired { remove_cached_file(&item.path); }
+        !expired
+    });
+}
+pub fn expire_uploads(app: &tauri::AppHandle) {
+    reap_staged(&mut app.state::<MediaState>().staged.lock().unwrap(), Instant::now());
+}
 fn remove_cached_file(path: &Path) {
     let _ = std::fs::remove_file(path);
     if let Some(parent) = path.parent() {
         let _ = std::fs::remove_dir(parent);
     }
 }
-pub fn track_turn(app: &tauri::AppHandle, id: &str, files: &[String]) {
-    if !files.is_empty() {
-        app.state::<MediaState>()
-            .sent
-            .lock()
-            .unwrap()
-            .insert(id.into(), files.to_vec());
-    }
-}
-pub fn finish_turn(app: &tauri::AppHandle, id: &str) {
-    let state = app.state::<MediaState>();
-    let ids = state.sent.lock().unwrap().remove(id).unwrap_or_default();
-    let mut staged = state.staged.lock().unwrap();
-    for id in ids {
-        if let Some(item) = staged.remove(&id) {
-            remove_cached_file(&item.path);
+fn claim_staged(staged: &mut HashMap<String, Staged>, id: &str, files: &[String]) -> Result<(), String> {
+    reap_staged(staged, Instant::now());
+    // Validate the whole set before transferring anything. One file has one owner.
+    for file in files {
+        let item = staged.get(file).ok_or("Attachment is unavailable. Select it again.")?;
+        if !item.ready { return Err("Wait for the attachment to finish staging".into()); }
+        if item.owner.as_deref().is_some_and(|owner| owner != id) && item.retry_until.is_none() {
+            return Err("Attachment is already being sent".into());
         }
     }
+    for file in files {
+        let item = staged.get_mut(file).unwrap();
+        item.owner = Some(id.into());
+        item.retry_until = None;
+        item.dispatched = false;
+    }
+    Ok(())
+}
+pub fn track_turn(app: &tauri::AppHandle, id: &str, files: &[String]) -> Result<(), String> {
+    claim_staged(&mut app.state::<MediaState>().staged.lock().unwrap(), id, files)
+}
+fn retain_staged(staged: &mut HashMap<String, Staged>, id: &str, now: Instant) {
+    for item in staged.values_mut().filter(|item| item.owner.as_deref() == Some(id) && item.retry_until.is_none()) {
+        item.retry_until = Some(now + RETRY_TTL);
+    }
+}
+pub fn abandon_turn(app: &tauri::AppHandle, id: &str) {
+    retain_staged(&mut app.state::<MediaState>().staged.lock().unwrap(), id, Instant::now());
+}
+pub fn terminal_turn(app: &tauri::AppHandle, id: &str, error: bool, code: Option<&str>) {
+    terminal_staged(&mut app.state::<MediaState>().staged.lock().unwrap(), id, error, code);
+}
+fn terminal_staged(staged: &mut HashMap<String, Staged>, id: &str, error: bool, code: Option<&str>) {
+    if error && matches!(code, Some("send_failed" | "stream_failed" | "timeout" | "not_ready" | "temporary_unavailable")) {
+        retain_staged(staged, id, Instant::now());
+    } else {
+        finish_staged(staged, id, false);
+    }
+}
+fn finish_staged(staged: &mut HashMap<String, Staged>, id: &str, include_retained: bool) {
+    staged.retain(|_, item| {
+        let owned = item.owner.as_deref() == Some(id) && (include_retained || item.retry_until.is_none());
+        if owned { remove_cached_file(&item.path); }
+        !owned
+    });
+}
+pub fn cancel_turn(app: &tauri::AppHandle, id: &str) -> Vec<String> {
+    let state = app.state::<MediaState>();
+    let mut staged = state.staged.lock().unwrap();
+    let mut drafts = Vec::new();
+    staged.retain(|file, item| {
+        if item.owner.as_deref() != Some(id) { return true; }
+        if item.dispatched { remove_cached_file(&item.path); return false; }
+        item.owner = None;
+        item.retry_until = None;
+        drafts.push(file.clone());
+        true
+    });
+    drafts
 }
 pub fn clear_all(app: &tauri::AppHandle) {
     clear_reply_media(app);
@@ -367,7 +444,6 @@ pub fn clear_all(app: &tauri::AppHandle) {
 pub fn clear_reply_media(app: &tauri::AppHandle) {
     let state = app.state::<MediaState>();
     state.generation.fetch_add(1, Ordering::SeqCst);
-    state.sent.lock().unwrap().clear();
     if let Some(pending) = state.pending.lock().unwrap().take() {
         remove_cached_file(&pending.item.path);
         let _ = pending
@@ -388,6 +464,15 @@ async fn cdp_scoped(
     params: Value,
     scope: Option<Scope>,
 ) -> Result<Value, String> {
+    cdp_provider(app, method, params, scope, crate::active_provider(app)).await
+}
+async fn cdp_provider(
+    app: &tauri::AppHandle,
+    method: &str,
+    params: Value,
+    scope: Option<Scope>,
+    provider: String,
+) -> Result<Value, String> {
     use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
     let (tx, rx) = tokio::sync::oneshot::channel();
     let sender = Arc::new(Mutex::new(Some(tx)));
@@ -395,11 +480,11 @@ async fn cdp_scoped(
     let params = HSTRING::from(params.to_string());
     let error_sender = sender.clone();
     let scope_app = app.clone();
-    app.get_webview_window("chatgpt")
-        .ok_or("ChatGPT window unavailable")?
+    app.get_webview_window(&provider)
+        .ok_or("Provider window unavailable")?
         .with_webview(move |w| unsafe {
             let allowed = match &scope {
-                Some(Scope::Turn(id)) => {
+                Some(Scope::Turn(id) | Scope::Send(id)) => {
                     scope_app
                         .state::<crate::Host>()
                         .0
@@ -424,14 +509,19 @@ async fn cdp_scoped(
                 }
                 return;
             }
+            if let Some(Scope::Send(id)) = &scope {
+                for item in scope_app.state::<MediaState>().staged.lock().unwrap().values_mut().filter(|item| item.owner.as_deref() == Some(id)) {
+                    item.dispatched = true;
+                }
+            }
             let callback_sender = sender.clone();
             let callback = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
                 move |result, json| {
                     let value = result
-                        .map_err(|_| "ChatGPT operation failed".to_string())
+                        .map_err(|_| "Provider operation failed".to_string())
                         .and_then(|_| {
                             serde_json::from_str(&json)
-                                .map_err(|_| "Invalid ChatGPT reply".to_string())
+                                .map_err(|_| "Invalid Provider reply".to_string())
                         });
                     if let Some(tx) = callback_sender.lock().unwrap().take() {
                         let _ = tx.send(value);
@@ -445,15 +535,15 @@ async fn cdp_scoped(
                 .and_then(|core| core.CallDevToolsProtocolMethod(&method, &params, &callback));
             if result.is_err() {
                 if let Some(tx) = error_sender.lock().unwrap().take() {
-                    let _ = tx.send(Err("ChatGPT operation unavailable".into()));
+                    let _ = tx.send(Err("Provider operation unavailable".into()));
                 }
             }
         })
-        .map_err(|_| "ChatGPT operation unavailable")?;
+        .map_err(|_| "Provider operation unavailable")?;
     tokio::time::timeout(Duration::from_secs(90), rx)
         .await
-        .map_err(|_| "ChatGPT operation timed out")?
-        .map_err(|_| "ChatGPT operation ended")?
+        .map_err(|_| "Provider operation timed out")?
+        .map_err(|_| "Provider operation ended")?
 }
 pub async fn evaluate(app: &tauri::AppHandle, expression: String) -> Result<Value, String> {
     let value = cdp(
@@ -463,12 +553,60 @@ pub async fn evaluate(app: &tauri::AppHandle, expression: String) -> Result<Valu
     )
     .await?;
     if value.get("exceptionDetails").is_some() {
+        if value["exceptionDetails"]["exception"]["description"].as_str().is_some_and(|message| message.contains("attachment_pending:")) {
+            return Err("attachment_pending: Clear pending attachments in the provider or start a new chat.".into());
+        }
         return Err(
-            "ChatGPT could not complete this media operation. Use View in ChatGPT for details."
+            "Provider could not complete this media operation. Use View in provider for details."
                 .into(),
         );
     }
     Ok(value["result"]["value"].clone())
+}
+pub async fn dispatch_turn(app: &tauri::AppHandle, id: &str, expression: String) -> Result<(), String> {
+    let value = cdp_scoped(app, "Runtime.evaluate", json!({"expression":expression,"returnByValue":true}), Some(Scope::Send(id.into()))).await?;
+    if value.get("exceptionDetails").is_some() {
+        return Err("Provider could not send this message".into());
+    }
+    Ok(())
+}
+pub async fn attach_temporary(app: &tauri::AppHandle, ids: &[String], turn_id: &str) -> Result<(), String> {
+    if ids.is_empty() { return Ok(()); }
+    if ids.len() > 10 { return Err("Attach up to 10 files at once".into()); }
+    let paths: Vec<String> = {
+        let state = app.state::<MediaState>();
+        let staged = state.staged.lock().unwrap();
+        ids.iter().map(|id| {
+            let item = staged.get(id).ok_or("Attachment is unavailable. Select it again.")?;
+            if !item.ready { return Err("Wait for the attachment to finish staging"); }
+            Ok(item.path.to_string_lossy().into_owned())
+        }).collect::<Result<_, &str>>().map_err(str::to_string)?
+    };
+    let provider = crate::active_provider(app);
+    let id = serde_json::to_string(turn_id).map_err(|e| e.to_string())?;
+    let result: Result<(), String> = async {
+        let stage = cdp_provider(app, "Runtime.evaluate", json!({"expression":format!("window.__qchat.stageTemporaryFiles({id})"),"awaitPromise":true,"returnByValue":false}), Some(Scope::Turn(turn_id.into())), provider.clone()).await?;
+        if stage.get("exceptionDetails").is_some() {
+            if let Some(object) = stage["result"]["objectId"].as_str() {
+                let _ = cdp_provider(app, "Runtime.releaseObject", json!({"objectId":object}), None, provider.clone()).await;
+            }
+            if stage["exceptionDetails"]["exception"]["description"].as_str().is_some_and(|message| message.contains("attachment_pending:")) {
+                return Err("attachment_pending: Clear pending attachments in the provider or start a new chat.".into());
+            }
+            return Err("temporary_unavailable: Temporary attachment preparation failed".into());
+        }
+        let object = stage["result"]["objectId"].as_str().ok_or("temporary_unavailable: Temporary attachment preparation failed")?.to_owned();
+        let handoff: Result<(), String> = async {
+            cdp_provider(app, "DOM.setFileInputFiles", json!({"objectId":object,"files":paths}), Some(Scope::Turn(turn_id.into())), provider.clone()).await?;
+            let commit = cdp_provider(app, "Runtime.evaluate", json!({"expression":format!("window.__qchat.commitTemporaryFiles({id})"),"returnByValue":true}), Some(Scope::Turn(turn_id.into())), provider.clone()).await?;
+            if commit["result"]["value"] != true { return Err("temporary_unavailable: Temporary chat could not be confirmed".into()); }
+            Ok(())
+        }.await;
+        let _ = cdp_provider(app, "Runtime.releaseObject", json!({"objectId":object}), None, provider.clone()).await;
+        handoff
+    }.await;
+    let _ = cdp_provider(app, "Runtime.evaluate", json!({"expression":format!("window.__qchat && window.__qchat.clearTemporaryStage({id})"),"returnByValue":true}), None, provider.clone()).await;
+    result
 }
 pub async fn attach(app: &tauri::AppHandle, ids: &[String], turn_id: &str) -> Result<(), String> {
     if ids.is_empty() {
@@ -495,7 +633,7 @@ pub async fn attach(app: &tauri::AppHandle, ids: &[String], turn_id: &str) -> Re
     let selector = evaluate(app, "window.__qchat.attachmentInput()".into())
         .await?
         .as_str()
-        .ok_or("ChatGPT attachment input unavailable")?
+        .ok_or("Provider attachment input unavailable")?
         .to_owned();
     let document = cdp(app, "DOM.getDocument", json!({})).await?;
     let node = cdp(
@@ -505,7 +643,7 @@ pub async fn attach(app: &tauri::AppHandle, ids: &[String], turn_id: &str) -> Re
     )
     .await?;
     if node["nodeId"].as_u64().unwrap_or(0) == 0 {
-        return Err("ChatGPT attachment input unavailable".into());
+        return Err("Provider attachment input unavailable".into());
     }
     cdp_scoped(
         app,
@@ -517,7 +655,7 @@ pub async fn attach(app: &tauri::AppHandle, ids: &[String], turn_id: &str) -> Re
     Ok(())
 }
 fn allowed_media_url(raw: &str) -> bool {
-    if raw.starts_with("blob:https://chatgpt.com/") {
+    if raw.starts_with("blob:https://chatgpt.com/") || raw.starts_with("blob:https://gemini.google.com/") {
         return true;
     }
     if raw.starts_with("data:image/") {
@@ -547,7 +685,7 @@ fn allowed_media_url(raw: &str) -> bool {
             && url.username().is_empty()
             && url.password().is_none()
             && url.port_or_known_default() == Some(443)
-            && host.ends_with(".blob.core.windows.net"))
+            && (host.ends_with(".blob.core.windows.net") || host=="gemini.google.com" || host.ends_with(".googleusercontent.com") || host.strip_prefix("encrypted-tbn").and_then(|h| h.strip_suffix(".gstatic.com")).is_some_and(|n| n.chars().all(|c| c.is_ascii_digit()))))
 }
 async fn load(app: &tauri::AppHandle, media_id: &str, revision: u64) -> Result<Cached, String> {
     let state = app.state::<MediaState>();
@@ -573,9 +711,9 @@ async fn load(app: &tauri::AppHandle, media_id: &str, revision: u64) -> Result<C
     };
     let url = source["url"]
         .as_str()
-        .ok_or("This item must be opened in ChatGPT")?;
+        .ok_or("This item must be opened in Provider")?;
     if !allowed_media_url(url) {
-        return Err("This media source must be opened in ChatGPT".into());
+        return Err("This media source must be opened in Provider".into());
     }
     let name = safe_name(source["name"].as_str().unwrap_or("download"));
     let mut mime = clean_mime(source["mime"].as_str().unwrap_or(""), &name);
@@ -609,7 +747,7 @@ async fn load(app: &tauri::AppHandle, media_id: &str, revision: u64) -> Result<C
             let resource=&resource["resource"];
             if resource["success"]!=true || resource["httpStatusCode"].as_u64().is_some_and(|status|!(200..300).contains(&status)) {
                 if let Some(handle)=resource["stream"].as_str(){let _=cdp(app,"IO.close",json!({"handle":handle})).await;}
-                return Err("Could not load this media. Use View in ChatGPT.".into());
+                return Err("Could not load this media. Use View in provider.".into());
             }
             if let Some(headers)=resource["headers"].as_object() { if let Some(actual)=headers.iter().find(|(key,_)|key.eq_ignore_ascii_case("content-type")).and_then(|(_,value)|value.as_str()) {mime=clean_mime(actual,&name);} }
             (resource["stream"].as_str().ok_or("This media has no downloadable content")?.to_owned(),None)
@@ -785,7 +923,7 @@ async fn site_download(
         })
     {
         state.pending.lock().unwrap().take();
-        return Err("ChatGPT could not start this download. Use View in ChatGPT.".into());
+        return Err("Provider could not start this download. Use View in provider.".into());
     }
     if let Ok(value) = &started {
         click_point(app, &value["result"]["value"], generation).await?;
@@ -794,7 +932,7 @@ async fn site_download(
         match receiver.try_recv() {
             Ok(result) => return result,
             Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
-                return Err("ChatGPT download ended".into())
+                return Err("Provider download ended".into())
             }
             Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
         }
@@ -818,7 +956,7 @@ async fn site_download(
         Ok(Ok(result)) => result,
         _ => {
             state.pending.lock().unwrap().take();
-            Err("ChatGPT download timed out. Use View in ChatGPT.".into())
+            Err("Provider download timed out. Use View in provider.".into())
         }
     }
 }
@@ -829,7 +967,7 @@ async fn click_point(app: &tauri::AppHandle, value: &Value, generation: u64) -> 
     let x = point["x"].as_f64().ok_or("Invalid media control")?;
     let y = point["y"].as_f64().ok_or("Invalid media control")?;
     if !x.is_finite() || !y.is_finite() || x < 0. || y < 0. || x > 10000. || y > 10000. {
-        return Err("ChatGPT download control is unavailable".into());
+        return Err("Provider download control is unavailable".into());
     }
     cdp_scoped(
         app,
@@ -880,7 +1018,7 @@ pub fn on_download(app: &tauri::AppHandle, event: tauri::webview::DownloadEvent<
                         remove_cached_file(&item.item.path);
                         let _ = item
                             .sender
-                            .send(Err("This download must be opened in ChatGPT".into()));
+                            .send(Err("This download must be opened in Provider".into()));
                     }
                     false
                 }
@@ -897,7 +1035,7 @@ pub fn on_download(app: &tauri::AppHandle, event: tauri::webview::DownloadEvent<
                     let result = (|| -> Result<Cached, String> {
                         if !success || pending.generation != state.generation.load(Ordering::SeqCst)
                         {
-                            return Err("ChatGPT download did not complete".into());
+                            return Err("Provider download did not complete".into());
                         }
                         pending.item.size = std::fs::metadata(&pending.item.path)
                             .map_err(|_| "Downloaded file is unavailable")?
@@ -1074,6 +1212,70 @@ fn byte_range(range: Option<&str>, size: u64) -> Option<(u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn staged_fixture() -> (HashMap<String, Staged>, PathBuf) {
+        let directory = std::env::temp_dir().join(format!("qchat-upload-unit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("fixture.txt");
+        std::fs::write(&path, b"fixture").unwrap();
+        let item = Staged { meta: Attachment { id:"file".into(),name:"fixture.txt".into(),mime:"text/plain".into(),size:7,kind:"file".into() },path:path.clone(),written:7,ready:true,owner:None,retry_until:None,dispatched:false };
+        ([("file".into(), item)].into(), path)
+    }
+    #[test]
+    fn retry_claims_are_atomic_and_exclusive() {
+        let (mut files, path) = staged_fixture();
+        assert!(claim_staged(&mut files, "old", &["file".into(),"missing".into()]).is_err());
+        assert!(files["file"].owner.is_none());
+        claim_staged(&mut files, "old", &["file".into()]).unwrap();
+        assert!(claim_staged(&mut files, "other", &["file".into()]).is_err());
+        assert_eq!(files["file"].owner.as_deref(), Some("old"));
+        finish_staged(&mut files, "old", true);
+        assert!(files.is_empty() && !path.exists());
+    }
+    #[test]
+    fn temporary_mode_loss_retains_staged_file_for_retry() {
+        let (mut files, path) = staged_fixture();
+        std::fs::write(&path, [0, 128, 255, 17]).unwrap();
+        claim_staged(&mut files, "first", &["file".into()]).unwrap();
+        terminal_staged(&mut files, "first", true, Some("temporary_unavailable"));
+        assert_eq!(std::fs::read(&path).unwrap(), [0, 128, 255, 17]);
+        claim_staged(&mut files, "retry", &["file".into()]).unwrap();
+        terminal_staged(&mut files, "retry", false, None);
+        assert!(!path.exists());
+    }
+    #[test]
+    fn stale_terminals_cannot_delete_retried_files_or_extend_retention() {
+        let (mut files, path) = staged_fixture();
+        claim_staged(&mut files, "old", &["file".into()]).unwrap();
+        let now=Instant::now();
+        retain_staged(&mut files, "old", now);
+        retain_staged(&mut files, "old", now+Duration::from_secs(30));
+        assert_eq!(files["file"].retry_until, Some(now+RETRY_TTL));
+        finish_staged(&mut files, "old", false);
+        assert!(path.exists());
+        claim_staged(&mut files, "retry", &["file".into()]).unwrap();
+        finish_staged(&mut files, "old", true);
+        retain_staged(&mut files, "old", now);
+        assert!(path.exists() && files["file"].retry_until.is_none());
+        assert_eq!(files["file"].owner.as_deref(), Some("retry"));
+        finish_staged(&mut files, "retry", false);
+        assert!(files.is_empty() && !path.exists());
+    }
+    #[test]
+    fn expiry_deletes_retained_bytes_but_keeps_drafts_and_active_sends() {
+        let (mut files, path) = staged_fixture();
+        let now=Instant::now();
+        reap_staged(&mut files, now+RETRY_TTL+Duration::from_secs(1));
+        assert!(path.exists());
+        claim_staged(&mut files, "turn", &["file".into()]).unwrap();
+        reap_staged(&mut files, now+RETRY_TTL+Duration::from_secs(1));
+        assert!(path.exists());
+        retain_staged(&mut files, "turn", now);
+        reap_staged(&mut files, now+RETRY_TTL-Duration::from_millis(1));
+        assert!(path.exists());
+        reap_staged(&mut files, now+RETRY_TTL);
+        assert!(files.is_empty() && !path.exists());
+        assert!(claim_staged(&mut files, "retry", &["file".into()]).is_err());
+    }
     #[test]
     fn names_stay_inside_the_cache_and_keep_unicode() {
         assert_eq!(safe_name("../hello 🥰.png"), "_hello 🥰.png");
@@ -1092,6 +1294,8 @@ mod tests {
             "file:///C:/x",
             "https://localhost/x",
             "https://chatgpt.com.evil.test/x",
+            "https://gemini.google.com.evil.test/x",
+            "https://user:pass@gemini.google.com/x",
             "javascript:alert(1)",
             "data:image/svg+xml;base64,xxx",
             "https://user:pass@chatgpt.com/x",

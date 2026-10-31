@@ -1,0 +1,3 @@
+https://github.com/servo/stylo
+Commit: 572ecba2d1600e7c3d490586692a209faf703baa
+Crate: selectors 0.38.0

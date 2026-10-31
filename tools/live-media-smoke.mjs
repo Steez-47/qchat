@@ -61,7 +61,8 @@ try {
     return until(() => ui.evaluate(`window.__liveResults[${JSON.stringify(id)}]?.terminal ? window.__liveResults[${JSON.stringify(id)}] : null`), 180000);
   }
   async function file(name, mime, bytes) {
-    const item = await invoke('attachment_begin', { name, mime, size: bytes.length });
+    const { uploadGeneration } = await invoke('launch_info');
+    const item = await invoke('attachment_begin', { name, mime, size: bytes.length, uploadGeneration });
     for (let offset = 0; offset < bytes.length; offset += 512 * 1024) await invoke('attachment_chunk', { id: item.id, offset, data: bytes.subarray(offset, offset + 512 * 1024).toString('base64') });
     await invoke('attachment_finish', { id: item.id }); return item.id;
   }

@@ -15,13 +15,24 @@
   let mockTimer = null;
 
   const emitMock = (event, payload) => {
+    if (event === "bridge") payload = {provider: mock.provider, ...payload};
     for (const cb of (listeners.get(event) || []).slice()) {
       try { cb({ event, payload }); } catch (e) { console.error(e); }
     }
   };
 
   const mock = (window.__mock = {
+    provider: "chatgpt",
+    autostart: params.has("autostart"),
+    failProvider: params.has("failProvider"),
+    providerHold: params.has("holdProvider"),
+    model: "Flash-Lite",
+    failModel: false,
+    models: {gemini:[{id:"flash",label:"Flash-Lite",selected:true,meta:"Fast answers"},{id:"pro",label:"Pro",meta:"Advanced reasoning",disabled:true},{id:"thinking",label:"Thinking",meta:"Deeper answers"}]},
+    levels: [],
     calls: [],
+    attachmentFaults: {},
+    attachmentFiles: mockFiles,
     fit: null,
     fits: [],
     settingsOpen: false,
@@ -30,6 +41,7 @@
     hold: false,
     statusHold: params.get("status") === "hold",
     connectTimeout: Number(params.get("connect")) || 0,
+    accountListTimeout: Number(params.get("listTimeout")) || 0,
     reply: null,
     failOpen: null,
     silentOpen: false,
@@ -81,7 +93,7 @@
   };
 
   const emitStatus = (delay, url = "https://chatgpt.com/") => setTimeout(() => {
-    emitMock("bridge", { type: "status", ready: true, loggedIn: mock.loggedIn, url });
+    emitMock("bridge", { type: "status", setupId: mock.setupId || null, temporary: Boolean(mock.temporary), ready: true, loggedIn: mock.loggedIn, model:mock.provider === "gemini" ? mock.model : undefined, url });
   }, delay);
 
   const runStream = (id, targetText) => {
@@ -108,7 +120,25 @@
     core: {
       invoke: async (cmd, args = {}) => {
         mock.calls.push({ cmd, args });
+        if (cmd.startsWith("attachment_")) {
+          const fault = mock.attachmentFaults[cmd];
+          if (fault) {
+            const n = fault.calls = (fault.calls || 0) + 1;
+            if (fault.holdOn?.includes(n)) await new Promise(resolve => { fault.release = resolve; });
+            if (fault.failOn?.includes(n)) {
+              const message = fault.message || "Mock attachment failure";
+              throw fault.raw ? message : new Error(message);
+            }
+          }
+        }
         switch (cmd) {
+          case "provider_get": return mock.provider;
+          case "provider_set":
+            if (mock.providerHold) await new Promise(resolve => { mock.releaseProvider = resolve; });
+            if (mock.failProvider) throw new Error("unavailable");
+            mock.provider = args.provider; if (!mock.statusHold) emitStatus(0); return;
+          case "launch_info": return {autostart:mock.autostart};
+          case "show_main": return;
           case "snapshot_capture": {
             if (mock.snapshotError) throw new Error(mock.snapshotError);
             return { name: "Snapshot.png", mime: "image/png", data: MOCK_SNAPSHOT_PNG };
@@ -135,10 +165,17 @@
           case "attachment_remove": mockFiles.delete(args.id); return null;
           case "media_load": return { id: args.mediaId, name: "Demo image.png", kind: "image", mime: "image/png", src: MOCK_PNG };
           case "media_save": return "Demo image.png";
+          case "conversation_export":
+            if (mock.exportHold) await new Promise(resolve => { mock.releaseExport = resolve; });
+            if (mock.exportError) throw new Error("save failed");
+            return "QChat - Conversation.md";
           case "image_copy": return null;
           case "chat_models":
-            emitMock("bridge", { type: "models", models: params.get("mock") === "no-models" ? [] : [{ id: "0", label: "Mock model", selected: true }, { id: "1", label: "Mock alternate", selected: false }] }); return null;
+            if (mock.silentModels || params.get("mock") === "silent-models") return null;
+            emitMock("bridge", { type: "models", levels:mock.provider === "gemini" ? mock.levels : undefined, models: mock.models[mock.provider] || (params.get("mock") === "no-models" ? [] : [{ id: "0", label: "Mock model", selected: true }, { id: "1", label: "Mock alternate", selected: false }]) }); return null;
           case "chat_model_choose":
+            if (mock.failModel) throw new Error("unavailable");
+            if (mock.provider === "gemini") { mock.model = mock.models.gemini.find(m=>m.id===args.id)?.label || args.id; emitMock("bridge",{type:"model-chosen",short:mock.model,model:{id:args.id,label:mock.model}}); return null; }
             emitMock("bridge", { type: "model-chosen", model: { id: args.id, label: args.id === "0" ? "Mock model" : "Mock alternate" } }); return null;
           case "chat_status":
             if (!mock.statusHold) emitStatus(15);
@@ -185,6 +222,8 @@
             clearMockStream();
             return null;
           case "chat_new":
+            mock.temporary = Boolean(args.temporary);
+            mock.setupId = args.setupId || null;
             clearMockStream();
             mock.pageConv = null;
             emitStatus(20);

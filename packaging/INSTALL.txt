@@ -1,0 +1,66 @@
+QChat 1.3.0 for Windows x64
+
+INSTALL
+Run QChat_1.3.0_x64-setup.exe. Install for your Windows user, then open
+QChat from the Start menu or the installer's Finish page.
+The setup file contains the Microsoft Edge WebView2 runtime installer.
+No separate Node.js, Rust, Python or Visual C++ download is needed.
+WebView2 is installed only if missing; Microsoft may request permission.
+
+REQUIREMENTS
+Windows 11 x64 (recommended), or Windows 10 22H2 x64.
+Internet access is required to use ChatGPT or Gemini. This build is for x64 Windows;
+ARM devices and older Windows versions have not been tested.
+
+FIRST USE
+Alt+Q opens or hides QChat. Sign in through QChat to use your ChatGPT or
+Gemini account. /gemini and /chatgpt, or the picker beside the
+prompt, switch provider. Type / for commands. Ctrl+Alt+Q captures selected text.
+Drag the circle to move the window. Quit through the tray menu.
+Open at startup is optional and off by default: use Settings, the tray
+or /startup. It starts quietly in the tray unless you choose to show the bar.
+QChat is an independent app and is not affiliated with OpenAI or Google.
+ChatGPT and Gemini account features, subscriptions and limits apply.
+
+SECURITY PROMPT
+This release is unsigned. Windows may show an unknown publisher or
+SmartScreen warning. Verify the download source and checksum before
+deciding whether to run it. Signing is not included in this release.
+
+UPGRADING FROM THE PORTABLE BETA
+Quit the old copy from its tray menu before installing or launching.
+The app identifier is unchanged, so existing local settings, chats and
+sign-in can be reused on the same Windows account. Other devices start
+with their own local data and require their own sign-in.
+If Open at startup was enabled in a portable copy, disable it there
+first, then enable it in the installed version if wanted.
+
+UNINSTALL
+Quit QChat, then uninstall through Windows Settings > Apps.
+The uninstaller removes this installation's open-at-startup entry.
+Keep the default data-preserving option to retain settings and sign-in;
+choose removal of application data only if you want to clear them.
+
+EXTERNAL DEVICE CHECK
+1. Install and launch from the Start menu.
+2. Check Alt+Q, sign-in, sending a message and the / command menu.
+3. Check selected-text capture, attachments, Snapshot and chat history.
+4. Quit and reopen; verify sign-in, settings and saved chats persist.
+5. Turn on Open at startup, sign out and back in, and check that QChat
+   is in the tray and Alt+Q opens it. Try it once with no network at login.
+   Sign in to Gemini and send a message.
+6. Quit and uninstall; check that the Start menu shortcut is removed.
+
+PORTABLE OPTION
+QChat.exe can also run without installing QChat, but requires an existing
+Microsoft Edge WebView2 runtime. It stores data in your Windows profile,
+not beside the exe. Use the setup exe for a new device.
+
+CHECKSUMS AND NOTICES
+SHA256SUMS.txt covers the release files. In PowerShell, use:
+  Get-FileHash .\QChat_1.3.0_x64-setup.exe -Algorithm SHA256
+THIRD-PARTY-NOTICES.txt contains dependency notices and source references.
+
+VALIDATION
+The release package was built and its payload inspected on the build PC.
+A clean-device installation, sign-in and uninstall remain to be tested.

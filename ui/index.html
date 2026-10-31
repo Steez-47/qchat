@@ -20,7 +20,7 @@
         <span class="history-status glass glass-tiny" id="history-status" role="status" hidden></span>
       </div>
       <section class="history-panel scroll" id="history-panel" tabindex="0" aria-label="Message history" hidden></section>
-      <section class="bubble-zone" id="bubble-zone" role="log" aria-live="polite" aria-relevant="additions" aria-label="ChatGPT response" hidden></section>
+      <section class="bubble-zone" id="bubble-zone" role="log" aria-live="polite" aria-relevant="additions" aria-label="Response" hidden></section>
 
       <div class="notice glass glass-tiny" id="guest-notice" hidden>
         <p class="notice-text"><strong id="guest-title">Guest mode</strong> <span id="guest-message">Sign in to use your models and history.</span></p>
@@ -55,11 +55,11 @@
         <div class="slash-menu glass glass-tiny" id="slash-menu" role="listbox" aria-label="Commands" hidden></div>
         <footer class="bar glass" id="bar">
           <input id="attachment-input" type="file" multiple hidden>
-          <div class="orb" id="orb" role="button" tabindex="0" aria-label="QChat menu" title="QChat menu">
+          <div class="orb" id="orb" aria-hidden="true">
             <span class="status-dot" id="status-dot" data-state="connecting"></span>
           </div>
           <span class="sr-only" id="status-label" role="status">Connecting…</span>
-          <textarea class="bar-input" id="prompt-input" rows="1" placeholder="Ask anything" aria-label="Message" spellcheck="true" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="slash-menu"></textarea>
+          <textarea class="bar-input" id="prompt-input" rows="1" placeholder="Ask anything · / commands" aria-label="Message" spellcheck="true" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="slash-menu"></textarea>
           <button type="button" class="bar-btn reasoning-btn" id="btn-reasoning" aria-label="Reasoning: Medium" title="Reasoning effort"><span class="reasoning-label">Medium</span></button>
           <button type="button" class="bar-btn" id="btn-attach" aria-label="Attach files" title="Attach files"><span class="icon" aria-hidden="true">&#xE723;</span></button>
           <button type="button" class="bar-btn" id="btn-snapshot" aria-label="Snapshot current window" title="Snapshot current window"><span class="icon" aria-hidden="true">&#xE722;</span></button>
@@ -76,6 +76,8 @@
   <script src="vendor/acorn.js"></script>
   <script src="interactive.js"></script>
   <script src="stream-text.js"></script>
+  <script src="find-text.js"></script>
+  <script src="find.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

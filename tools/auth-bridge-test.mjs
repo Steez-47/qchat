@@ -204,7 +204,8 @@ test('prepare before Send enables does not start a turn or prevent the actual se
   await b.tick(300); await sent;
   assert.equal(b.sendClicks(), 1);
   assert.equal(b.requests.filter(request => request.url === '/backend-api/f/conversation').length, 1);
-  assert.deepEqual(b.events.filter(event => event.type !== 'status').map(event => event.type), ['start', 'delta', 'delta', 'done']);
+  assert.equal(b.events.filter(event => event.type === 'progress').length, 1, 'one liveness heartbeat, independent of Send starting');
+  assert.deepEqual(b.events.filter(event => !['status','progress'].includes(event.type)).map(event => event.type), ['start', 'delta', 'delta', 'done']);
   assert.deepEqual(b.events.filter(event => event.type === 'delta').map(event => event.text), ['synthetic', 'synthetic answer']);
   assert.equal(b.events.at(-1).text, 'synthetic answer');
 });

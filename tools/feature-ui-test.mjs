@@ -117,8 +117,12 @@ try {
   });
 
   await open('/', { settings: { animations: 'off', autoDismiss: 0 } });
+  const orbPoint = await evalJS(`(()=>{const r=document.getElementById('orb').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+  await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...orbPoint, button: 'left', clickCount: 1 });
+  await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...orbPoint, button: 'left', clickCount: 1 });
+  check('clicking orb leaves command list closed', await evalJS(`document.getElementById('slash-menu').hidden`));
   await key('k', { ctrlKey: true });
-  check('orb menu / Ctrl+K opens command list', await evalJS(`!document.getElementById('slash-menu').hidden`));
+  check('Ctrl+K opens command list', await evalJS(`!document.getElementById('slash-menu').hidden`));
   await key('Escape');
   await key('p', { ctrlKey: true });
   check('chat switcher empty state', await evalJS(`document.querySelector('.feature-list').textContent.includes('No chats yet')`));
@@ -139,6 +143,7 @@ try {
   await key('Escape');
   await send('Recall this');
   await waitFor(`document.querySelector('[data-role=assistant]')?.dataset.status==='done'`);
+  check('command hint remains after sending', await evalJS(`document.getElementById('prompt-input').placeholder==='Ask anything · / commands'`));
   check('finished reply tools', await evalJS(`!!document.querySelector('[aria-label="Retry"]')`));
   await key('ArrowUp');
   check('prompt recall', await inputValue()==='Recall this');
@@ -157,7 +162,7 @@ try {
   check('model guest fallback has sign in', await waitFor(`document.querySelector('.feature-list').textContent.includes('Sign in to choose a model')`));
   await key('Escape');
   await evalJS(`__mock.emit('qchat://shown',null)`);
-  check('first-run placeholder on shown', await evalJS(`document.getElementById('prompt-input').placeholder==='Ask anything, or type / for commands'`));
+  check('command hint on shown', await evalJS(`document.getElementById('prompt-input').placeholder==='Ask anything · / commands'`));
   const seeded = Array.from({length:55}, (_,i)=>chatSeed('saved-'+i));
   await open('/', { chats: {v:1,current:chatSeed('current'),recent:seeded}, settings:{animations:'off',autoDismiss:0} });
   await type('draft');
@@ -173,7 +178,7 @@ try {
   check('every menu command runs without console errors', problems.length===0);
   check('attachment chips use quiet 28px height', (await readFile(path.join(root,'ui/app.css'),'utf8')).includes('height: 28px; min-height: 28px'));
   check('README documents feature checks', (await readFile(path.join(root,'README.md'),'utf8')).includes('feature-ui-test.mjs'));
-  await open('/', { chats: { v:1,current:chatSeed('current'),recent:[chatSeed('a'),chatSeed('b'),chatSeed('c')] }, settings:{animations:'off',autoDismiss:0} });
+  await open('/', { chats: { v:1,current:chatSeed('current'),recent:[chatSeed('a',{ago:MIN}),chatSeed('b',{ago:2*MIN}),chatSeed('c',{ago:3*MIN})] }, settings:{animations:'off',autoDismiss:0} });
   await key('p', { ctrlKey: true });
   await waitFor(`!document.querySelector('.feature-list').hidden && document.querySelectorAll('.feature-list .feature-row').length===3`);
   check('chat rows are title span plus tabular meta span', await evalJS(`(()=>{const rows=[...document.querySelectorAll('.feature-list .feature-row')];return rows.length===3&&rows.every(r=>{const t=r.querySelector('.feature-title'),m=r.querySelector('.feature-meta');return !!t&&t.textContent.length>0&&!!m&&m.textContent.trim().length>0&&getComputedStyle(m).fontVariantNumeric.includes('tabular-nums');});})()`));
@@ -184,7 +189,8 @@ try {
   await key('ArrowDown');
   check('arrow moves the data-selected highlight with focus in the field', await evalJS(`(()=>{const rows=[...document.querySelectorAll('.feature-list .feature-row')];return rows[1].hasAttribute('data-selected')&&!rows[0].hasAttribute('data-selected')&&document.activeElement===document.querySelector('.feature-search');})()`));
   await key('Enter');
-  check('Enter opens the highlighted chat into the composer', await evalJS(`document.querySelector('.feature-list').hidden&&document.activeElement===document.getElementById('prompt-input')&&JSON.parse(localStorage.getItem('qchat.chats')).current.key==='b'`));
+  const openedChat=await evalJS(`({hidden:document.querySelector('.feature-list').hidden,composerFocused:document.activeElement===document.getElementById('prompt-input'),key:JSON.parse(localStorage.getItem('qchat.chats')).current.key})`);
+  check('Enter opens the highlighted chat into the composer',openedChat.hidden&&openedChat.composerFocused&&openedChat.key==='b',JSON.stringify(openedChat));
   await type('/keys'); await key('Enter'); await sleep(80);
   check('shortcuts card rows are quiet kbd chips, not buttons', await evalJS(`(()=>{const list=document.querySelector('.feature-list');return !list.hidden&&list.querySelectorAll('.feature-row button').length===0&&list.querySelectorAll('.key').length>=8&&[...list.querySelectorAll('.feature-row')].every(r=>r.firstElementChild.classList.contains('key')&&r.children[1].classList.contains('feature-title'));})()`));
   check('combo chips are single 22px kbds', await evalJS(`(()=>{const k=document.querySelector('.feature-keys .key');const s=getComputedStyle(k);return !!k&&s.height==='22px'&&s.fontSize==='11.5px'&&!k.textContent.includes('\\n')&&k.textContent.length>1;})()`));
@@ -202,7 +208,7 @@ try {
   const settingsAcl = JSON.parse(await readFile(path.join(root,'src-tauri/capabilities/settings.json'),'utf8'));
   check('finding 1 settings selection and desktop command ACL', ['get-hotkey','set-hotkey','get-autostart','set-autostart','get-selection-hotkey','set-selection-hotkey','set-selection-clipboard'].every(c=>settingsAcl.permissions.includes('allow-'+c)));
   check('finding 2 startup registration tracked and fallback attempted', nativeSource.includes('s.registered=registered') && nativeSource.includes('chosen = "Alt+Q"'));
-  check('finding 3 temporary command awaits new chat before marking it', appSource.includes('await startNewChat(false); chats.current.temporary = true'));
+  check('finding 3 temporary command awaits new chat before marking it', /async function startTemporaryChat\(\) \{\s*await startNewChat\(false\);\s*chats\.current\.temporary = true;/.test(appSource) && appSource.includes('run: startTemporaryChat'));
   check('finding 4 held buttons only prevent ignoring',nativeSource.includes('!desired || [1,2,4,5,6]'));
   check('finding 5 model selection refuses active jobs and ambiguous triggers',bridgeSource.includes('if(active)') && bridgeSource.includes('candidates.length !== 1') && bridgeSource.includes("['pointerdown','mousedown','pointerup','mouseup','click']"));
   check('finding 6 temporary chat saves a fresh current with recents',appSource.includes('chats.current.temporary ? freshChat() : chats.current'));
@@ -212,8 +218,10 @@ try {
   check('finding 10 surface limit and stale fail-open guard',nativeSource.includes('rects.len() > 2048') && nativeSource.includes('!rs.is_empty()') && nativeSource.includes('reported.elapsed()'));
   check('finding 11 surface geometry intersects viewport and clipping ancestors',surfacesSource.includes('Math.min(innerWidth,b.right)') && surfacesSource.includes('parent=parent.parentElement'));
   check('finding 12 surfaces use Set membership and finite animation loops',surfacesSource.includes('new Set(nodes)') && surfacesSource.includes('iterations !== Infinity') && nativeSource.includes('Result<(), String>'));
-  check('finding 13 autostart compares stored executable path',nativeSource.includes("trim_end_matches('\\0') == expected"));
-  check('finding 14 reconnect navigates signed-in unready page',appSource.includes('bridge.loggedIn && !bridge.ready ? "chat_new" : "chat_status"'));
+  check('finding 13 autostart compares stored executable path',nativeSource.includes("parse_autostart(") && nativeSource.includes("eq_ignore_ascii_case("));
+  const hostSource=await readFile(path.join(root,'src-tauri/src/main.rs'),'utf8');
+  const reconnectSource=hostSource.match(/fn chat_status\([\s\S]*?(?=#\[tauri::command\])/)?.[0]||'';
+  check('finding 14 reconnect reloads the provider without clearing uploads',appSource.includes('invoke("chat_status", { reconnect: true, provider: activeProvider })')&&reconnectSource.includes('core.Reload()')&&!reconnectSource.includes('media::clear'));
   check('finding 15 quota trims oldest entries without erasing all recents',appSource.includes('while (recent.length > 1)') && !appSource.includes('current.transcript.slice(-2) }, recent: []'));
   check('no runtime errors', problems.length === 0, problems.slice(0, 3).join(' | '));
 } catch (e) {

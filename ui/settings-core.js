@@ -6,7 +6,7 @@
   const STORAGE_KEY = "qchat.settings";
   const THEME_KEY = "qchat.theme";
   const LEGACY_LOOK_KEY = "qchat.look";
-  const VERSION = 5;
+  const VERSION = 6;
 
   // ---------------------------------------------------------------------------
   // Looks. Everything else (fills, text tiers, rims) is derived in apply().
@@ -138,6 +138,7 @@
     alwaysOnTop: bool(true),
     hideOnBlur: bool(false),
     sendKey: choice("enter", ["enter", "ctrl"]),
+    defaultProvider: choice("chatgpt", ["chatgpt", "gemini"]), showBarAtStartup: bool(false),
     defaultReasoning: choice("medium", ["low", "medium", "high"]),
     autoDismiss: range(0, 0, 120, 5, "s"),
 
@@ -145,7 +146,7 @@
   };
 
   const DEFAULTS = Object.freeze(Object.fromEntries(Object.entries(SCHEMA).map(([k, v]) => [k, v.def])));
-  const APPEARANCE_KEYS = Object.keys(SCHEMA).filter(k => !["rememberPosition","selectionClipboard","alwaysOnTop","hideOnBlur","sendKey","defaultReasoning","autoDismiss","keepHistory"].includes(k));
+  const APPEARANCE_KEYS = Object.keys(SCHEMA).filter(k => !["defaultProvider","showBarAtStartup","rememberPosition","selectionClipboard","alwaysOnTop","hideOnBlur","sendKey","defaultReasoning","autoDismiss","keepHistory"].includes(k));
   const PRESETS = [
     ["default","Default","Clear glass",{}],
     ["reader","Reader","Wide, generous serif",{replyWidth:860,textSize:18,fontFamily:"serif",replyOpacity:100,paragraphSpacing:1.4}],

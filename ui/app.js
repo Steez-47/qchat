@@ -4,6 +4,7 @@
   const IS_MOCK = window.__QCHAT_MOCK__ === true;
   const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
   const listen = (event, cb) => window.__TAURI__.event.listen(event, cb);
+  const launchInfo = invoke("launch_info").catch(() => null);
   const GUTTER = 28;
   const CHATS_KEY = "qchat.chats";
   const CHATS_VERSION = 1;
@@ -46,6 +47,7 @@
 
   const GLYPH = {
     copy: "",
+    save: "\uE74E",
     check: "",
     send: "",
     stop: "",
@@ -94,7 +96,7 @@
       const rawTitle = typeof title === "string" ? title : (href?.title ?? "");
       const labelHtml = typeof text === "string" ? text : (href?.text ?? "");
       const safeUrl = sanitizeHref(rawHref);
-      if (!safeUrl) return /^(sandbox:|attachment:|qchat-media:)/i.test(rawHref) ? `<button type="button" class="hyperlink-btn" data-action="view-media">${labelHtml || "View file in ChatGPT"}</button>` : labelHtml;
+      if (!safeUrl) return /^(sandbox:|attachment:|qchat-media:)/i.test(rawHref) ? `<button type="button" class="hyperlink-btn" data-action="view-media">${labelHtml || `View file in ${providerName()}`}</button>` : labelHtml;
       const titleAttr = ` title="${escapeHtml(rawTitle || safeUrl)}"`;
       return `<a href="${escapeHtml(safeUrl)}"${titleAttr} rel="noopener noreferrer">${labelHtml}</a>`;
     };
@@ -124,12 +126,21 @@
     return html.replace(/\uE000(\d+)\uE001/g, (token, index) => formulas[Number(index)]?.html ?? "");
   }
 
-  function renderMarkdownSafe(markdownText, sources = []) {
+  function replyMarkdown(markdownText, sources = []) {
     const citation = refs => refs.split(/[,;\s]+/).map(ref => {
       const source = sources.find(item => item.id === ref);
       return source ? `[${sources.indexOf(source) + 1}](<${source.url}>)` : "";
     }).filter(Boolean).join(" ");
-    const src = window.QResponseTags.toMarkdown(markdownText, { citation });
+    return window.QResponseTags.toMarkdown(markdownText, { citation });
+  }
+
+  function copyReplyMarkdown(markdownText, sources) {
+    return window.QResponseTags.protect(replyMarkdown(completedSnapshot(markdownText).text, sources), prose =>
+      prose.replace(/!\[([^\]\n]*)\]\(qchat-web:[\w-]+\)/g, (_, label) => label ? `[Image: ${label}]` : "[Image]"));
+  }
+
+  function renderMarkdownSafe(markdownText, sources = []) {
+    const src = replyMarkdown(markdownText, sources);
     if (!src) return "";
     const prepared = window.QMath?.prepare(src);
     const html = window.marked ? window.marked.parse(prepared ? prepared.text : src) : `<p>${escapeHtml(src)}</p>`;
@@ -187,7 +198,7 @@
     let url = null;
     try {
       const parsed = new URL(atob(figure.dataset.web.replace(/-/g, "+").replace(/_/g, "/")));
-      if (parsed.protocol === "https:" && parsed.hostname === "images.openai.com") url = parsed.href;
+      if (parsed.protocol === "https:" && (parsed.hostname === "images.openai.com" || /^encrypted-tbn[0-9]*\.gstatic\.com$/.test(parsed.hostname)) && !parsed.username && !parsed.password && (!parsed.port || parsed.port === "443")) url = parsed.href;
     } catch (_) {}
     if (!url) { void loadBrokeredImage(figure); return; }
     const image = make("img");
@@ -336,12 +347,15 @@
     stream_failed: "The response was interrupted.",
     timeout: "ChatGPT took too long to respond.",
     open_timeout: "That chat is taking too long to open. Try sending again.",
+    temporary_unavailable: "Temporary chat could not be confirmed. Your draft is safe; try again or check the provider.",
+    attachment_pending: "The provider still has pending files. Start a new chat or remove them there before sending again.",
+    attachment_expired: "This file is no longer available. Use Retry on the file or attach it again.",
     invalid_id: "That chat can't be reopened. Start a new one with /new.",
     offline: "Can't reach ChatGPT. Check your connection, then try again."
   };
 
   const formatErrorCopy = (code, fallback) =>
-    (code && ERROR_MESSAGES[code]) || fallback || "Something went wrong.";
+    ((code && ERROR_MESSAGES[code]) || fallback || "Something went wrong.").replaceAll("ChatGPT", providerName());
 
   // Native errors look like "busy: details".
   const errorCode = (err) => {
@@ -388,7 +402,6 @@
     attachments: $("attachments")
   };
 
-  const prompts = [];
   let recallIndex = -1;
   const turns = [];
   const turnNodes = new Map();
@@ -396,18 +409,19 @@
   const pendingFiles = [];
   const imageURLs = new Set();
   let stageQueue = Promise.resolve();
+  let globalErrorRevision = 0;
   let sending = false;
   let snapshotCapturing = false;
   let chatGeneration = 0;
   let userScrolledUp = false;
   let guestDismissed = false;
   let sentThisSession = false;
-  let firstRunHint = false;
   let autoDismissTimer = null;
   let historyOpen = false;
   let historyChatKey = null;
   let historyHideTimer = null;
   let historyHeld = false;
+  const readingPositions = new Map();
   const backfilled = new WeakSet();
   let backfillTimer = null;
   const bridge = { ready: false, loggedIn: false, signedOut: false };
@@ -415,8 +429,15 @@
   let connectErrorShown = false;
 
   const isStreaming = () => turns.some((t) => t.status === "streaming");
-  const isBusy = () => sending || isStreaming();
+  const isBusy = () => sending || isStreaming() || switchingProvider;
   const stopBackend = () => invoke("chat_stop").catch(() => {});
+  const finder = window.QFind.create({
+    panel: el.historyPanel, controls: el.historyControls,
+    onOpen: () => { setHistoryOpen(true); historyHeld = true; },
+    onClose: () => el.promptInput.focus({ preventScroll: true }),
+    onHold: () => { historyHeld = true; },
+    onLayout: queueSizes
+  });
 
   function make(tag, className, text) {
     const node = document.createElement(tag);
@@ -449,8 +470,13 @@
   // ---------------------------------------------------------------------------
   // 4. Chat history (local only)
   // ---------------------------------------------------------------------------
+  let activeProvider = QSettings.settings.defaultProvider || "chatgpt";
+  const providerName = (chat) => (chat?.provider || activeProvider) === "gemini" ? "Gemini" : "ChatGPT";
+  const providerStates = {};
+  let switchingProvider = false;
   const freshChat = () => ({
     key: crypto.randomUUID(),
+    provider: activeProvider,
     conversationId: null,
     title: "",
     lastActive: Date.now(),
@@ -466,7 +492,7 @@
   const hasContent = (chat) => Boolean(chat.transcript?.length || chat.lastPrompt || chat.lastResponse || chat.lastHasMedia || chat.conversationId || chat.selectionTexts?.length);
 
   const cleanSelections = (items) => (Array.isArray(items) ? items : []).filter(text => typeof text === "string" && text.trim());
-  const hasTurnContent = (item) => Boolean(item.text || item.hasMedia || (item.role === "user" && item.selectionTexts?.length));
+  const hasTurnContent = (item) => Boolean(item.text || item.hasMedia || item.hadAttachments || item.media?.length || (item.role === "user" && item.selectionTexts?.length));
   const wirePrompt = (prompt, selections) => [prompt, ...selections.map(text => text.replace(/\r\n?/g, "\n").split("\n").map(line => "> " + line).join("\n"))].filter(Boolean).join("\n\n");
   // Keep the original account-message match even if storage pressure trims local context.
   function selectionMatch(prompt) {
@@ -491,7 +517,7 @@
       remove.append(makeIcon(GLYPH.close));
       remove.addEventListener("click", () => {
         if (sending) return;
-        chats.current.selectionTexts.splice(index, 1);
+        chats.current.selectionTexts.splice(chip._selectionIndex, 1);
         saveChats(); renderAttachments(); updateIdleChips(); queueSizes();
       });
       chip.append(remove);
@@ -512,11 +538,11 @@
     let media = Boolean(hasMedia);
     const ephemeral = /^(?:qchat-media:|sandbox:|attachment:|https?:\/\/qchat-media\.localhost(?:[/:]|$)|https?:\/\/[^/]*oaiusercontent\.com\/)/i;
     let text = String(value || "");
-    text = text.replace(/(!?)\[([^\]\n]*)\]\(([^\n]*?)\)/g, (match, image, label, href) => {
+    text = window.QResponseTags.protect(text, prose => prose.replace(/(!?)\[([^\]\n]*)\]\(([^\n]*?)\)/g, (match, image, label, href) => {
       if (/^qchat-web:/.test(href) || (!image && !ephemeral.test(href.trim().replace(/^</, "")))) return match;
       media = true;
       return "";
-    });
+    }));
     text = text.replace(/(?:qchat-media:|sandbox:|attachment:|https?:\/\/qchat-media\.localhost\/|https?:\/\/[^\s/]*oaiusercontent\.com\/)[^\s<>)]*/gi, () => {
       media = true;
       return "";
@@ -569,12 +595,12 @@
     else transcript[index] = { ...item, media: transcript[index].media };
   }
 
-  function historyItems() {
+  function historyItems(fullText = false) {
     const items = chats.current.transcript.slice();
     for (const turn of turns) {
       if (turn.chatKey && turn.chatKey !== chats.current.key) continue;
       const entry = turnNodes.get(turn.id);
-      const visible = turn.status === "streaming" && entry?.reveal ? entry.reveal.visible : turn.text;
+      const visible = !fullText && turn.status === "streaming" && entry?.reveal ? entry.reveal.visible : turn.text;
       const item = snapshotTurn(turn, visible);
       const index = items.findIndex(existing => existing.id === item.id);
       if (index < 0) items.push(item);
@@ -583,19 +609,41 @@
     return items.filter(hasTurnContent);
   }
 
+  function userTools(item) {
+    const tools = make("div", "bubble-tools glass glass-tiny");
+    const copy = make("button", "tool-btn");
+    copy.type = "button"; copy.dataset.action = "copy-user";
+    copy.title = "Copy"; copy.setAttribute("aria-label", "Copy prompt");
+    const copyIcon = make("span", "icon user-copy-icon");
+    copyIcon.setAttribute("aria-hidden", "true"); copy.append(copyIcon);
+    const edit = make("button", "tool-btn");
+    edit.type = "button"; edit.dataset.action = "edit-prompt";
+    edit.title = "Edit in composer"; edit.setAttribute("aria-label", edit.title);
+    const editIcon = make("span", "icon user-edit-icon");
+    editIcon.setAttribute("aria-hidden", "true"); edit.append(editIcon);
+    tools.append(copy, edit);
+    syncUserTools(tools, item);
+    return tools;
+  }
+
+  // File-only turns have nothing to copy or load, so they show no tools at all.
+  function syncUserTools(tools, item) {
+    tools.hidden = !(item.text || item.selectionTexts?.length);
+  }
+
   // The same bubble markup as the live view, without its per-reply viewport:
   // the panel is the only scroller, so a message never gets its own cutoff.
   function createHistoryRow(item) {
     const row = make("article", "turn-row history-row");
     row.dataset.id = item.id;
     row.dataset.role = item.role;
-    row.setAttribute("aria-label", item.role === "user" ? "You said" : "ChatGPT replied");
+    row.setAttribute("aria-label", item.role === "user" ? "You said" : `${providerName()} replied`);
     const content = make("div", "turn-content");
     const media = make("div", "turn-media");
     if (item.role === "user") {
       const bubble = make("div", "bubble bubble-user glass glass-tiny");
       bubble.append(content, media);
-      row.append(bubble);
+      row.append(bubble, userTools(item));
     } else {
       const bubble = make("div", "bubble bubble-response glass");
       const inner = make("div", "bubble-inner turn-body");
@@ -651,6 +699,8 @@
       if (row._historyFingerprint === fingerprint) continue;
       row._historyFingerprint = fingerprint;
       row._copyText = item.text;
+      row._userTurn = item.role === "user" ? item : null;
+      if (item.role === "user") syncUserTools(row.querySelector(".bubble-tools"), item);
       row.toggleAttribute("data-wide", /\n/.test(item.text));
       const content = row.querySelector(".turn-content");
       const template = document.createElement("template");
@@ -667,7 +717,7 @@
       if (item.media?.length && chats.current.conversationId) {
         media.replaceChildren(...item.media.map(file => storedMediaCard(file, chats.current.conversationId)));
       } else if (item.hasMedia && !media.childElementCount) {
-        const view = make("button", "hyperlink-btn", "View attachments in ChatGPT");
+        const view = make("button", "hyperlink-btn", `View attachments in ${providerName()}`);
         view.type = "button";
         view.dataset.action = "history-media";
         media.append(view);
@@ -702,7 +752,7 @@
     save.addEventListener("click", async () => {
       save.disabled = true;
       try { await invoke("media_save", { mediaId, revision: 0 }); status.textContent = "Saved to Downloads"; }
-      catch (_) { status.textContent = "Could not save. View in ChatGPT to download."; }
+      catch (_) { status.textContent = `Could not save. View in ${providerName()} to download.`; }
       finally { save.disabled = false; }
     });
     actions.append(save);
@@ -766,8 +816,53 @@
     historyChatKey = null;
   }
 
-  function setHistoryOpen(open) {
+  function rememberReadingPosition() {
+    const key = chats.current.key;
+    const state = { history: historyOpen };
+    if (historyOpen) {
+      const panel = el.historyPanel;
+      if (scrollGap(panel) > 2) {
+        const top = panel.getBoundingClientRect().top;
+        const row = [...panel.children].find(node => node.dataset.id && node.getBoundingClientRect().bottom > top);
+        if (row) state.anchor = { id: row.dataset.id, offset: top - row.getBoundingClientRect().top };
+      }
+    } else {
+      const entry = responseEntry();
+      if (entry && scrollGap(entry.scroller) > 2 && (userScrolledUp || QSettings.settings.followStream === false)) {
+        state.top = entry.scroller.scrollTop;
+      }
+    }
+    readingPositions.delete(key);
+    readingPositions.set(key, state);
+    if (readingPositions.size > 50) readingPositions.delete(readingPositions.keys().next().value);
+  }
+
+  function restoreReadingPosition(chat) {
+    const state = readingPositions.get(chat.key);
+    if (!state) return;
+    if (state.history) {
+      setHistoryOpen(true, { focus: false });
+      const panel = el.historyPanel;
+      const row = state.anchor && [...panel.children].find(node => node.dataset.id === state.anchor.id);
+      historyHeld = Boolean(row);
+      if (row) panel.scrollTop += row.getBoundingClientRect().top - panel.getBoundingClientRect().top + state.anchor.offset;
+      else panel.scrollTop = panel.scrollHeight;
+      syncHistoryEdge();
+    } else if (state.top !== undefined) {
+      const entry = responseEntry();
+      if (entry) {
+        holdStream(entry);
+        entry.scroller.scrollTop = state.top;
+        entry.followTop = entry.scroller.scrollTop;
+        syncScrollState(entry);
+      }
+    }
+  }
+
+  function setHistoryOpen(open, { focus = true } = {}) {
+    if (!open) finder.close({ focus: false });
     if (open === historyOpen) return;
+    closeRenameChat(false);
     const panel = el.historyPanel;
     el.historyButton.setAttribute("aria-expanded", String(open));
     el.historyLabel.textContent = open ? "Latest" : "History";
@@ -791,7 +886,7 @@
       fitNow();
       void panel.offsetHeight;
       clearTimeout(autoDismissTimer);
-      panel.focus({ preventScroll: true });
+      if (focus) panel.focus({ preventScroll: true });
       syncHistoryButton();
       backfillHistory(chats.current);
     } else {
@@ -805,6 +900,7 @@
         panel.setAttribute("data-leaving", "");
         historyHideTimer = setTimeout(hideHistoryPanel, QSettings.timings.t2 + 30);
       } else hideHistoryPanel();
+      if (!isBusy() && !responseEntry() && chats.current.transcript.some(item => item.role === "assistant")) showCachedResponse(chats.current);
       el.promptInput.focus({ preventScroll: true });
       const entry = responseEntry();
       if (entry) {
@@ -908,6 +1004,15 @@
     }
     if (end <= 0) return;
     chat.transcript = [...older.slice(0, end), ...chat.transcript];
+    if (!local.length) {
+      const latest = chat.transcript.findLast(item => item.role === "assistant");
+      if (latest) {
+        chat.lastResponse = latest.text;
+        chat.lastHasMedia = latest.hasMedia;
+        chat.lastSources = latest.sources;
+        if (chat === chats.current && !historyOpen && !isBusy() && !responseEntry()) showCachedResponse(chat);
+      }
+    }
     saveChats();
     renderHistory();
   }
@@ -957,6 +1062,10 @@
     return text.length > MAX_STORED_TEXT ? `${text.slice(0, MAX_STORED_TEXT - 1)}…` : text;
   };
 
+  function normalizeChatTitle(value) {
+    return typeof value === "string" ? Array.from(value.replace(/\s+/gu, " ").replace(/[\u0000-\u001f\u007f]/g, "").trim()).slice(0, 40).join("").trimEnd() : "";
+  }
+
   function cleanChat(raw) {
     if (!raw || typeof raw !== "object" || typeof raw.key !== "string" || !raw.key) return null;
     const text = (value, max) => (typeof value === "string" ? value.slice(0, max) : "");
@@ -965,8 +1074,9 @@
     const reasoningEffort = validReasoning(raw.reasoningEffort);
     return {
       key: raw.key,
+      provider: raw.provider === "gemini" ? "gemini" : "chatgpt",
       conversationId: typeof raw.conversationId === "string" && raw.conversationId ? raw.conversationId : null,
-      title: text(raw.title, 40),
+      title: normalizeChatTitle(raw.title),
       lastActive: time(raw.lastActive),
       lastPrompt: text(raw.lastPrompt, Infinity),
       lastHadAttachments: raw.lastHadAttachments === true,
@@ -995,7 +1105,7 @@
       const recent = (Array.isArray(parsed.recent) ? parsed.recent : [])
         .map(cleanChat)
         .filter((chat) => chat && !seen.has(chat.key) && seen.add(chat.key))
-        .filter((chat, i, all) => !chat.conversationId || (chat.conversationId !== current.conversationId && all.findIndex((c) => c.conversationId === chat.conversationId) === i))
+        .filter((chat, i, all) => !chat.conversationId || ((chat.provider !== current.provider || chat.conversationId !== current.conversationId) && all.findIndex((c) => c.provider === chat.provider && c.conversationId === chat.conversationId) === i))
         .sort((a, b) => b.lastActive - a.lastActive)
         .slice(0, MAX_RECENT);
       return { current, recent };
@@ -1005,6 +1115,7 @@
   }
 
   const chats = loadChats();
+  activeProvider = chats.current.provider;
 
   // Saved default for new chats; a chat's own pick overrides it until a new chat.
   const savedReasoning = () => validReasoning(QSettings.settings.defaultReasoning) || "medium";
@@ -1012,14 +1123,17 @@
   let sentReasoning = null;
 
   function syncReasoningButton() {
+    el.btnReasoning.hidden = false;
+    el.zone.setAttribute("aria-label", `${providerName()} response`);
     const busy = isBusy();
     if (!busy) sentReasoning = null;
     const value = busy && sentReasoning ? sentReasoning : effectiveReasoning();
-    const label = REASONING_LABELS[value];
+    const label = activeProvider === "gemini" ? providerStates.gemini?.model || "Model" : REASONING_LABELS[value];
     el.btnReasoning.querySelector(".reasoning-label").textContent = label;
-    el.btnReasoning.setAttribute("aria-label", `Reasoning: ${label}`);
+    el.btnReasoning.setAttribute("aria-label", `${activeProvider === "gemini" ? "Model" : "Reasoning"}: ${label}`);
     el.btnReasoning.dataset.value = value;
-    el.btnReasoning.disabled = busy;
+    el.btnReasoning.disabled = busy || switchingProvider;
+    el.btnReasoning.title = activeProvider === "gemini" ? "Model" : "Reasoning";
   }
 
   function chooseReasoning(value) {
@@ -1033,13 +1147,65 @@
   function showReasoningPicker() {
     if (isBusy()) return;
     if (featureListAnchor === el.btnReasoning) { closeFeatureList(); return; }
+    if (activeProvider === "gemini") { requestModels(); return; }
     const selected = effectiveReasoning();
     showFeatureList("Reasoning", REASONING_LEVELS.map((value) => ({
       title: REASONING_LABELS[value],
       meta: value === "low" ? "Instant / Light" : value === "medium" ? "Standard" : "Extended",
       selected: value === selected,
       run: () => chooseReasoning(value)
-    })), false, el.btnReasoning);
+    })).concat(switchProviderRows()), false, el.btnReasoning);
+  }
+
+  async function setProvider(provider) {
+    if (provider === activeProvider) return true;
+    if (isBusy() || switchingProvider) return false;
+    closeRenameChat(false);
+    switchingProvider = true;
+    updateComposerMode();
+    try {
+      await invoke("provider_set", {provider});
+      // Each site keeps its own page, so returning must remember which chat that page still holds.
+      pageByProvider[activeProvider] = page;
+      activeProvider = provider;
+      pageSync = Promise.resolve();
+      setModelLabel("");
+      cancelModelRequest();
+      page = pageByProvider[provider] || {key:null, conv:null, pristine:true};
+      Object.assign(accountChats, {items:[], loading:false, loaded:false, at:0});
+      updateStatusHeader(providerStates[provider] || {ready:false, loggedIn:false});
+      return true;
+    } catch (_) { showGlobalError(null, "Couldn't switch providers. Try again in a moment."); return false; }
+    finally { switchingProvider = false; updateComposerMode(); }
+  }
+  async function resetChatPreservingComposer() {
+    const input = el.promptInput;
+    const draft = input.value;
+    const start = input.selectionStart, end = input.selectionEnd, direction = input.selectionDirection;
+    const selections = chats.current.selectionTexts.slice();
+    const temporary = Boolean(chats.current.temporary);
+    const chat = chats.current;
+    const title = !(chat.transcript?.length || chat.lastPrompt || chat.lastResponse || chat.lastHasMedia || chat.conversationId) ? chat.title : "";
+    await startNewChat(false, { preserveFiles: true, movingDraft: true });
+    input.value = draft;
+    chats.current.selectionTexts = selections;
+    chats.current.temporary = temporary;
+    if (title) chats.current.title = title;
+    setModeLabel(temporary ? "Temporary" : "");
+    renderAttachments();
+    chats.current.draft = draftValue();
+    saveChats(); autoResizePrompt(); updateIdleChips(); updateComposerMode();
+    input.focus();
+    input.setSelectionRange(start, end, direction);
+  }
+  async function chooseProvider(provider) {
+    if (provider === activeProvider || isBusy()) return;
+    if (!await setProvider(provider)) return;
+    await resetChatPreservingComposer();
+  }
+  function switchProviderRows() {
+    const provider = activeProvider === "gemini" ? "chatgpt" : "gemini";
+    return [{divider:true}, {title:`Switch to ${provider === "gemini" ? "Gemini" : "ChatGPT"}`, meta:providerStates[provider]?.loggedIn ? "Signed in" : "Signed out", run:() => chooseProvider(provider)}];
   }
 
   function storedChat(chat, capped = false) {
@@ -1060,6 +1226,7 @@
   }
 
   function saveChats() {
+    cancelDraftSave();
     if (!QSettings.settings.keepHistory) {
       try { localStorage.removeItem(CHATS_KEY); } catch (_) {}
       return;
@@ -1089,7 +1256,7 @@
 
   function pushRecent(chat) {
     if (!QSettings.settings.keepHistory || chat.temporary) return;
-    chats.recent = [chat, ...chats.recent.filter((c) => c.key !== chat.key && !(chat.conversationId && c.conversationId === chat.conversationId))].slice(0, MAX_RECENT);
+    chats.recent = [chat, ...chats.recent.filter((c) => c.key !== chat.key && !(chat.conversationId && c.provider === chat.provider && c.conversationId === chat.conversationId))].slice(0, MAX_RECENT);
   }
 
   function recordPartial(turn) {
@@ -1103,7 +1270,16 @@
     saveChats();
   }
 
+  function confirmClearChats() {
+    chats.current.draft = el.promptInput.value;
+    const snapshot = { type: "clear", current: structuredClone(chats.current), recent: structuredClone(chats.recent), stagedFiles: pendingFiles.slice() };
+    clearRecentChats();
+    snapshot.clearedKey = chats.current.key;
+    offerChatUndo(snapshot);
+  }
+
   function clearRecentChats() {
+    readingPositions.clear();
     chats.recent = [];
     dismissExchange();
     chats.current = freshChat();
@@ -1122,17 +1298,19 @@
   // ---------------------------------------------------------------------------
   // `pristine`: the page has not been touched since launch, so an empty chat can use it as is.
   let page = { key: null, conv: null, pristine: true };
+  const pageByProvider = {};
   let pageSync = Promise.resolve();
   const readyWaiters = new Set();
 
-  function waitForReady(conversationId, timeoutMs) {
-    const waiter = { conversationId };
+  function waitForReady(conversationId, timeoutMs, temporary = false, setupId = null) {
+    const waiter = { conversationId, temporary, setupId, provider: activeProvider, generation: chatGeneration };
     const promise = new Promise((resolve, reject) => {
       waiter.resolve = () => { clearTimeout(waiter.timer); clearTimeout(waiter.grace); readyWaiters.delete(waiter); resolve(); };
+      waiter.reject = () => { clearTimeout(waiter.timer); clearTimeout(waiter.grace); readyWaiters.delete(waiter); reject({code: "temporary_unavailable"}); };
       waiter.timer = setTimeout(() => {
         readyWaiters.delete(waiter);
         clearTimeout(waiter.grace);
-        reject({ code: "open_timeout" });
+        reject({ code: temporary ? "temporary_unavailable" : "open_timeout" });
       }, timeoutMs);
     });
     promise.catch(() => {});
@@ -1144,8 +1322,9 @@
   function settleReadyWaiters(evt) {
     if (!evt.ready) return;
     for (const waiter of [...readyWaiters]) {
+      if (waiter.provider !== activeProvider || waiter.generation !== chatGeneration || (waiter.temporary && (evt.temporary !== true || evt.setupId !== waiter.setupId))) continue;
       const id = waiter.conversationId;
-      if (!id || typeof evt.url !== "string" || evt.url.includes(`/c/${id}`)) waiter.resolve();
+      if (!id || typeof evt.url !== "string" || evt.url.includes(`${activeProvider === "gemini" ? "/app/" : "/c/"}${id}`)) waiter.resolve();
       // A guest page falls back to a fresh chat instead of /c/<id>; give it a moment to get there.
       else if (!evt.loggedIn && !waiter.grace) waiter.grace = setTimeout(() => waiter.resolve(), 500);
     }
@@ -1167,20 +1346,25 @@
 
   async function freshInPage(chat) {
     page = { key: null, conv: null, pristine: false };
-    const ready = waitForReady(null, FRESH_TIMEOUT);
-    await invoke("chat_new", { preserveUploads: true, temporary: Boolean(chat.temporary) });
-    // The page normally confirms quickly; a slow confirmation is not a reason to fail the send.
-    await ready.catch(() => {});
-    page = { key: chat.key, conv: null, pristine: false };
+    const temporary = Boolean(chat.temporary);
+    const provider = activeProvider, generation = chatGeneration;
+    const setupId = temporary ? crypto.randomUUID() : null;
+    const ready = waitForReady(null, FRESH_TIMEOUT, temporary, setupId);
+    try {
+      await invoke("chat_new", { preserveUploads: true, temporary, setupId });
+      if (temporary) await ready;
+      else await ready.catch(() => {});
+      if (provider === activeProvider && generation === chatGeneration) page = { key: chat.key, conv: null, pristine: false };
+    } catch (err) { ready.cancel(); throw temporary ? { code: "temporary_unavailable" } : err; }
   }
 
   // Never send into the wrong conversation: this throws rather than falling through.
   async function ensurePage(chat) {
-    await pageSync.catch(() => {});
+    try { await pageSync; } catch (err) { pageSync = Promise.resolve(); if (chat.temporary) throw err; }
     if (chat.conversationId) {
       if (page.conv !== chat.conversationId) await openInPage(chat);
     } else if (page.key !== chat.key) {
-      if (page.pristine && !chat.lastResponse) page = { key: chat.key, conv: null, pristine: false };
+      if (page.pristine && !chat.lastResponse && !chat.temporary) page = { key: chat.key, conv: null, pristine: false };
       else await freshInPage(chat);
     }
   }
@@ -1189,6 +1373,7 @@
   // 6. Attachments & media
   // ---------------------------------------------------------------------------
   const CHUNK_SIZE = 512 * 1024;
+  const ATTACHMENT_CACHE_FULL = "Attachment cache is full. Start a new chat to clear it.";
   const MAX_BYTES = 512 * 1024 * 1024;
   const fileSize = bytes => bytes < 1048576 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
   function imagePreview(file) {
@@ -1229,33 +1414,98 @@
     });
     return button;
   }
+  const attachmentNodes = new Map();
+  let selectionNodes = [], selectionChat = null;
   function renderAttachments() {
-    el.attachments.replaceChildren();
     const selections = chats.current.selectionTexts;
     el.attachments.hidden = !pendingFiles.length && !selections.length;
-    selections.forEach((_, index) => el.attachments.append(selectionChip(true, index)));
+    if (selectionChat !== chats.current) { selectionNodes = []; selectionChat = chats.current; }
+    const unused = selectionNodes.slice();
+    selectionNodes = selections.map((text, index) => {
+      const match = unused.findIndex(entry => entry.text === text);
+      const entry = match < 0 ? { text, chip: selectionChip(true, index) } : unused.splice(match, 1)[0];
+      entry.chip._selectionIndex = index;
+      entry.chip.querySelector("button").disabled = sending;
+      return entry;
+    });
+    for (const item of attachmentNodes.keys()) if (!pendingFiles.includes(item)) attachmentNodes.delete(item);
+    const desired = selectionNodes.map(entry => entry.chip);
     for (const item of pendingFiles) {
-      const chip = make("div", "attachment-chip glass glass-tiny");
-      chip.dataset.state = item.state;
-      const label = make("span", "attachment-name", item.file.name);
-      const status = item.state === "error" ? "Could not attach. Remove and try again." : item.state === "ready" ? fileSize(item.file.size) : `${Math.floor(item.offset / Math.max(1, item.file.size) * 100)}%`;
-      const remove = make("button", "icon-btn"); remove.append(makeIcon(GLYPH.close));
-      remove.type = "button";
-      remove.setAttribute("aria-label", `Remove ${item.file.name}`);
-      remove.disabled = sending;
-      remove.addEventListener("click", () => removeAttachment(item));
-      if (item.previewURL) chip.append(previewImage(item.previewURL, item.file.name, "attachment-thumbnail"));
-      chip.append(label, make("span", "attachment-status", status), remove);
-      if (item.previewURL) chip.append(imageCopyButton(() => previewImage(item.previewURL, item.file.name)));
-      el.attachments.append(chip);
+      let node = attachmentNodes.get(item);
+      if (!node) {
+        const chip = make("div", "attachment-chip glass glass-tiny");
+        const label = make("span", "attachment-name", item.file.name);
+        const status = make("span", "attachment-status");
+        const remove = make("button", "icon-btn"); remove.append(makeIcon(GLYPH.close));
+        remove.type = "button";
+        remove.setAttribute("aria-label", `Remove ${item.file.name}`);
+        remove.addEventListener("click", () => removeAttachment(item));
+        if (item.previewURL) chip.append(previewImage(item.previewURL, item.file.name, "attachment-thumbnail"));
+        chip.append(label, status, remove);
+        if (item.previewURL) chip.append(imageCopyButton(() => previewImage(item.previewURL, item.file.name)));
+        node = { chip, status, remove, retry: null };
+        attachmentNodes.set(item, node);
+      }
+      node.chip.dataset.state = item.state;
+      node.status.textContent = item.state === "error" ? "Failed" : item.state === "ready" ? fileSize(item.file.size) : `${Math.floor(item.offset / Math.max(1, item.file.size) * 100)}%`;
+      node.remove.disabled = sending;
+      if (item.state === "error" && !node.retry) {
+        const retry = make("button", "btn btn-compact", "Retry");
+        retry.type = "button"; retry.dataset.action = "retry-attachment";
+        retry.setAttribute("aria-label", `Retry ${item.file.name}`);
+        retry.addEventListener("click", () => retryAttachment(item));
+        node.chip.insertBefore(retry, node.remove); node.retry = retry;
+      } else if (item.state !== "error" && node.retry) { node.retry.remove(); node.retry = null; }
+      desired.push(node.chip);
+    }
+    const wanted = new Set(desired);
+    for (const child of Array.from(el.attachments.children)) if (!wanted.has(child)) child.remove();
+    let cursor = el.attachments.firstElementChild;
+    for (const child of desired) {
+      if (child === cursor) cursor = cursor.nextElementSibling;
+      else el.attachments.insertBefore(child, cursor);
     }
     updateComposerMode();
   }
   async function discardAttachment(item) {
+    if (item.discardPromise) return item.discardPromise;
     if (!item.id || item.discarded) return;
-    item.discarded = true;
-    try { await invoke("attachment_remove", { id: item.id }); }
-    catch (_) { item.discarded = false; showGlobalError("attachment_failed", "Could not discard a file. Try New chat before attaching more files."); }
+    item.discardPromise = (async () => {
+      try {
+        await invoke("attachment_remove", { id: item.id }); item.discarded = true;
+        if (item.discardErrorRevision === globalErrorRevision) hideGlobalError();
+        item.discardErrorRevision = null;
+      } catch (_) {
+        item.discarded = false;
+        showGlobalError("attachment_failed", "Could not discard a file. Try New chat before attaching more files.");
+        item.discardErrorRevision = globalErrorRevision;
+      }
+    })();
+    try { await item.discardPromise; } finally { item.discardPromise = null; }
+  }
+  function retryAttachment(item) {
+    if (isBusy() || item.cancelled || !pendingFiles.includes(item) || item.state !== "error") return;
+    item.state = "staging";
+    renderAttachments();
+    const start = el.promptInput.selectionStart, end = el.promptInput.selectionEnd, direction = el.promptInput.selectionDirection;
+    el.promptInput.focus();
+    el.promptInput.setSelectionRange(start, end, direction);
+    stageQueue = stageQueue.then(async () => {
+      if (item.cancelled || !pendingFiles.includes(item)) {
+        if (item.cancelled) await discardAttachment(item);
+        return;
+      }
+      // Preparation is local and can continue through a provider change.
+      if (sending || isStreaming()) { item.state = "error"; renderAttachments(); return; }
+      await discardAttachment(item);
+      if (item.cancelled || !pendingFiles.includes(item)) {
+        if (item.cancelled) await discardAttachment(item);
+        return;
+      }
+      if (sending || isStreaming() || (item.id && !item.discarded)) { item.state = "error"; renderAttachments(); return; }
+      item.id = null; item.offset = 0; item.discarded = false;
+      await stageAttachment(item);
+    });
   }
   function removeAttachment(item) {
     item.cancelled = true;
@@ -1279,7 +1529,8 @@
   async function stageAttachment(item) {
     try {
       if (item.cancelled) return;
-      const meta = await invoke("attachment_begin", { name: item.file.name, mime: item.file.type || "application/octet-stream", size: item.file.size });
+      const info = await launchInfo;
+      const meta = await invoke("attachment_begin", { name: item.file.name, mime: item.file.type || "application/octet-stream", size: item.file.size, uploadGeneration: info?.uploadGeneration || 0 });
       if (!meta || typeof meta.id !== "string") throw new Error("Invalid attachment response");
       item.id = meta.id;
       while (!item.cancelled && item.offset < item.file.size) {
@@ -1294,8 +1545,9 @@
         await invoke("attachment_finish", { id: item.id });
         item.state = "ready";
       }
-    } catch (_) {
+    } catch (error) {
       item.state = "error";
+      if (!item.cancelled && pendingFiles.includes(item) && String(error?.message || error || "").includes(ATTACHMENT_CACHE_FULL)) showCommandFeedback(ATTACHMENT_CACHE_FULL);
       await discardAttachment(item);
     } finally {
       if (item.cancelled) await discardAttachment(item);
@@ -1443,7 +1695,7 @@
       const status = make("span", "media-status");
       const preview = make("div", "media-preview");
       const actions = make("div", "media-actions");
-      const view = make("button", "hyperlink-btn", "View in ChatGPT");
+      const view = make("button", "hyperlink-btn", `View in ${providerName()}`);
       view.type = "button";
       view.addEventListener("click", openSignin);
       const save = make("button", "btn btn-compact", "Save to Downloads");
@@ -1451,7 +1703,7 @@
       save.addEventListener("click", async () => {
         save.disabled = true;
         try { await invoke("media_save", { mediaId: item.id, revision: item.revision || 0 }); status.textContent = "Saved to Downloads"; }
-        catch (_) { status.textContent = "Could not save. View in ChatGPT to download."; }
+        catch (_) { status.textContent = `Could not save. View in ${providerName()} to download.`; }
         finally { save.disabled = false; }
       });
       actions.append(save, view);
@@ -1485,7 +1737,7 @@
           loaded = true; loadedRevision = revision;
           load.hidden = true;
           status.textContent = "";
-        } catch (_) { status.textContent = "Preview unavailable. View in ChatGPT."; }
+        } catch (_) { status.textContent = `Preview unavailable. View in ${providerName()}.`; }
         finally {
           load.disabled = false;
           if (kind === "image" && (item.revision || 0) !== loadingRevision) void loadMedia(true);
@@ -1697,10 +1949,11 @@
 
     const thinking = make("div", "thinking");
     thinking.setAttribute("role", "status");
-    thinking.setAttribute("aria-label", "ChatGPT is thinking");
+    thinking.setAttribute("aria-label", `${providerName()} is thinking`);
     thinking.append(make("span"), make("span"), make("span"));
 
-    row.append(bubble, thinking);
+    row._userTurn = turn;
+    row.append(bubble, userTools(turn), thinking);
     turnNodes.set(turn.id, { row, contentEl, mediaEl, mediaItems: new Map() });
     return row;
   }
@@ -1710,7 +1963,7 @@
     row.dataset.id = turn.id;
     row.dataset.role = "assistant";
     row.dataset.status = turn.status;
-    row.setAttribute("aria-label", "ChatGPT replied");
+    row.setAttribute("aria-label", `${providerName()} replied`);
     row.hidden = true;
 
     const bubble = make("div", "bubble bubble-response glass");
@@ -1752,8 +2005,9 @@
     retryBtn.title = "Retry"; retryBtn.setAttribute("aria-label", "Retry");
     const openBtn = make("button", "tool-btn");
     openBtn.append(makeIcon("\uE8A7"));
-    openBtn.type = "button"; openBtn.title = "Open in ChatGPT"; openBtn.setAttribute("aria-label", openBtn.title);
-    openBtn.addEventListener("click", () => { if (chats.current.conversationId) invoke("open_external", { url: `https://chatgpt.com/c/${chats.current.conversationId}` }).catch(() => {}); });
+    openBtn.type = "button"; openBtn.dataset.action = "open-external";
+    openBtn.title = `Open in ${providerName()}`; openBtn.setAttribute("aria-label", openBtn.title);
+    openBtn.addEventListener("click", () => { if (chats.current.conversationId) invoke("open_external", { url: `${activeProvider === "gemini" ? "https://gemini.google.com/app/" : "https://chatgpt.com/c/"}${chats.current.conversationId}` }).catch(() => {}); });
     tools.append(copyBtn, retryBtn, openBtn, closeBtn);
 
     const jump = make("button", "jump-chip glass glass-tiny");
@@ -1802,6 +2056,28 @@
     return row;
   }
 
+  const attachmentRetryCodes = new Set(["send_failed", "stream_failed", "timeout", "not_ready", "temporary_unavailable"]);
+  function retainTurnFiles(turn) {
+    clearTimeout(turn.retryTimer);
+    if (!turn.retryFiles?.length) return;
+    if (turn.code === "temporary_unavailable" && turn.retryFiles.every(file => pendingFiles.includes(file))) return;
+    turn.retryTimer = setTimeout(() => {
+      releaseTurnFiles(turn);
+      if (turn.status === "error" && turns.includes(turn)) {
+        turn.error = "These files have expired. Attach them again.";
+        scheduleTurnRender(turn.id, true);
+      }
+    }, 10 * 60 * 1000);
+  }
+  function releaseTurnFiles(turn, retainedIds = []) {
+    clearTimeout(turn.retryTimer);
+    for (const file of turn.retryFiles || []) {
+      if (pendingFiles.includes(file)) { if (!retainedIds.includes(file.id)) removeAttachment(file); }
+      else void discardAttachment(file);
+    }
+    turn.retryFiles = null;
+  }
+
   function buildTurnError(turn) {
     const line = make("div", "error-line");
     line.setAttribute("role", "alert");
@@ -1813,7 +2089,7 @@
       signin.dataset.action = "signin";
       actions.appendChild(signin);
     }
-    if ((!turn.hadAttachments && (turn.prompt || turn.selectionTexts?.length)) || pendingFiles.some((f) => f.state === "ready")) {
+    if (turn.code !== "auth" && (turn.hadAttachments ? turn.retryFiles?.length && attachmentRetryCodes.has(turn.code) : (turn.prompt || turn.selectionTexts?.length))) {
       const retry = make("button", "btn btn-compact", "Retry");
       retry.type = "button";
       retry.dataset.action = "retry-turn";
@@ -1821,7 +2097,7 @@
       actions.appendChild(retry);
     }
     if (turn.hadAttachments) {
-      const view = make("button", "btn btn-compact", "View in ChatGPT");
+      const view = make("button", "btn btn-compact", `View in ${providerName()}`);
       view.type = "button";
       view.dataset.action = "signin";
       actions.appendChild(view);
@@ -1845,7 +2121,8 @@
     entry.row.dataset.status = turn.status;
     const retryTool = entry.row.querySelector('[data-action="retry-reply"]');
     if (retryTool) retryTool.hidden = turn.status !== "done" || (!turn.prompt && !turn.selectionTexts?.length) || turn.hadAttachments;
-    const openTool = entry.row.querySelector('[aria-label="Open in ChatGPT"]');
+    const openTool = entry.row.querySelector('[data-action="open-external"]');
+    if (openTool) { openTool.title = `Open in ${providerName()}`; openTool.setAttribute("aria-label", openTool.title); }
     if (openTool) openTool.hidden = !chats.current.conversationId;
     const activity = entry.activity;
     activity.hidden = turn.status !== "streaming" || turn.backendDone || turn.activity?.state !== "running";
@@ -1951,7 +2228,7 @@
   function finishReveal(turn, entry) {
     if (!turn.backendDone || turn.status !== "streaming") return;
     turn.status = "done";
-    el.statusLabel.textContent = "ChatGPT replied";
+    el.statusLabel.textContent = `${providerName()} replied`;
     // Multiline answers keep their wrapping width when the streaming class ends.
     entry.row.toggleAttribute("data-wide", /\n/.test(turn.text) || entry.inner.offsetHeight > 72);
     renderTurnNow(turn.id);
@@ -2124,7 +2401,11 @@
     entry.row.classList.add(entrance);
     entry.row.addEventListener("animationend", () => entry.row.classList.remove(entrance), { once: true });
 
-    if (!QSettings.settings.showPrompt) for (const other of turns.slice()) if (other.role === "user") retireTurn(other);
+    for (const other of turns.slice()) {
+      if (other.role !== "user") continue;
+      if (QSettings.settings.showPrompt) turnNodes.get(other.id)?.row.querySelector(".thinking")?.remove();
+      else retireTurn(other);
+    }
     queueSizes();
     fitNow();
   }
@@ -2133,7 +2414,9 @@
     rememberTurn(turn);
     const index = turns.indexOf(turn);
     if (index >= 0) turns.splice(index, 1);
-    for (const file of turn.attachments || []) releasePreview(file.previewURL);
+    for (const file of turn.attachments || []) {
+      if (!pendingFiles.some(item => item.previewURL === file.previewURL)) releasePreview(file.previewURL);
+    }
     const entry = turnNodes.get(turn.id);
     cancelReveal(entry);
     clearTimeout(entry?.reveal?.holdTimer);
@@ -2161,12 +2444,16 @@
   }
 
   function dismissExchange(immediate = false) {
+    closeRenameChat(false);
+    finder.close({ focus: false, reset: true });
+    hideCommandFeedback();
     clearTimeout(autoDismissTimer);
     autoDismissTimer = null;
     userScrolledUp = false;
     let stopping = false;
     for (const turn of turns.slice()) {
       if (turn.status === "streaming") { stopping = true; turn.status = "done"; turn.stopped = true; }
+      releaseTurnFiles(turn);
       retireTurn(turn, immediate);
     }
     if (stopping) void stopBackend();
@@ -2205,7 +2492,7 @@
       entry.row.toggleAttribute("data-wide", true);
     }
     if (fallback) {
-      const view = make("button", "hyperlink-btn", "View in ChatGPT");
+      const view = make("button", "hyperlink-btn", `View in ${providerName()}`);
       view.type = "button";
       view.dataset.action = "view-media";
       entry.mediaEl.append(view);
@@ -2226,7 +2513,7 @@
     const active = isStreaming();
     const sendKey = QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter";
     const placeholder = QSettings.settings.placeholderText || "Ask anything";
-    el.promptInput.placeholder = bridge.ready ? (firstRunHint ? `${placeholder}, or type / for commands` : placeholder) : "Connecting…";
+    el.promptInput.placeholder = bridge.ready ? `${placeholder} · / commands` : "Connecting…";
     el.btnSend.dataset.mode = active ? "stop" : "send";
     el.btnSend.firstElementChild.textContent = active ? GLYPH.stop : GLYPH.send;
     el.btnSend.title = active ? "Stop generating (Ctrl+.)" : `Send (${sendKey})`;
@@ -2235,6 +2522,7 @@
     const attachable = pendingFiles.some((f) => f.state === "ready");
     el.btnAttach.disabled = active || sending;
     for (const button of el.attachments.querySelectorAll(".selection-chip button")) button.disabled = sending;
+    for (const button of el.attachments.querySelectorAll('[data-action="retry-attachment"]')) button.disabled = isBusy();
     el.btnSnapshot.disabled = active || sending || snapshotCapturing;
     el.btnSend.disabled = !active && (!bridge.ready || sending || staging || snapshotCapturing || (!el.promptInput.value.trim() && !attachable && !chats.current.selectionTexts.length));
     syncReasoningButton();
@@ -2264,24 +2552,59 @@
     queueSizes();
   }
 
+  let draftSaveTimer = null;
+  let draftEditRevision = 0;
+  function draftValue() {
+    const value = el.promptInput.value;
+    return /^\/\S*$/.test(value) && COMMANDS.some(c => c.name.startsWith(value.slice(1).toLowerCase())) ? "" : value;
+  }
+  function cancelDraftSave() {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+  }
+  function updateDraft(edited = false) {
+    if (edited) draftEditRevision++;
+    chats.current.draft = draftValue();
+    cancelDraftSave();
+    draftSaveTimer = setTimeout(() => { draftSaveTimer = null; saveChats(); }, 250);
+  }
+  function flushDraft() {
+    if (draftSaveTimer === null) return;
+    cancelDraftSave();
+    saveChats();
+  }
+  window.addEventListener("pagehide", flushDraft);
+  window.addEventListener("blur", flushDraft);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) flushDraft(); });
+
   const IMAGE_PROMPT = /^(?:please\s+)?(?:generate|create|draw|paint|render|make|design)\b[\s\S]{0,100}\b(?:image|picture|photo|illustration|artwork|portrait)\b/i;
 
-  async function sendPrompt(rawPrompt, { fromInput = false, selectionTexts = fromInput ? chats.current.selectionTexts.slice() : [] } = {}) {
+  async function sendPrompt(rawPrompt, { fromInput = false, selectionTexts = fromInput ? chats.current.selectionTexts.slice() : [], retryFiles = null, retrying = false } = {}) {
     const prompt = String(rawPrompt ?? "").trim();
-    const files = pendingFiles.filter((f) => f.state === "ready");
-    if (snapshotCapturing || isBusy() || pendingFiles.some((f) => f.state === "staging") || (!prompt && !files.length && !selectionTexts.length)) return;
-    prompts.push(prompt); recallIndex = -1; firstRunHint = false;
-    try { localStorage.setItem("qchat.introduced", "1"); } catch (_) {}
-    el.promptInput.placeholder = QSettings.settings.placeholderText || "Ask anything";
+    const files = retryFiles || (retrying ? [] : pendingFiles.filter((f) => f.state === "ready"));
+    const staging = pendingFiles.some((f) => f.state === "staging");
+    if (snapshotCapturing || staging) {
+      if (retrying || fromInput) showCommandFeedback(snapshotCapturing ? "Wait for the snapshot to finish." : "Wait for files to finish attaching.");
+      return;
+    }
+    if (isBusy() || (!prompt && !files.length && !selectionTexts.length)) return;
+    const consumeDraft = fromInput || (retrying && el.promptInput.value === prompt);
+    recallIndex = -1;
     const chat = chats.current;
+    readingPositions.delete(chat.key);
+    const previousMeta = { title: chat.title, lastPrompt: chat.lastPrompt, lastHadAttachments: chat.lastHadAttachments, lastActive: chat.lastActive };
     const reasoningEffort = effectiveReasoning(chat);
     const consumeSelections = fromInput || (selectionTexts.length > 0 && selectionTexts.every((text, index) => chat.selectionTexts[index] === text));
     sending = true;
     sentReasoning = reasoningEffort;
     const generation = chatGeneration;
     const draft = el.promptInput.value;
+    const selectionStart = el.promptInput.selectionStart, selectionEnd = el.promptInput.selectionEnd, selectionDirection = el.promptInput.selectionDirection;
+    const revision = draftEditRevision;
     const restoreDraft = () => {
-      if (fromInput && !el.promptInput.value) { el.promptInput.value = draft; autoResizePrompt(); }
+      if (consumeDraft && revision === draftEditRevision && generation === chatGeneration && chats.current === chat && !el.promptInput.value) {
+        el.promptInput.value = draft; el.promptInput.setSelectionRange(selectionStart, selectionEnd, selectionDirection); autoResizePrompt(); updateDraft(); cancelDraftSave(); saveChats();
+      }
     };
 
     hideGlobalError();
@@ -2289,11 +2612,22 @@
     if (!featureList.hidden) closeFeatureList();
     hideClearConfirm();
     setHistoryOpen(false);
+    for (const turn of turns) {
+      if (turn.retryFiles?.some(file => files.includes(file))) { clearTimeout(turn.retryTimer); turn.retryFiles = null; }
+    }
     dismissExchange();
     sentThisSession = true;
 
     const userTurn = { id: crypto.randomUUID(), role: "user", text: prompt, selectionTexts, selectionMatch: selectionTexts.length ? selectionMatch(wirePrompt(prompt, selectionTexts)) : undefined, status: "done", chatKey: chat.key, attachments: files.map((f) => ({ name: f.file.name, size: f.file.size, previewURL: imagePreview(f.file) })) };
     const assistantTurn = { id: crypto.randomUUID(), role: "assistant", text: "", status: "streaming", prompt, selectionTexts, hadAttachments: files.length > 0, chatKey: chat.key };
+    assistantTurn.restoreDraft = restoreDraft;
+    assistantTurn.retryFiles = files.length ? files : null;
+    assistantTurn.temporaryFiles = chat.temporary ? files : null;
+    assistantTurn.undoEmptyExchange = () => {
+      chat.transcript = chat.transcript.filter(item => item.id !== userTurn.id && item.id !== assistantTurn.id);
+      Object.assign(chat, previousMeta);
+      saveChats();
+    };
     if (IMAGE_PROMPT.test(prompt)) assistantTurn.imageProgress = { state: "generating", phase: "preparing" };
 
     turns.push(userTurn, assistantTurn);
@@ -2309,15 +2643,14 @@
     }
 
     const label = prompt || (selectionTexts.length ? "Selected text" : files[0]?.file.name) || "Attachment";
-    chat.title = chat.title || label.slice(0, 40);
+    chat.title = chat.title || normalizeChatTitle(label);
     chat.lastPrompt = prompt;
     chat.lastHadAttachments = files.length > 0;
     rememberTurn(userTurn);
     rememberTurn(assistantTurn);
     chat.lastActive = Date.now();
+    if (consumeDraft) { cancelDraftSave(); el.promptInput.value = ""; chat.draft = ""; autoResizePrompt(); }
     saveChats();
-
-    if (fromInput) { el.promptInput.value = ""; chat.draft = ""; autoResizePrompt(); }
     updateGuestNotice();
     updateIdleChips();
     updateComposerMode();
@@ -2327,21 +2660,21 @@
       await ensurePage(chat);
       if (generation !== chatGeneration) return;
       if (assistantTurn.status !== "streaming") throw { code: "stopped" };
-      await invoke("chat_send", { id: assistantTurn.id, prompt: wirePrompt(prompt, selectionTexts), attachmentIds: files.map((f) => f.id), reasoningEffort });
+      await invoke("chat_send", { id: assistantTurn.id, prompt: wirePrompt(prompt, selectionTexts), attachmentIds: files.map((f) => f.id), provider: activeProvider, temporary: Boolean(chat.temporary), ...(activeProvider === "chatgpt" ? {reasoningEffort} : {}) });
       if (consumeSelections && assistantTurn.status !== "error" && !(assistantTurn.status === "done" && !assistantTurn.text && !assistantTurn.media?.length)) {
         chat.selectionTexts.splice(0, selectionTexts.length);
         assistantTurn.selectionConsumed = true;
         saveChats();
       }
       page = { ...page, key: chat.key, pristine: false };
-      for (const file of files) {
+      for (const file of chat.temporary ? [] : files) {
         const index = pendingFiles.indexOf(file);
         if (index >= 0) { pendingFiles.splice(index, 1); releasePreview(file.previewURL); }
       }
       if (generation === chatGeneration && assistantTurn.status === "done" && !assistantTurn.text && !assistantTurn.media?.length) dismissExchange();
     } catch (err) {
       if (generation !== chatGeneration) return;
-      restoreDraft();
+      if (!assistantTurn.text && !assistantTurn.media?.length && !assistantTurn.cachedMedia) restoreDraft();
       if (assistantTurn.status === "done" && !assistantTurn.text && !assistantTurn.media?.length) {
         retireTurn(userTurn, true);
         retireTurn(assistantTurn, true);
@@ -2349,11 +2682,20 @@
         return;
       }
       if (assistantTurn.status !== "streaming") return;
-      const code = errorCode(err);
+      const unavailable = /Attachment (is unavailable|was removed|unavailable)/i.test(String(err));
+      const code = unavailable ? "attachment_expired" : errorCode(err);
+      if (unavailable) for (const file of files) if (pendingFiles.includes(file)) file.state = "error";
+      if (retryFiles && unavailable) {
+        releaseTurnFiles(assistantTurn, pendingFiles.map(file => file.id));
+        if (!el.promptInput.value) { el.promptInput.value = prompt; autoResizePrompt(); updateDraft(); }
+        assistantTurn.error = files.some(file => pendingFiles.includes(file)) ? ERROR_MESSAGES.attachment_expired : "This file is no longer available. Attach it again.";
+      }
       flushReveal(assistantTurn);
       assistantTurn.status = "error";
       assistantTurn.code = code;
-      assistantTurn.error = formatErrorCopy(code);
+      if (attachmentRetryCodes.has(code)) retainTurnFiles(assistantTurn);
+      else releaseTurnFiles(assistantTurn, unavailable || code === "attachment_pending" ? pendingFiles.map(file => file.id) : []);
+      assistantTurn.error = assistantTurn.error || formatErrorCopy(code);
       revealResponse(assistantTurn);
       scheduleTurnRender(assistantTurn.id, true);
       updateComposerMode();
@@ -2373,7 +2715,7 @@
       if (!t.text && !t.media?.length) {
         // Nothing arrived, so there is no reply to keep: restore the prompt and
         // remove the empty exchange instead of leaving a completed-looking one.
-        if (!el.promptInput.value) { el.promptInput.value = t.prompt || ""; autoResizePrompt(); }
+        t.restoreDraft?.();
         if (t.selectionConsumed) {
           chats.current.selectionTexts.unshift(...t.selectionTexts);
           t.selectionConsumed = false;
@@ -2381,6 +2723,8 @@
           saveChats();
         }
         for (const turn of turns.slice()) retireTurn(turn, true);
+        // After retiring: retireTurn writes each turn back to the transcript.
+        t.undoEmptyExchange?.();
         continue;
       }
       t.stopped = true;
@@ -2390,24 +2734,29 @@
     }
     updateComposerMode();
     queueSizes();
-    await stopBackend();
+    const retainedIds = await stopBackend();
+    for (const turn of stopping) releaseTurnFiles(turn, Array.isArray(retainedIds) ? retainedIds : pendingFiles.map(file => file.id));
     if (!sending && !turns.some((t) => t.role === "assistant" && (t.text || t.media?.length))) dismissExchange();
     updateComposerMode();
     queueSizes();
   }
 
-  function discardPendingFiles() {
-    for (const item of pendingFiles.slice()) removeAttachment(item);
-    for (const url of [...imageURLs]) releasePreview(url);
+  function discardPendingFiles(preserveFiles = false) {
+    const retainedIds = preserveFiles ? pendingFiles.map(file => file.id) : [];
+    for (const turn of turns) releaseTurnFiles(turn, retainedIds);
+    if (!preserveFiles) for (const item of pendingFiles.slice()) removeAttachment(item);
+    const retainedURLs = new Set(preserveFiles ? pendingFiles.map(file => file.previewURL) : []);
+    for (const url of [...imageURLs]) if (!retainedURLs.has(url)) releasePreview(url);
   }
 
-  async function startNewChat(notifyBackend = true) {
+  async function startNewChat(notifyBackend = true, { preserveFiles = false, movingDraft = false } = {}) {
     if (isStreaming()) await stopStreaming();
-    chats.current.draft = el.promptInput.value;
+    rememberReadingPosition();
+    chats.current.draft = draftValue();
     for (const t of turns) recordPartial(t);
     chatGeneration++;
     sending = false;
-    discardPendingFiles();
+    discardPendingFiles(preserveFiles);
     el.promptInput.value = "";
     autoResizePrompt();
     hideGlobalError();
@@ -2415,10 +2764,12 @@
     hideClearConfirm();
     dismissExchange();
 
-    if (hasContent(chats.current)) { chats.current.lastActive = Date.now(); pushRecent(chats.current); }
+    if (movingDraft) { chats.current.draft = ""; chats.current.selectionTexts = []; }
+    if (hasContent(chats.current) || (!movingDraft && chats.current.draft.trim())) { chats.current.lastActive = Date.now(); pushRecent(chats.current); }
     chats.current = freshChat();
     renderAttachments();
     setModeLabel("");
+    setModelLabel("");
     setHistoryOpen(false);
     renderHistory();
     saveChats();
@@ -2432,6 +2783,14 @@
       pageSync = invoke("chat_new").catch(() => { page = { key: null, conv: null, pristine: false }; });
     }
     el.promptInput.focus();
+  }
+
+  async function startTemporaryChat() {
+    await startNewChat(false);
+    chats.current.temporary = true;
+    setModeLabel("Temporary");
+    pageSync = freshInPage(chats.current);
+    pageSync.catch(() => {});
   }
 
   // ---------------------------------------------------------------------------
@@ -2460,11 +2819,51 @@
 
   function syncTabsDisabled() {
     const busy = isBusy();
-    for (const tab of el.tabs.children) tab.disabled = busy;
+    for (const tab of el.tabs.children) {
+      if (tab === allChatsTab) tab.disabled = busy;
+      else tab.setAttribute("aria-disabled", String(busy));
+    }
   }
 
+  function makeProviderLogo(provider) {
+    // simple-icons paths, CC0.
+    const paths = {
+      chatgpt: "M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z",
+      gemini: "M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"
+    };
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("class", "icon"); svg.setAttribute("aria-hidden", "true"); svg.dataset.provider = provider || "chatgpt";
+    const path = document.createElementNS(svg.namespaceURI, "path"); path.setAttribute("d", paths[provider] || paths.chatgpt); svg.append(path); return svg;
+  }
+  let tabStopKey = null;
+  el.tabs.addEventListener("keydown", (e) => {
+    const tab = e.target.closest(".tab");
+    if (!tab || !el.tabs.contains(tab) || e.isComposing || e.keyCode === 229 || e.ctrlKey || e.metaKey || e.altKey) return;
+    const tabs = [...el.tabs.querySelectorAll(".tab")];
+    const index = tabs.indexOf(tab);
+    let next = index;
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); el.promptInput.focus(); return; }
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (!isBusy()) void switchToChat(tab.dataset.key); return; }
+    if (tabs.length < 2) return;
+    if (e.key === "ArrowRight") next = (index + 1) % tabs.length;
+    else if (e.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = tabs.length - 1;
+    else return;
+    e.preventDefault();
+    tabStopKey = tabs[next].dataset.key;
+    tabs.forEach((item) => { item.tabIndex = item === tabs[next] ? 0 : -1; });
+    tabs[next].focus();
+  });
+  const chatDisplayTitle = (chat) => chat.title || normalizeChatTitle((chat.draft || "").split(/\r?\n/).find(line => line.trim()) || "") || "Untitled chat";
+
   function renderTabs() {
+    const focused = document.activeElement?.closest?.(".tab");
+    const oldTabs = [...el.tabs.querySelectorAll(".tab")];
+    const focusedIndex = oldTabs.indexOf(focused);
+    const focusedKey = focusedIndex >= 0 ? focused.dataset.key : null;
     const visible = tabsVisible();
+    if (!visible && el.tabs.contains(document.activeElement)) el.promptInput.focus();
     el.tabs.hidden = !visible;
     if (!visible) { el.tabs.replaceChildren(); queueSizes(); return; }
 
@@ -2476,55 +2875,67 @@
         tab = make("button", "tab glass glass-tiny pop");
         tab.type = "button";
         tab.dataset.key = chat.key;
+        tab.addEventListener("focus", () => { tabStopKey = tab.dataset.key; for (const item of el.tabs.querySelectorAll(".tab")) item.tabIndex = item === tab ? 0 : -1; });
         tab.style.setProperty("--i", String(fresh++));
-        tab.append(makeIcon(GLYPH.clock), make("span", "tab-title"), make("span", "tab-label"));
+        tab.append(makeProviderLogo(chat.provider), make("span", "tab-title"), make("span", "tab-label"));
         tab.addEventListener("animationend", () => tab.classList.remove("pop"), { once: true });
         tab.addEventListener("click", () => switchToChat(tab.dataset.key));
       }
       const label = elapsedLabel(chat.lastActive);
       tab.querySelector(".tab-label").textContent = label;
-      const title = chat.title || "Untitled chat";
+      const title = chatDisplayTitle(chat);
       const characters = Array.from(title);
       tab.querySelector(".tab-title").textContent = characters.length > 24
         ? `${characters.slice(0, 23).join("")}…` : title;
       const when = label === "now" ? "just now" : `${label} ago`;
-      tab.title = `${title}\nLast active ${when}`;
-      tab.setAttribute("aria-label", `Switch to chat: ${title}, last active ${when}`);
+      tab.title = `${title}\nLast active ${when}${" · " + providerName(chat)}`;
+      tab.setAttribute("aria-label", `Switch to ${providerName(chat)} chat: ${title}, last active ${when}`);
       return tab;
     });
+    const stop = nodes.find((tab) => tab.dataset.key === (focusedKey || tabStopKey)) || nodes[Math.min(Math.max(focusedIndex, 0), nodes.length - 1)];
+    tabStopKey = stop?.dataset.key || null;
+    nodes.forEach((tab) => { tab.tabIndex = tab === stop ? 0 : -1; });
     el.tabs.replaceChildren(...nodes, allChatsTab);
+    if (focusedKey && stop) stop.focus();
     syncTabsDisabled();
     queueSizes();
   }
 
-  function switchToChat(key) {
+  async function switchToChat(key) {
     if (isBusy()) return;
     const index = chats.recent.findIndex((c) => c.key === key);
     if (index < 0) return;
+    // Before the provider switch, which can close History or replace the current chat.
+    rememberReadingPosition();
+    if (!await setProvider(chats.recent[index].provider || "chatgpt")) return;
     chatGeneration++;
     discardPendingFiles();
     hideGlobalError();
     closeSlashMenu();
     hideClearConfirm();
+    setHistoryOpen(false);
     dismissExchange();
 
     const now = Date.now();
     const target = chats.recent[index];
     const previous = chats.current;
-    previous.draft = el.promptInput.value;
+    previous.draft = draftValue();
     chats.recent.splice(index, 1);
     if (hasContent(previous) && !previous.temporary) { previous.lastActive = now; chats.recent.unshift(previous); }
+    else if (previous.draft.trim()) { previous.lastActive = now; pushRecent(previous); }
     chats.recent = chats.recent.slice(0, MAX_RECENT);
     target.lastActive = now;
     chats.current = target;
+    setModeLabel(target.temporary ? "Temporary" : "");
+    setModelLabel("");
     renderAttachments();
     el.promptInput.value = target.draft || "";
     autoResizePrompt();
-    setHistoryOpen(false);
     saveChats();
     renderTabs();
     updateIdleChips();
     showCachedResponse(target);
+    restoreReadingPosition(target);
 
     // A chat without a server id reopens lazily: its first send starts fresh.
     if (target.conversationId) {
@@ -2551,25 +2962,134 @@
   const COMMANDS = [
     { name: "settings", icon: GLYPH.settings, desc: () => "Open settings", run: () => invoke("open_settings").catch(() => showGlobalError(null, "Couldn't open settings. Try again.")) },
     { name: "new", icon: GLYPH.newChat, desc: () => "Start a new chat", run: () => startNewChat(true) },
-    { name: "signin", icon: GLYPH.account, desc: () => (bridge.loggedIn ? "Manage account" : "Sign in to ChatGPT"), run: () => openSignin() },
+    { name: "signin", icon: GLYPH.account, desc: () => (bridge.loggedIn ? "Manage account" : `Sign in to ${providerName()}`), run: () => openSignin() },
     { name: "clear", icon: GLYPH.trash, desc: () => "Clear recent chats", run: () => showClearConfirm() },
     { name: "hide", icon: GLYPH.hide, desc: () => "Hide QChat", run: () => invoke("hide_main").catch(() => {}) }
   ];
   COMMANDS.push(
-    { name: "model", icon: GLYPH.settings, desc: () => "Model", run: () => { showFeatureList("Loading models…", []); invoke("chat_models").catch(() => showModels({ error: "unavailable" })); } },
-    { name: "temp", icon: GLYPH.newChat, desc: () => "Temporary chat", run: async () => { await startNewChat(false); chats.current.temporary = true; setModeLabel("Temporary"); pageSync = freshInPage(chats.current); } },
+    { name: "rename", icon: "", desc: () => "Rename in QChat", run: openRenameChat },
+    { name: "find", icon: GLYPH.clock, desc: () => "Find in conversation", run: openFind },
+    { name: "copy", icon: GLYPH.copy, desc: () => "Copy conversation", run: copyConversation },
+    { name: "export", icon: GLYPH.save, desc: () => "Save conversation", run: exportConversation },
+    {name:"chatgpt", icon:GLYPH.account, desc:()=>"Switch to ChatGPT", run:()=>chooseProvider("chatgpt")},
+    {name:"gemini", icon:GLYPH.account, desc:()=>"Switch to Gemini", run:()=>chooseProvider("gemini")},
+    {name:"startup", icon:GLYPH.settings, desc:()=>"Open at startup", run:async()=>{
+      try {
+        const on = await invoke("get_autostart");
+        const choose = (enabled) => () => invoke("set_autostart", {enabled}).catch(() => showGlobalError(null,"Couldn't change open at startup."));
+        showFeatureList("Open at startup", [
+          {title:"On", meta:"Starts quietly in the tray", selected:on, run:choose(true)},
+          {title:"Off", meta:"Open QChat yourself", selected:!on, run:choose(false)}
+        ]);
+      } catch (_) { showGlobalError(null,"Couldn't read open at startup."); }
+    }},
+    { name: "model", icon: GLYPH.settings, desc: () => "Model", run: requestModels },
+    { name: "temp", icon: GLYPH.newChat, desc: () => "Temporary chat", run: startTemporaryChat },
     { name: "chats", icon: GLYPH.clock, desc: () => "Chats", run: showChatList },
     { name: "keys", icon: GLYPH.settings, desc: () => "Keyboard shortcuts", run: async () => {
       let hotkey = "Alt+Q"; try { hotkey = await invoke("get_hotkey") || hotkey; } catch (_) {}
-      const shortcuts = [[hotkey, "Show QChat"], [QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter", "Send"], ["Shift+Enter", "New line"], ["Esc", "Close"], ["Ctrl+N", "New chat"], ["Ctrl+K", "Menu"], ["Ctrl+P", "Chats"], ["Ctrl+.", "Stop"], ["ArrowUp / ArrowDown", "Recall prompts"], ["Paste / drop", "Attach files"]];
+      let selectionKey = "Ctrl+Alt+Q"; try { selectionKey = await invoke("get_selection_hotkey"); } catch (_) {}
+      const shortcuts = [[selectionKey || "Disabled", "Ask about selection"], [hotkey, "Show QChat"], [QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter", "Send"], ["Shift+Enter", "New line"], ["Esc", "Close"], ["Ctrl+N", "New chat"], ["Ctrl+K", "Menu"], ["Ctrl+P", "Chats"], ["Ctrl+.", "Stop"], ["ArrowUp / ArrowDown", "Recall prompts"], ["Paste / drop", "Attach files"]];
+      shortcuts.splice(8, 0, ["Ctrl+F", "Find in conversation"], ["F3 / Shift+F3", "Next / previous match"]);
+      shortcuts.push(["Ctrl+Shift+N", "Temporary chat"], ["Ctrl+Home", "Jump to start"], ["Ctrl+End", "Jump to latest"], ["Ctrl+Shift+C", "Copy reply"], ["Ctrl+Shift+X", "Copy last code block"]);
       showFeatureList("Keyboard shortcuts", shortcuts.map(([key, action]) => ({ keys: key, title: action })));
-    } }
+    } },
+    { name: "discard", icon: GLYPH.trash, desc: () => "Discard unsent draft", run: discardDraft }
   );
   const featureList = make("section", "feature-list glass");
   featureList.hidden = true; featureList.tabIndex = -1; el.attachments.before(featureList);
+  const renameForm = make("form", "rename-bar glass glass-tiny");
+  renameForm.id = "rename-chat";
+  renameForm.setAttribute("aria-label", "Rename local chat");
+  renameForm.hidden = true;
+  const renameInput = make("input", "rename-input");
+  renameInput.id = "rename-chat-input";
+  renameInput.type = "text";
+  renameInput.maxLength = 80;
+  renameInput.autocomplete = "off";
+  renameInput.setAttribute("aria-label", "Chat name");
+  renameInput.setAttribute("aria-describedby", "rename-chat-error");
+  const renameSave = make("button", "btn btn-compact", "Save");
+  renameSave.type = "submit";
+  renameSave.setAttribute("aria-label", "Save chat name");
+  const renameCancel = make("button", "icon-btn");
+  renameCancel.type = "button";
+  renameCancel.setAttribute("aria-label", "Cancel rename");
+  renameCancel.append(makeIcon(GLYPH.close));
+  const renameError = make("span", "rename-error");
+  renameError.id = "rename-chat-error";
+  renameError.setAttribute("role", "status");
+  renameError.hidden = true;
+  renameForm.append(renameInput, renameSave, renameCancel, renameError);
+  el.attachments.before(renameForm);
+  let renameTarget = null;
+  function closeRenameChat(focus = true) {
+    if (renameForm.hidden) return;
+    renameForm.hidden = true;
+    renameTarget = null;
+    renameInput.value = "";
+    renameInput.removeAttribute("aria-invalid");
+    renameError.hidden = true;
+    renameError.textContent = "";
+    syncMenuFlag(); queueSizes();
+    if (focus) el.promptInput.focus({ preventScroll: true });
+  }
+  function openRenameChat() {
+    const chat = chats.current;
+    if (!hasContent(chat) && !draftValue().trim()) {
+      showCommandFeedback("Start a conversation first.");
+      return;
+    }
+    finder.close({ focus: false });
+    closeSlashMenu(); hideClearConfirm();
+    if (!featureList.hidden) closeFeatureList();
+    renameTarget = chat;
+    renameInput.value = chatDisplayTitle({ ...chat, draft: draftValue() });
+    renameInput.removeAttribute("aria-invalid");
+    renameError.hidden = true;
+    renameError.textContent = "";
+    renameForm.hidden = false;
+    syncMenuFlag(); queueSizes();
+    renameInput.focus({ preventScroll: true }); renameInput.select();
+  }
+  function saveChatName() {
+    if (renameForm.hidden || renameTarget !== chats.current) { closeRenameChat(false); return; }
+    const title = normalizeChatTitle(renameInput.value);
+    const shortened = Array.from(renameInput.value.replace(/\s+/gu, " ").replace(/[\u0000-\u001f\u007f]/g, "").trim()).length > 40;
+    if (!title) {
+      renameInput.setAttribute("aria-invalid", "true");
+      renameError.textContent = "Enter a chat name.";
+      renameError.hidden = false;
+      renameInput.focus(); queueSizes(); return;
+    }
+    renameTarget.title = title;
+    saveChats(); renderTabs();
+    closeRenameChat();
+    showCommandFeedback(shortened ? "Renamed in QChat, shortened to 40 characters" : "Renamed in QChat");
+  }
+  renameForm.addEventListener("submit", event => { event.preventDefault(); event.stopPropagation(); saveChatName(); });
+  renameForm.addEventListener("keydown", event => {
+    if (event.isComposing || event.keyCode === 229) { event.stopPropagation(); return; }
+    if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); saveChatName(); }
+  });
+  renameInput.addEventListener("input", () => { renameInput.removeAttribute("aria-invalid"); renameError.hidden = true; renameError.textContent = ""; queueSizes(); });
+  renameCancel.addEventListener("click", () => closeRenameChat());
   // The control that opened the list. A pointer-down on it must not close the
   // list, or its click would reopen it and the panel would flash.
   let featureListAnchor = null;
+  let modelRequest = null;
+  function cancelModelRequest() { if (modelRequest) clearTimeout(modelRequest.timer); modelRequest = null; }
+  const modelCache = {};
+  function requestModels() {
+    if (isBusy()) return;
+    if (activeProvider === "gemini") showModels(modelCache.gemini || {loading:true});
+    else showFeatureList("Loading models…", []);
+    const request = { provider: activeProvider };
+    modelRequest = request;
+    const finish = event => { if (modelRequest !== request) return; cancelModelRequest(); showModels(event); };
+    request.timer = setTimeout(() => finish({ error: "unavailable" }), 6000);
+    invoke("chat_models").catch(() => finish({ error: "unavailable" }));
+  }
   let featureListHideTimer = null;
   function hideFeatureList() {
     clearTimeout(featureListHideTimer);
@@ -2581,6 +3101,7 @@
     queueSizes();
   }
   function closeFeatureList() {
+    cancelModelRequest();
     featureListAnchor = null;
     if (featureList.hidden || featureList.hasAttribute("data-leaving")) return;
     clearTimeout(featureListHideTimer);
@@ -2595,6 +3116,9 @@
     el.promptInput.focus();
   }
   function showFeatureList(title, rows, searchable = false, anchor = null) {
+    closeRenameChat(false);
+    finder.close({ focus: false });
+    cancelModelRequest();
     closeSlashMenu();
     clearTimeout(featureListHideTimer);
     featureListHideTimer = null;
@@ -2607,14 +3131,42 @@
     const getRows = typeof rows === "function" ? rows : () => rows;
     const field = make("input", "feature-search"); field.placeholder = "Search chats"; field.setAttribute("aria-label", "Search chats");
     if (searchable) featureList.append(field); else featureList.append(make("div", "feature-heading", title));
-    const results = make("div", "feature-results"); featureList.append(results);
+    const results = make("div", "feature-results"); results.setAttribute("role", "listbox"); results.setAttribute("aria-label", title); featureList.append(results);
     let lines = [], selected = 0;
-    const mark = () => lines.forEach((entry, i) => { if (i === selected) entry.line.dataset.selected = ""; else delete entry.line.dataset.selected; });
-    const paint = () => {
-      results.replaceChildren(); lines = []; selected = 0;
+    const mark = () => lines.forEach((entry, i) => { entry.line.setAttribute("role", "option"); entry.line.setAttribute("aria-selected", String(i === selected)); if (i === selected) entry.line.dataset.selected = ""; else delete entry.line.dataset.selected; });
+    const cache = new Map();
+    const paint = (preserve = false) => {
+      const previousKey = lines[selected]?.row.key, previousIndex = selected;
+      const focused = results.contains(document.activeElement) ? document.activeElement : null;
+      const scroll = results.scrollTop;
+      if (!searchable) results.replaceChildren();
+      lines = []; selected = 0;
+      const used = new Set(); let position = 0;
       const query = `${field.value}`.toLowerCase();
-      for (const row of getRows().filter(row => `${row.title} ${row.prompt || ""}`.toLowerCase().includes(query))) {
-        const line = make("div", "feature-row");
+      for (const row of getRows().filter(row => !query || `${row.title || ""} ${row.prompt || ""}`.toLowerCase().includes(query))) {
+        if (row.divider) { const divider = make("div", "feature-divider"); divider.setAttribute("role", "separator"); results.append(divider); continue; }
+        if (row.heading) { results.append(make("div", "feature-heading", row.heading)); continue; }
+        const key = searchable ? row.key : null;
+        if (key != null && used.has(key)) continue;
+        let entry = key != null ? cache.get(key) : null;
+        const line = entry?.line || make("div", "feature-row");
+        if (entry) {
+          entry.row = row;
+          entry.button.querySelector(".feature-title").textContent = row.title;
+          entry.button.querySelector(".feature-meta").textContent = row.meta || "";
+          entry.button.disabled = Boolean(row.disabled);
+          line.classList.toggle("feature-disabled", Boolean(row.disabled));
+          if (row.disabled) line.setAttribute("aria-disabled", "true"); else line.removeAttribute("aria-disabled");
+          if (!row.disabled) lines.push(entry);
+          used.add(key);
+          const at = results.children[position++];
+          if (at !== line) {
+            if (focused && line.contains(focused)) {
+              while (results.children[position - 1] !== line) results.insertBefore(results.children[position - 1], line.nextSibling);
+            } else results.insertBefore(line, at || null);
+          }
+          continue;
+        }
         if (row.selected !== undefined) {
           const check = makeIcon(GLYPH.check, "icon feature-check");
           check.style.visibility = row.selected ? "visible" : "hidden";
@@ -2623,32 +3175,81 @@
         if (row.run) {
           const button = make("button", "feature-choice"); button.type = "button";
           button.append(make("span", "feature-title", row.title), make("span", "feature-meta", row.meta || ""));
-          button.onclick = () => { closeFeatureList(); row.run(); };
-          line.append(button); lines.push({ line, row });
+          button.disabled = Boolean(row.disabled);
+          entry = { line, row, button };
+          button.onclick = () => { if (!entry.row.disabled) { closeFeatureList(); entry.row.run(); } };
+          button.addEventListener("focus", () => { selected = lines.findIndex(entry => entry.line === line); mark(); });
+          line.append(button); if (!row.disabled) lines.push(entry);
+          else { line.classList.add("feature-disabled"); line.setAttribute("aria-disabled", "true"); }
         } else {
           line.append(make("kbd", "key", row.keys), make("span", "feature-title", row.title));
         }
-        if (row.remove) { const remove = make("button", "tool-btn"); remove.type = "button"; remove.setAttribute("aria-label", "Remove chat"); remove.append(makeIcon(GLYPH.close)); remove.onclick = row.remove; line.append(remove); }
-        results.append(line);
+        if (row.remove) { const remove = make("button", "tool-btn"); remove.type = "button"; remove.setAttribute("aria-label", "Remove chat"); remove.append(makeIcon(GLYPH.close)); remove.onclick = () => entry.row.remove?.(); remove.addEventListener("focus", () => { selected = lines.findIndex(item => item.line === line); mark(); }); line.append(remove); }
+        if (key != null) { cache.set(key, entry); used.add(key); }
+        if (searchable) { const at = results.children[position++]; results.insertBefore(line, at || null); }
+        else results.append(line);
+      }
+      if (searchable) {
+        for (const [key, item] of cache) if (!used.has(key)) { item.line.remove(); cache.delete(key); }
+        while (results.children.length > position) results.lastElementChild.remove();
+        if (preserve) {
+          const found = lines.findIndex(item => item.row.key === previousKey);
+          selected = found >= 0 ? found : Math.min(previousIndex, Math.max(0, lines.length - 1));
+          if (focused && document.activeElement !== focused) (focused.isConnected ? focused : field).focus({ preventScroll: true });
+          results.scrollTop = scroll;
+        }
       }
       mark();
       if (title === "Chats" && !lines.length) results.append(make("p", "feature-heading", accountChats.loading ? "Loading your chats…" : query ? "No chats match" : "No chats yet"));
     };
-    featureList._repaint = searchable ? () => { const scroll = results.scrollTop; paint(); results.scrollTop = scroll; } : null;
-    field.oninput = paint;
+    featureList._repaint = searchable ? () => { paint(true); } : null;
+    field.oninput = () => paint();
     featureList.onkeydown = e => {
       if (e.key === "Escape") { e.stopPropagation(); closeFeatureList(); }
       else if (keysCard) { if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key !== "Shift" && e.key !== "Control" && e.key !== "Alt" && e.key !== "Meta") { e.preventDefault(); closeFeatureList(); } }
-      else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); selected = (selected + (e.key === "ArrowDown" ? 1 : -1) + lines.length) % lines.length; mark(); }
-      else if (e.key === "Enter") { e.preventDefault(); const entry = lines[selected] || lines[0]; if (entry) { closeFeatureList(); entry.row.run(); } }
+      else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault(); if (!lines.length) return;
+        selected = (selected + (e.key === "ArrowDown" ? 1 : -1) + lines.length) % lines.length; mark();
+        if (searchable && results.contains(document.activeElement)) {
+          const entry = lines[selected];
+          const remove = document.activeElement.getAttribute("aria-label") === "Remove chat";
+          const next = remove ? entry.line.querySelector('[aria-label="Remove chat"]') || entry.button : entry.button;
+          next.focus({ preventScroll: true });
+        }
+        lines[selected]?.line.scrollIntoView({ block: "nearest" });
+      }
+      else if (e.key === "Enter") { if (searchable && e.target instanceof HTMLButtonElement) return; e.preventDefault(); const entry = lines[selected] || lines[0]; if (entry) { closeFeatureList(); entry.row.run(); } }
     };
     paint(); queueSizes(); (searchable ? field : featureList).focus();
   }
   function showModels(event) {
     const models = event.models || [];
-    showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? models.map(model => ({ title: model.label, selected: Boolean(model.selected), run: () => invoke("chat_model_choose", { id: model.id }).catch(() => {}) })) : [{ title: event.error ? "Open ChatGPT" : "Sign in", run: openSignin }]);
+    const choose = id => invoke("chat_model_choose", {id}).catch(() => showGlobalError(null, "Couldn't change the model. Try again in a moment."));
+    const rows = items => items.map(model => ({title:model.label, meta:[model.meta, model.disabled && !providerStates[activeProvider]?.loggedIn ? "Sign in" : ""].filter(Boolean).join(" · "), selected:Boolean(model.selected), disabled:model.disabled, run:() => choose(model.id)}));
+    if (activeProvider === "gemini") {
+      const items = models.length ? rows(models) : [{title:event.loading ? "Loading models…" : "Couldn't read the model list", disabled:true, run:() => {}}];
+      if (event.levels?.length) items.push({divider:true}, {heading:"Reasoning"}, ...rows(event.levels));
+      showFeatureList("Model", items.concat(switchProviderRows()), false, el.btnReasoning);
+    } else showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? rows(models) : [{title:event.error ? `Open ${providerName()}` : "Sign in", run:openSignin}]);
   }
-  listen("bridge", ({ payload }) => { if (payload.type === "models") showModels(payload); else if (payload.type === "model-chosen") setModelLabel(payload.model.label); });
+  listen("bridge", ({ payload }) => {
+    const provider = payload.provider || "chatgpt";
+    if (payload.type === "status" && modelCache[provider] && modelCache[provider]._loggedIn !== payload.loggedIn) delete modelCache[provider];
+    if (provider !== activeProvider) return;
+    if (payload.type === "models") {
+      const previous = modelCache[provider];
+      modelCache[provider] = {...payload, _loggedIn:providerStates[provider]?.loggedIn};
+      if (modelRequest?.provider === provider) {
+        cancelModelRequest();
+        if (provider !== "gemini" || featureListAnchor === el.btnReasoning && !featureList.hasAttribute("data-leaving")) {
+          if (provider !== "gemini" || JSON.stringify(previous) !== JSON.stringify(modelCache[provider])) showModels(payload);
+        }
+      }
+    } else if (payload.type === "model-chosen") {
+      if (provider === "gemini") { providerStates.gemini = {...providerStates.gemini, model:payload.short || payload.model.label}; syncReasoningButton(); }
+      else setModelLabel(payload.model.label);
+    }
+  });
   // Every chat on the account, read through the signed-in page, with this PC's chats first.
   const accountChats = { items: [], loading: false, loaded: false, at: 0 };
 
@@ -2658,30 +3259,44 @@
     if (accountChats.loaded && Date.now() - accountChats.at < 120000) return;
     accountChats.loading = true;
     accountChats.items = [];
+    armAccountChatsTimeout();
     invoke("chat_list_conversations", { offset: 0 }).catch(() => { accountChats.loading = false; });
+  }
+
+  // The bridge answers with an event, and a page reloading mid-request never does.
+  // Without this the list would read as loading, and refuse new requests, for the session.
+  let accountChatsTimer;
+  function armAccountChatsTimeout() {
+    clearTimeout(accountChatsTimer);
+    accountChatsTimer = setTimeout(() => {
+      if (!accountChats.loading) return;
+      accountChats.loading = false;
+      if (!featureList.hidden) featureList._repaint?.();
+    }, Number(window.__mock?.accountListTimeout) || 30000);
   }
 
   function receiveAccountChats(event) {
     const seen = new Set(accountChats.items.map(item => item.id));
-    for (const item of Array.isArray(event.items) ? event.items : []) if (!seen.has(item.id)) accountChats.items.push(item);
-    const more = !event.error && event.items?.length && accountChats.items.length < Math.min(event.total || 0, 600);
-    if (more) setTimeout(() => invoke("chat_list_conversations", { offset: accountChats.items.length }).catch(() => { accountChats.loading = false; }), 500);
-    else { accountChats.loading = false; accountChats.loaded = !event.error; accountChats.at = Date.now(); }
+    const before = accountChats.items.length;
+    for (const item of Array.isArray(event.items) ? event.items : []) if (!seen.has(item.id)) { seen.add(item.id); accountChats.items.push(item); }
+    const more = !event.error && event.items?.length && accountChats.items.length > before && accountChats.items.length < Math.min(event.total || 0, 600);
+    if (more) { armAccountChatsTimeout(); const provider = activeProvider; setTimeout(() => { if (provider === activeProvider) invoke("chat_list_conversations", { offset: accountChats.items.length }).catch(() => { accountChats.loading = false; }); }, 500); }
+    else { clearTimeout(accountChatsTimer); accountChats.loading = false; accountChats.loaded = !event.error; accountChats.at = Date.now(); }
     if (!featureList.hidden) featureList._repaint?.();
   }
 
-  function openAccountChat(item) {
+  async function openAccountChat(item) {
     if (isBusy()) return;
-    const chat = { ...freshChat(), conversationId: item.id, title: (item.title || "Untitled chat").slice(0, 40), lastActive: item.updated || Date.now() };
+    const chat = { ...freshChat(), conversationId: item.id, title: normalizeChatTitle(item.title || "Untitled chat"), lastActive: item.updated || Date.now() };
     chats.recent.unshift(chat);
-    switchToChat(chat.key);
+    await switchToChat(chat.key);
     setHistoryOpen(true);
   }
 
   function chatRows() {
-    const local = chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { chats.recent = chats.recent.filter(c => c.key !== chat.key); saveChats(); renderTabs(); featureList._repaint?.(); } }));
-    const known = new Set([chats.current.conversationId, ...chats.recent.map(chat => chat.conversationId)]);
-    const account = accountChats.items.filter(item => !known.has(item.id)).map(item => ({ title: item.title || "Untitled chat", meta: item.updated ? elapsedLabel(item.updated) : "", run: () => openAccountChat(item) }));
+    const local = chats.recent.map(chat => ({ key: JSON.stringify(["local", chat.provider, chat.key]), title: chatDisplayTitle(chat), meta: (chat.provider !== activeProvider ? `${providerName(chat)} · ` : "") + elapsedLabel(chat.lastActive), prompt: `${chat.lastPrompt || ""} ${chat.draft || ""}`, run: () => switchToChat(chat.key), remove: () => { const index = chats.recent.findIndex(c => c.key === chat.key); if (index < 0) return; offerChatUndo({ type: "remove", chat: structuredClone(chats.recent[index]), index }); readingPositions.delete(chat.key); chats.recent.splice(index, 1); saveChats(); renderTabs(); featureList._repaint?.(); } }));
+    const known = new Set([chats.current.conversationId, ...chats.recent.filter(chat => chat.provider === activeProvider).map(chat => chat.conversationId)]);
+    const account = accountChats.items.filter(item => !known.has(item.id)).map(item => ({ key: JSON.stringify(["account", activeProvider, item.id]), title: item.title || "Untitled chat", meta: item.updated ? elapsedLabel(item.updated) : "", run: () => openAccountChat(item) }));
     return [...local, ...account];
   }
 
@@ -2696,16 +3311,31 @@
     closeFeatureList();
   });
   window.addEventListener("keydown", e => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (!renameForm.hidden && e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeRenameChat(); return; }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") { e.preventDefault(); e.stopImmediatePropagation(); openFind(); return; }
+    if (finder.isOpen && e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); finder.close(); return; }
+    if (finder.isOpen && e.key === "F3") { e.preventDefault(); e.stopImmediatePropagation(); finder.move(e.shiftKey ? -1 : 1); return; }
+    if (!e.isComposing && e.keyCode !== 229 && e.key === "Escape" && pendingChatUndo.length && !slashOpen() && el.clearConfirm.hidden && renameForm.hidden) { e.stopImmediatePropagation(); e.preventDefault(); dismissChatUndo(); return; }
+    if (!e.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "z" && pendingChatUndo.length && document.activeElement !== finder.input && document.activeElement !== renameInput && !(document.activeElement?.matches("input, textarea") && document.activeElement.value)) { e.preventDefault(); e.stopImmediatePropagation(); void undoChatChange(); return; }
     if (e.key === "Escape" && !featureList.hidden) { e.stopImmediatePropagation(); e.preventDefault(); closeFeatureList(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); showChatList(); }
   }, true);
   let slashMatches = [];
+  function openFind() {
+    closeRenameChat(false);
+    if (!historyItems().some(item => String(item.text || "").trim())) { showCommandFeedback("No messages to search yet."); return; }
+    closeSlashMenu(); hideClearConfirm();
+    if (!featureList.hidden) closeFeatureList();
+    finder.open();
+  }
   let slashIndex = 0;
 
   const slashOpen = () => !el.slashMenu.hidden;
 
   function syncMenuFlag() {
-    const away = slashOpen() || !el.clearConfirm.hidden;
+    const away = slashOpen() || !el.clearConfirm.hidden || !renameForm.hidden;
+    if (away && el.tabs.contains(document.activeElement)) el.promptInput.focus();
     if (away) el.stack.dataset.menu = ""; else delete el.stack.dataset.menu;
     el.stack.toggleAttribute("data-slash-menu", slashOpen());
   }
@@ -2732,9 +3362,11 @@
   function updateSlashMenu() {
     const value = el.promptInput.value;
     const query = commandMenu ? "" : /^\/\S*$/.test(value) ? value.slice(1).toLowerCase() : null;
-    let matches = query === null ? [] : COMMANDS.filter((c) => c.name.startsWith(query));
-    if (commandMenu) { const order = ["new", "chats", "model", "temp", "settings", "signin", "clear", "keys", "hide"]; matches = order.map(name => COMMANDS.find(c => c.name === name)); }
+    let matches = query === null ? [] : COMMANDS.filter((c) => c.name !== activeProvider && c.name.startsWith(query));
+    if (commandMenu) matches = COMMANDS.filter(c => c.name !== activeProvider);
     if (!matches.length) { if (slashOpen()) closeSlashMenu(); return; }
+    closeRenameChat(false);
+    finder.close({ focus: false });
     const wasOpen = slashOpen();
     const previous = slashMatches.map((c) => c.name).join(",");
     slashMatches = matches;
@@ -2757,12 +3389,19 @@
   }
 
   function runCommand(cmd) {
-    el.promptInput.value = "";
+    const commandText = /^\/\S*$/.test(el.promptInput.value) && COMMANDS.some(c => c.name.startsWith(el.promptInput.value.slice(1).toLowerCase()));
+    if (!commandMenu || commandText) el.promptInput.value = "";
     closeSlashMenu();
     autoResizePrompt();
+    updateDraft();
     cmd.run();
   }
 
+  document.addEventListener("pointerdown", e => { if (!el.clearConfirm.hidden && !el.clearConfirm.contains(e.target)) hideClearConfirm(); });
+  el.clearConfirm.addEventListener("keydown", e => {
+    if (e.repeat && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); return; }
+    if (["ArrowLeft", "ArrowRight"].includes(e.key)) { e.preventDefault(); (document.activeElement === el.btnClearYes ? el.btnClearNo : el.btnClearYes).focus(); }
+  });
   function showClearConfirm() {
     el.clearConfirm.hidden = false;
     syncMenuFlag();
@@ -2799,16 +3438,19 @@
 
     el.statusDot.dataset.state = state;
     el.statusLabel.textContent = label;
-    el.orb.title = "QChat menu";
   }
 
   function setStatusError() {
     el.statusDot.dataset.state = "error";
     el.statusLabel.textContent = "Error";
-    el.orb.title = "QChat menu";
   }
 
   let startupRead = false;
+  let reconnecting = false;
+  let reconnectInvokePending = false;
+  let reconnectHadError = false;
+  let lastReconnectAttempt = 0;
+  let reconnectTimer;
   function updateStatusHeader({ ready, loggedIn, signedOut }) {
     bridge.ready = Boolean(ready);
     bridge.loggedIn = Boolean(loggedIn);
@@ -2821,7 +3463,11 @@
     if (bridge.ready) {
       clearTimeout(connectTimer);
       connectTimer = null;
-      if (connectErrorShown) hideGlobalError();
+      if (connectErrorShown) {
+        hideGlobalError();
+        if (reconnecting && reconnectHadError) showCommandFeedback("Reconnected");
+      }
+      endReconnectAttempt();
     }
     updateGuestNotice();
     updateComposerMode();
@@ -2833,7 +3479,8 @@
     if (bridge.ready) return;
     connectTimer = setTimeout(() => {
       connectTimer = null;
-      if (!bridge.ready) showGlobalError("offline");
+      endReconnectAttempt();
+      if (!bridge.ready && (el.globalError.hidden || connectErrorShown)) showGlobalError("offline");
     }, CONNECT_DEADLINE);
   }
 
@@ -2855,9 +3502,11 @@
   }
 
   function showGlobalError(code, message) {
+    globalErrorRevision++;
     el.globalErrorText.textContent = formatErrorCopy(code, message);
-    const retry = code === "offline";
+    const retry = code === "offline" || code === "not_ready";
     el.btnErrorSignin.hidden = !(code === "auth" || retry);
+    el.btnErrorSignin.disabled = false;
     el.btnErrorSignin.textContent = retry ? "Try again" : "Sign in";
     el.btnErrorSignin.dataset.action = retry ? "retry-connect" : "signin";
     connectErrorShown = retry;
@@ -2868,6 +3517,7 @@
 
   function hideGlobalError() {
     if (el.globalError.hidden) return;
+    globalErrorRevision++;
     el.globalError.hidden = true;
     el.globalErrorText.textContent = "";
     el.btnErrorSignin.hidden = true;
@@ -2878,23 +3528,344 @@
     queueSizes();
   }
 
-  const openSignin = () => invoke("show_signin").catch(() => {});
+  function recoverConnection(minInterval = 0) {
+    if (isBusy() || reconnecting || reconnectInvokePending || (!el.globalError.hidden && !connectErrorShown) || Date.now() - lastReconnectAttempt < minInterval) return;
+    lastReconnectAttempt = Date.now();
+    reconnecting = true;
+    reconnectInvokePending = true;
+    reconnectHadError = connectErrorShown;
+    if (connectErrorShown) { el.btnErrorSignin.disabled = true; el.btnErrorSignin.textContent = "Reconnecting…"; }
+    // No status event may ever arrive, and armConnectDeadline does nothing while
+    // the bridge still reads as ready, so every attempt ends on its own.
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(endReconnectAttempt, CONNECT_DEADLINE);
+    bridge.ready = false;
+    paintStatusDot(); updateComposerMode();
+    invoke("chat_status", { reconnect: true, provider: activeProvider }).catch(endReconnectAttempt).finally(() => { reconnectInvokePending = false; });
+    armConnectDeadline();
+  }
+
+  function endReconnectAttempt() {
+    clearTimeout(reconnectTimer);
+    reconnecting = false;
+    reconnectHadError = false;
+    el.btnErrorSignin.disabled = false;
+    if (connectErrorShown) el.btnErrorSignin.textContent = "Try again";
+  }
+
+  window.addEventListener("online", () => {
+    if (connectErrorShown || !bridge.ready) recoverConnection(3000);
+  });
+  window.addEventListener("focus", () => {
+    if (connectErrorShown) recoverConnection(15000);
+  });
+
+  const openSignin = () => invoke("show_signin", {provider: activeProvider}).catch(() => {});
 
   // ---------------------------------------------------------------------------
   // 13. Clipboard
   // ---------------------------------------------------------------------------
-  async function copyWithFeedback(text, buttonEl) {
+  async function writeClipboardText(text) {
     try {
       await navigator.clipboard.writeText(String(text ?? ""));
+      return true;
     } catch (_) {
+      const focused = document.activeElement;
+      const start = focused?.selectionStart, end = focused?.selectionEnd;
+      const selection = window.getSelection();
+      const ranges = Array.from({ length: selection?.rangeCount || 0 }, (_, i) => selection.getRangeAt(i).cloneRange());
       const ta = document.createElement("textarea");
       ta.value = String(text ?? "");
       ta.style.position = "fixed";
       ta.style.opacity = "0";
       document.body.appendChild(ta);
       ta.select();
-      try { document.execCommand("copy"); } catch (_) {}
-      document.body.removeChild(ta);
+      let copied = false;
+      try { copied = document.execCommand("copy"); } catch (_) {}
+      finally {
+        ta.remove();
+        if (focused?.isConnected) {
+          focused.focus({ preventScroll: true });
+          if (typeof start === "number") focused.setSelectionRange?.(start, end);
+        }
+        if (typeof start !== "number" && ranges.length && selection) { selection.removeAllRanges(); for (const range of ranges) selection.addRange(range); }
+      }
+      return copied;
+    }
+  }
+
+  const commandFeedback = make("div", "notice glass glass-tiny");
+  commandFeedback.id = "command-feedback";
+  commandFeedback.setAttribute("role", "status");
+  commandFeedback.hidden = true;
+  el.attachments.before(commandFeedback);
+  let commandFeedbackTimer;
+  let undoExpiryTimer;
+  let copyGeneration = 0;
+  let pendingChatUndo = [];
+  const sameChat = (a, b) => a.key === b.key || !!(a.conversationId && b.conversationId && a.provider === b.provider && a.conversationId === b.conversationId);
+  function paintChatUndo(message) {
+    clearTimeout(undoExpiryTimer);
+    pendingChatUndo = pendingChatUndo.filter(item => item.expires > Date.now());
+    if (!pendingChatUndo.length) {
+      commandFeedback.hidden = true;
+    } else {
+      const latest = pendingChatUndo[pendingChatUndo.length - 1];
+      commandFeedback.replaceChildren(document.createTextNode(message || (latest.type === "clear" ? "Chats cleared" : latest.type === "discard" ? "Draft discarded" : "Chat removed")));
+      const button = make("button", "btn", "Undo");
+      button.type = "button";
+      button.addEventListener("click", () => void undoChatChange());
+      commandFeedback.append(button);
+      commandFeedback.hidden = false;
+      undoExpiryTimer = setTimeout(() => paintChatUndo(), Math.max(1, Math.min(...pendingChatUndo.map(item => item.expires)) - Date.now()));
+    }
+    syncMenuFlag();
+    queueSizes();
+  }
+  function offerChatUndo(snapshot) {
+    clearTimeout(commandFeedbackTimer);
+    snapshot.expires = Date.now() + 6000;
+    pendingChatUndo = [...pendingChatUndo.filter(item => item.expires > Date.now()), snapshot].slice(-5);
+    paintChatUndo();
+  }
+  function dismissChatUndo() {
+    pendingChatUndo = [];
+    clearTimeout(undoExpiryTimer);
+    hideCommandFeedback();
+  }
+  function discardDraft() {
+    const text = draftValue();
+    const quotes = (chats.current.selectionTexts || []).slice();
+    const files = pendingFiles.slice();
+    if (!text && !quotes.length && !files.length) {
+      showCommandFeedback("Nothing to discard");
+      return;
+    }
+    // Files stay pending while a send uploads them, and the chip's own Remove is disabled then too.
+    if (files.length && isBusy()) {
+      showCommandFeedback("Wait for the reply to start before discarding files");
+      return;
+    }
+    const selectionStart = text ? el.promptInput.selectionStart : 0;
+    const selectionEnd = text ? el.promptInput.selectionEnd : 0;
+    const selectionDirection = text ? el.promptInput.selectionDirection : "none";
+    const originalFiles = files.map(item => item.file);
+
+    offerChatUndo({
+      type: "discard",
+      chatKey: chats.current.key,
+      text,
+      selectionStart,
+      selectionEnd,
+      selectionDirection,
+      quotes,
+      files: originalFiles
+    });
+
+    el.promptInput.value = "";
+    autoResizePrompt();
+    updateDraft();
+    chats.current.selectionTexts = [];
+    for (const item of files) removeAttachment(item);
+    saveChats();
+    renderAttachments();
+    updateIdleChips();
+    queueSizes();
+  }
+  async function undoChatChange() {
+    pendingChatUndo = pendingChatUndo.filter(item => item.expires > Date.now());
+    const item = pendingChatUndo.pop();
+    if (!item) { paintChatUndo(); return; }
+    const keep = QSettings.settings.keepHistory;
+    if (item.type === "remove") {
+      if (keep && !chats.recent.some(chat => sameChat(chat, item.chat)) && !sameChat(chats.current, item.chat)) {
+        chats.recent.splice(Math.min(item.index, chats.recent.length), 0, item.chat);
+      }
+    } else if (item.type === "discard") {
+      const changed = Boolean(el.promptInput.value)
+        || pendingFiles.length > 0
+        || Boolean(chats.current.selectionTexts?.length)
+        || chats.current.key !== item.chatKey
+        || isStreaming()
+        || sending;
+      if (changed) {
+        showCommandFeedback("Couldn't restore: the draft has changed");
+        return;
+      }
+      chats.current.selectionTexts = (item.quotes || []).slice();
+      el.promptInput.value = item.text || "";
+      updateDraft(true);
+      autoResizePrompt();
+      const start = item.selectionStart ?? el.promptInput.value.length;
+      const end = item.selectionEnd ?? start;
+      const direction = item.selectionDirection || "none";
+      el.promptInput.focus();
+      el.promptInput.setSelectionRange(start, end, direction);
+      if (item.files?.length) addFiles(item.files);
+      renderAttachments();
+      updateIdleChips();
+      queueSizes();
+      saveChats(); renderTabs(); featureList._repaint?.();
+      paintChatUndo();
+      return;
+    } else {
+      const unchanged = () => chats.current.key === item.clearedKey && !hasContent(chats.current) && !el.promptInput.value && pendingFiles.every(file => item.stagedFiles.includes(file));
+      let restoreCurrent = !isBusy() && unchanged();
+      if (restoreCurrent && item.current.provider !== activeProvider) {
+        restoreCurrent = await setProvider(item.current.provider || "chatgpt") && unchanged() && !isBusy();
+      }
+      if (keep) {
+        const newer = chats.recent.slice();
+        const restored = item.recent.filter(chat => !newer.some(other => sameChat(chat, other)));
+        chats.recent = [...restored, ...newer];
+        if (!restoreCurrent && !isBusy() && !item.current.temporary && !chats.recent.some(chat => sameChat(chat, item.current)) && !sameChat(chats.current, item.current)) pushRecent(item.current);
+        if (!restoreCurrent && !isBusy() && hasContent(chats.current)) { chats.current.draft = el.promptInput.value; pushRecent(chats.current); }
+      }
+      if (restoreCurrent) {
+        dismissExchange(true);
+        chats.current = item.current;
+        setModeLabel(item.current.temporary ? "Temporary" : "");
+        setModelLabel("");
+        el.promptInput.value = item.current.draft || "";
+        renderAttachments(); autoResizePrompt(); setHistoryOpen(false);
+        showCachedResponse(item.current);
+        updateIdleChips(); updateComposerMode();
+      }
+    }
+    saveChats(); renderTabs(); featureList._repaint?.();
+    if (pendingChatUndo.length) paintChatUndo(keep ? undefined : "Chat could not be restored");
+    else if (!keep) showCommandFeedback("Chat could not be restored");
+    else paintChatUndo();
+  }
+  function hideCommandFeedback() {
+    copyGeneration++;
+    clearTimeout(commandFeedbackTimer);
+    if (pendingChatUndo.length) { paintChatUndo(); return; }
+    commandFeedback.hidden = true;
+    syncMenuFlag();
+    queueSizes();
+  }
+  function showCommandFeedback(message) {
+    clearTimeout(commandFeedbackTimer);
+    if (pendingChatUndo.length) {
+      paintChatUndo(message);
+      commandFeedbackTimer = setTimeout(() => paintChatUndo(), 2200);
+      return;
+    }
+    commandFeedback.textContent = message;
+    commandFeedback.hidden = false;
+    syncMenuFlag();
+    queueSizes();
+    commandFeedbackTimer = setTimeout(hideCommandFeedback, 2200);
+  }
+
+  function editUserPrompt(row) {
+    const item = row?._userTurn;
+    if (!item || (item.chatKey && item.chatKey !== chats.current.key)) return;
+    const input = el.promptInput;
+    const text = (item.text || "").replace(/\r\n?/g, "\n");
+    const previous = input.value;
+    const replaced = Boolean(text && previous && previous !== text);
+    const notices = [];
+    // A selection-only turn has no text to load, so any draft stays as it is.
+    if (text && previous !== text) {
+      input.focus();
+      input.select();
+      let inputFired = false;
+      const markInput = () => { inputFired = true; };
+      input.addEventListener("input", markInput, { once: true });
+      let inserted = false;
+      try { inserted = document.execCommand("insertText", false, text); } catch {}
+      input.removeEventListener("input", markInput);
+      if (!inserted || input.value !== text) {
+        // Only insertText joins the native undo stack. Never overwrite a draft
+        // that could not be brought back; an empty composer has nothing to lose.
+        if (previous) {
+          if (input.value !== previous) input.setRangeText(previous, 0, input.value.length, "end");
+          if (inputFired || input.value !== previous) input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+          showCommandFeedback("Couldn't replace your draft. Clear it and try again.");
+          return;
+        }
+        input.setRangeText(text, 0, input.value.length, "end");
+      }
+      if (!inputFired) input.dispatchEvent(new Event("input", { bubbles: true }));
+      if (replaced) notices.push("Replaced draft, Ctrl+Z restores it");
+    }
+    const selections = chats.current.selectionTexts;
+    const selectionCount = selections.length;
+    for (const selection of cleanSelections(item.selectionTexts)) if (!selections.includes(selection)) selections.push(selection);
+    if (selections.length !== selectionCount) {
+      renderAttachments();
+      updateIdleChips();
+      updateDraft(true);
+    }
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    if (item.hadAttachments || item.attachments?.length || item.hasMedia || item.media?.length) notices.push("Attachments aren't included");
+    if (notices.length) showCommandFeedback(notices.join(" · "));
+  }
+
+  function serializeConversation() {
+    const items = historyItems(true);
+    if (!chats.current.transcript.length && chats.current.lastPrompt && !items.some(item => item.role === "user")) {
+      items.unshift({role:"user",text:chats.current.lastPrompt,hadAttachments:chats.current.lastHadAttachments});
+    }
+    return items.map(item => {
+      const text = item.role === "user" ? wirePrompt(item.text, item.selectionTexts || []) : copyReplyMarkdown(item.text, item.sources);
+      const names = (item.media || []).map(file => file.name).filter(Boolean);
+      const media = names.length ? names.map(name => `[Attachment: ${name.replace(/[\r\n]+/g, " ")}]`).join("\n") : item.hasMedia || item.hadAttachments ? "[Attachment]" : "";
+      const body = [text, media].filter(Boolean).join("\n\n");
+      return body ? `## ${item.role === "user" ? "You" : providerName()}\n\n${body}` : "";
+    }).filter(Boolean).join("\n\n---\n\n");
+  }
+
+  let exportPending = false;
+  async function exportConversation() {
+    if (exportPending) { showCommandFeedback("Saving conversation…"); return; }
+    const markdown = serializeConversation();
+    if (!markdown.trim()) { showCommandFeedback("No messages to save yet."); return; }
+    if (new TextEncoder().encode(markdown).length > 4 * 1024 * 1024) {
+      showCommandFeedback("This conversation is too long to save.");
+      return;
+    }
+    const title = chats.current.title;
+    exportPending = true;
+    showCommandFeedback("Saving conversation…");
+    try {
+      const name = await invoke("conversation_export", { title, markdown });
+      showCommandFeedback(`Saved ${name} to Downloads.`);
+    } catch {
+      showCommandFeedback("Couldn't save conversation. Try again.");
+    } finally { exportPending = false; }
+  }
+
+  async function copyConversation() {
+    hideCommandFeedback();
+    const generation = copyGeneration;
+    if (el.globalErrorText.textContent === "Couldn't copy. Try again.") hideGlobalError();
+    const chatKey = chats.current.key;
+    const messages = serializeConversation();
+    if (!messages) { showCommandFeedback("No messages to copy yet."); return; }
+    const copied = await writeClipboardText(messages);
+    if (chats.current.key !== chatKey || generation !== copyGeneration) return;
+    if (copied) showCommandFeedback("Conversation copied");
+    else showGlobalError(null, "Couldn't copy. Try again.");
+  }
+
+  async function copyWithFeedback(text, buttonEl) {
+    if (!String(text ?? "")) { showCommandFeedback("No text to copy"); return false; }
+    if (!await writeClipboardText(text)) {
+      if (buttonEl?._copyTimer) {
+        clearTimeout(buttonEl._copyTimer); buttonEl._copyTimer = null;
+        const icon = buttonEl.querySelector(".icon"), label = buttonEl.querySelector(".btn-label");
+        if (icon) icon.textContent = GLYPH.copy;
+        if (label) label.textContent = buttonEl._prevLabel;
+        buttonEl.title = buttonEl._prevTitle;
+      }
+      showGlobalError(null, "Couldn't copy. Try again.");
+      return false;
     }
     if (!buttonEl) return;
     const icon = buttonEl.querySelector(".icon");
@@ -2932,6 +3903,7 @@
   function onSettingsApplied() {
     const s = QSettings.settings;
     if (!s.keepHistory) {
+      readingPositions.clear();
       chats.recent = [];
       saveChats();
     }
@@ -2959,7 +3931,7 @@
   el.btnAllChats.addEventListener("click", () => showChatList(el.btnAllChats));
   el.historyPanel.addEventListener("scroll", () => {
     syncHistoryEdge();
-    if (el.historyPanel.scrollHeight - el.historyPanel.scrollTop - el.historyPanel.clientHeight <= 2) historyHeld = false;
+    if (!finder.isOpen && el.historyPanel.scrollHeight - el.historyPanel.scrollTop - el.historyPanel.clientHeight <= 2) historyHeld = false;
   }, { passive: true });
   el.historyPanel.addEventListener("wheel", (e) => { if (e.deltaY < 0) historyHeld = true; }, { passive: true });
   el.historyPanel.addEventListener("pointerdown", () => { historyHeld = true; });
@@ -2971,11 +3943,30 @@
       if (url) invoke("open_external", { url }).catch(() => {});
     }
     const button = e.target.closest("[data-action]");
-    if (button?.dataset.action === "copy-code") {
+    if (button?.dataset.action === "edit-prompt") {
+      editUserPrompt(button.closest(".history-row"));
+    } else if (button?.dataset.action === "copy-user") {
+      const turn = button.closest(".history-row")?._userTurn;
+      if (turn) copyWithFeedback(wirePrompt(turn.text || "", turn.selectionTexts || []), button);
+    } else if (button?.dataset.action === "copy-code") {
       const code = button.closest(".code-block")?.querySelector("pre code");
       if (code) copyWithFeedback(code.textContent, button);
     } else if (button?.dataset.action === "history-copy") {
-      copyWithFeedback(button.closest(".history-row")?._copyText || "", button);
+      const item = historyItems(true).find(item => item.id === button.closest(".history-row")?.dataset.id);
+      if (item) copyWithFeedback(copyReplyMarkdown(item.text, item.sources), button);
+    } else if (button?.dataset.action === "view-media") {
+      const media = button.closest(".turn-row")?.querySelector(".turn-media .media-card");
+      if (media) media.scrollIntoView({ block: "nearest" });
+      else {
+        const chat = chats.current;
+        button.disabled = true;
+        pageSync = pageSync.catch(() => {}).then(() => {
+          if (chats.current === chat && chat.conversationId && page.conv !== chat.conversationId) return openInPage(chat);
+        });
+        void pageSync.then(() => {
+          if (chats.current === chat) openSignin();
+        }).catch((err) => showGlobalError(errorCode(err))).finally(() => { button.disabled = false; });
+      }
     } else if (button?.dataset.action === "history-media") {
       const chat = chats.current;
       button.disabled = true;
@@ -2998,19 +3989,25 @@
     const actionBtn = e.target.closest("[data-action]");
     if (!actionBtn) return;
     const action = actionBtn.dataset.action;
-    if (action === "copy-code") {
+    if (action === "edit-prompt") {
+      editUserPrompt(actionBtn.closest(".turn-row"));
+    } else if (action === "copy-user") {
+      const turn = actionBtn.closest(".turn-row")?._userTurn;
+      if (turn) copyWithFeedback(wirePrompt(turn.text || "", turn.selectionTexts || []), actionBtn);
+    } else if (action === "copy-code") {
       const codeEl = actionBtn.closest(".code-block")?.querySelector("pre code");
       if (codeEl) copyWithFeedback(codeEl.textContent, actionBtn);
     } else if (action === "copy-turn") {
       const turn = turns.find((t) => t.id === actionBtn.dataset.id);
-      if (turn) copyWithFeedback(turn.text, actionBtn);
+      if (turn) copyWithFeedback(copyReplyMarkdown(turn.text, turn.sources), actionBtn);
     } else if (action === "dismiss-turn") {
       dismissExchange();
       el.promptInput.focus();
     } else if (action === "retry-turn" || action === "retry-reply") {
       const turn = turns.find((t) => t.id === actionBtn.dataset.id);
-      if (turn && (turn.prompt || turn.selectionTexts?.length) && !turn.hadAttachments && !isStreaming()) {
-        sendPrompt(turn.prompt, { selectionTexts: turn.selectionTexts || [] });
+      if (turn && !isBusy() && (turn.hadAttachments ? turn.retryFiles?.length && attachmentRetryCodes.has(turn.code) : (turn.prompt || turn.selectionTexts?.length))) {
+        const files = turn.retryFiles;
+        sendPrompt(turn.prompt, { selectionTexts: turn.selectionTexts || [], retryFiles: files, retrying: true });
         el.promptInput.focus();
       }
     } else if (action === "view-media") {
@@ -3039,6 +4036,7 @@
     const chip = e.target.closest("[data-suggestion]");
     if (!chip) return;
     el.promptInput.value = chip.dataset.suggestion;
+    updateDraft(true);
     autoResizePrompt();
     updateIdleChips();
     el.promptInput.focus();
@@ -3047,28 +4045,93 @@
   });
 
   el.promptInput.addEventListener("input", () => {
+    updateDraft(true);
     recallIndex = -1;
+    commandMenu = false;
     autoResizePrompt();
     updateSlashMenu();
     updateIdleChips();
   });
 
   function openCommandMenu() { commandMenu = true; updateSlashMenu(); el.promptInput.focus(); }
-  el.orb.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCommandMenu(); } });
   let orbDown = null, orbDragged = false;
   el.orb.addEventListener("pointerdown", e => { if (e.button !== 0) return; orbDown = [e.clientX, e.clientY]; orbDragged = false; el.orb.setPointerCapture?.(e.pointerId); });
   el.orb.addEventListener("pointermove", e => { if (orbDown && !orbDragged && Math.hypot(e.clientX-orbDown[0], e.clientY-orbDown[1]) >= 4) { orbDragged = true; window.__TAURI__.window?.getCurrentWindow().startDragging().catch(() => {}); } });
-  el.orb.addEventListener("pointerup", () => { if (orbDown && !orbDragged) openCommandMenu(); orbDown = null; });
-  document.addEventListener("pointerdown", e => { if (!el.slashMenu.contains(e.target) && !el.orb.contains(e.target) && e.target !== el.promptInput) closeSlashMenu(); });
+  el.orb.addEventListener("pointerup", () => { orbDown = null; });
+  el.orb.addEventListener("pointercancel", () => { orbDown = null; });
+  document.addEventListener("pointerdown", e => { if (!el.slashMenu.contains(e.target) && e.target !== el.promptInput) closeSlashMenu(); });
   window.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCommandMenu(); } });
+  window.addEventListener("keydown", e => {
+    if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey || e.isComposing || e.keyCode === 229) return;
+    const key = e.key.toLowerCase();
+    if (key !== "c" && key !== "x") return;
+    const focused = document.activeElement;
+    if (focused !== el.promptInput && (focused?.matches("input, textarea, select") || focused?.isContentEditable)) return;
+    let selected = "";
+    if (key === "c" && focused === el.promptInput) selected = focused.value.slice(focused.selectionStart, focused.selectionEnd);
+    if (key === "c" && !selected) {
+      const selection = window.getSelection();
+      if (selection?.rangeCount && selection.anchorNode?.parentElement?.closest('[data-role="assistant"]') && selection.focusNode?.parentElement?.closest('[data-role="assistant"]')) selected = selection.toString();
+    }
+    e.preventDefault();
+    const reply = historyItems(true).filter(item => item.role === "assistant" && item.text).at(-1);
+    let text = selected || (reply && key === "c" ? copyReplyMarkdown(reply.text, reply.sources) : "");
+    if (!selected && key === "x" && reply) {
+      const entry = turnNodes.get(reply.id);
+      const live = turns.find(turn => turn.id === reply.id);
+      let codes = live?.status === "streaming" ? null : entry?.contentEl?.querySelectorAll(".code-block pre code");
+      if (!codes?.length) {
+        const template = document.createElement("template");
+        template.innerHTML = renderMarkdownSafe(reply.text, reply.sources);
+        codes = template.content.querySelectorAll(".code-block pre code");
+      }
+      text = codes.length ? codes[codes.length - 1].textContent : "";
+    }
+    const generation = ++copyGeneration;
+    clearTimeout(commandFeedbackTimer);
+    if (!text) { showCommandFeedback(key === "c" ? "No reply to copy yet" : "No code in this reply"); return; }
+    const chatKey = chats.current.key;
+    void writeClipboardText(text).then(copied => {
+      if (chats.current.key !== chatKey || generation !== copyGeneration) return;
+      if (copied) showCommandFeedback(selected ? "Selection copied" : key === "c" ? "Reply copied" : "Code copied");
+      else {
+        if (pendingChatUndo.length) paintChatUndo();
+        else hideCommandFeedback();
+        showGlobalError(null, "Couldn't copy. Try again.");
+      }
+    });
+  });
   let filePickerOpen = false;
   el.btnAttach.addEventListener("click", () => { filePickerOpen = true; el.attachmentInput.click(); });
   el.btnSnapshot.addEventListener("click", () => { void captureSnapshot(); });
   el.attachmentInput.addEventListener("cancel", () => { filePickerOpen = false; });
   el.attachmentInput.addEventListener("change", () => { filePickerOpen = false; addFiles(el.attachmentInput.files); el.attachmentInput.value = ""; updateIdleChips(); });
+  function clipboardFiles(data) {
+    const files = Array.from(data?.files || []);
+    return files.length ? files : Array.from(data?.items || [])
+      .filter(item => item.kind === "file").map(item => item.getAsFile()).filter(Boolean);
+  }
   el.promptInput.addEventListener("paste", (e) => {
-    const files = Array.from(e.clipboardData?.files || []);
+    if (!el.clearConfirm.hidden || snapshotCapturing) return;
+    const files = clipboardFiles(e.clipboardData);
     if (files.length && addFiles(files)) e.preventDefault();
+  });
+  document.addEventListener("paste", (e) => {
+    if (e.defaultPrevented || !el.clearConfirm.hidden || snapshotCapturing) return;
+    const target = e.target;
+    if (target instanceof Element && (target.closest("input, textarea, [contenteditable]:not([contenteditable='false'])") || target.isContentEditable)) return;
+    const files = clipboardFiles(e.clipboardData);
+    if (files.length) {
+      if (addFiles(files)) { e.preventDefault(); el.promptInput.focus(); }
+      return;
+    }
+    const text = e.clipboardData?.getData("text/plain");
+    if (!text) return;
+    e.preventDefault();
+    const input = el.promptInput;
+    input.setRangeText(text, input.selectionStart, input.selectionEnd, "end");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
   });
   el.stage.addEventListener("dragover", (e) => {
     if (Array.from(e.dataTransfer?.types || []).includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = isBusy() ? "none" : "copy"; }
@@ -3078,12 +4141,23 @@
   });
 
   el.promptInput.addEventListener("keydown", (e) => {
-    if (e.isComposing) return;
-    if (!slashOpen() && (e.key === "ArrowUp" || e.key === "ArrowDown") && (!el.promptInput.value || recallIndex >= 0)) {
+    if (e.isComposing || e.keyCode === 229) return;
+    const arrow = e.key === "ArrowUp" || e.key === "ArrowDown";
+    const recalled = !arrow ? [] : chats.current.transcript.filter(item => item.role === "user" && item.text?.trim()).map(item => item.text);
+    if (arrow && !recalled.length && chats.current.lastPrompt?.trim()) recalled.push(chats.current.lastPrompt);
+    // A chat switch or restored draft changes the text without an input event;
+    // only text that recall itself placed may be replaced by the next step.
+    if (arrow && recallIndex >= 0 && el.promptInput.value !== recalled[recalled.length - 1 - recallIndex]) recallIndex = -1;
+    if (!slashOpen() && recalled.length && arrow && (!el.promptInput.value || recallIndex >= 0)) {
+      if (recallIndex >= 0 && el.promptInput.value.includes("\n")) {
+        const input = el.promptInput;
+        if ((e.key === "ArrowUp" && input.value.slice(0, input.selectionStart).includes("\n")) ||
+            (e.key === "ArrowDown" && input.value.slice(input.selectionEnd).includes("\n"))) return;
+      }
       e.preventDefault();
-      recallIndex = e.key === "ArrowUp" ? Math.min(prompts.length - 1, recallIndex + 1) : Math.max(-1, recallIndex - 1);
-      el.promptInput.value = recallIndex < 0 ? "" : prompts[prompts.length - 1 - recallIndex] || "";
-      autoResizePrompt(); return;
+      recallIndex = e.key === "ArrowUp" ? Math.min(recalled.length - 1, recallIndex + 1) : Math.max(-1, recallIndex - 1);
+      el.promptInput.value = recallIndex < 0 ? "" : recalled[recalled.length - 1 - recallIndex] || "";
+      updateDraft(true); autoResizePrompt(); return;
     }
     if (slashOpen()) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -3095,6 +4169,7 @@
       }
       if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
         e.preventDefault();
+        if (e.key === "Enter" && e.repeat) return;
         const cmd = slashMatches[slashIndex];
         if (cmd) runCommand(cmd);
         return;
@@ -3107,7 +4182,7 @@
     // Leave Enter alone while a reply streams so the textarea inserts a newline.
     if (isStreaming()) return;
     e.preventDefault();
-    if (!bridge.ready) return;
+    if (!bridge.ready || e.repeat) return;
     submitFromInput();
   });
 
@@ -3126,9 +4201,7 @@
   });
   el.btnErrorSignin.addEventListener("click", () => {
     if (el.btnErrorSignin.dataset.action === "retry-connect") {
-      hideGlobalError();
-      invoke(bridge.loggedIn && !bridge.ready ? "chat_new" : "chat_status").catch(() => {});
-      armConnectDeadline();
+      recoverConnection();
       el.promptInput.focus();
       return;
     }
@@ -3140,7 +4213,7 @@
     el.promptInput.focus();
   });
   el.btnClearYes.addEventListener("click", () => {
-    clearRecentChats();
+    confirmClearChats();
     hideClearConfirm();
     el.promptInput.focus();
   });
@@ -3151,11 +4224,52 @@
 
   window.addEventListener("keydown", (e) => {
     if (e.isComposing || e.keyCode === 229) return;
+    if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key === "Home") {
+      const target = e.target;
+      if (target === el.promptInput) {
+        if (target.value && (target.selectionStart !== 0 || target.selectionEnd !== 0)) return;
+      } else if (target instanceof Element && (target.closest("input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])"))) return;
+      if (historyOpen) {
+        e.preventDefault();
+        historyHeld = true;
+        el.historyPanel.scrollTop = 0;
+        syncHistoryEdge();
+      } else {
+        const entry = responseEntry();
+        if (!entry) return;
+        e.preventDefault();
+        holdStream(entry);
+        entry.scroller.scrollTop = 0;
+        entry.followTop = 0;
+        entry.lastTop = 0;
+        syncScrollState(entry);
+      }
+      return;
+    }
+    if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key === "End") {
+      const target = e.target;
+      if (target === el.promptInput) {
+        if (target.value && (target.selectionStart !== target.value.length || target.selectionEnd !== target.value.length)) return;
+      } else if (target instanceof Element && (target.closest("input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])"))) return;
+      if (historyOpen) {
+        e.preventDefault();
+        historyHeld = false;
+        el.historyPanel.scrollTop = el.historyPanel.scrollHeight;
+        syncHistoryEdge();
+      } else {
+        const entry = responseEntry();
+        if (!entry) return;
+        e.preventDefault();
+        entry.jump.click();
+      }
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       if (historyOpen) { setHistoryOpen(false); return; }
       if (slashOpen()) { closeSlashMenu(); return; }
       if (!el.clearConfirm.hidden) { hideClearConfirm(); el.promptInput.focus(); return; }
+      if (!commandFeedback.hidden) { hideCommandFeedback(); return; }
       if (!isBusy() && (turns.length || !el.globalError.hidden)) {
         hideGlobalError();
         dismissExchange();
@@ -3175,6 +4289,13 @@
       e.preventDefault();
       stopStreaming();
     } else if ((e.ctrlKey || e.metaKey) && (e.key === "n" || e.key === "N")) {
+      if (e.shiftKey) {
+        const target = e.target;
+        if (e.altKey || e.repeat || (target instanceof Element && target !== el.promptInput && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'))) return;
+        e.preventDefault();
+        void startTemporaryChat();
+        return;
+      }
       e.preventDefault();
       startNewChat(true);
     }
@@ -3202,9 +4323,12 @@
 
   listen("bridge", ({ payload: evt }) => {
     if (!evt || typeof evt !== "object") return;
+    const provider = evt.provider || "chatgpt";
+    if (evt.type === "status") { providerStates[provider] = evt; syncReasoningButton(); }
+    if (provider !== activeProvider) return;
     switch (evt.type) {
       case "status":
-        updateStatusHeader({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
+        if (![...readyWaiters].some(w => w.temporary && w.provider === activeProvider && w.generation === chatGeneration && (evt.temporary !== true || evt.setupId !== w.setupId))) updateStatusHeader({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
         settleReadyWaiters(evt);
         break;
       case "transcript":
@@ -3220,6 +4344,12 @@
         // A late "start" must not reopen a turn that already finished or was stopped.
         const turn = turns.find((t) => t.id === evt.id);
         if (turn?.status === "streaming") {
+          for (const file of turn.temporaryFiles || []) {
+            const index = pendingFiles.indexOf(file);
+            if (index >= 0) { pendingFiles.splice(index, 1); releasePreview(file.previewURL); }
+          }
+          turn.temporaryFiles = null;
+          renderAttachments();
           scheduleTurnRender(turn.id, true);
           updateComposerMode();
         }
@@ -3286,6 +4416,7 @@
           if (typeof evt.text === "string" && (evt.text || !turn.text)) turn.text = evt.text;
           turn.rich = evt.rich === true;
           turn.backendDone = true;
+          releaseTurnFiles(turn);
           turn.activity = null;
           if (turnNodes.get(turn.id)?.activity) turnNodes.get(turn.id).activity.hidden = true;
           if (turn.chatKey === chats.current.key) {
@@ -3313,11 +4444,24 @@
         break;
       }
       case "error": {
+        if (!evt.id && evt.code === "temporary_unavailable") {
+          for (const waiter of [...readyWaiters]) if (waiter.temporary && waiter.provider === provider && waiter.generation === chatGeneration && evt.setupId && waiter.setupId === evt.setupId) waiter.reject();
+          break;
+        }
         const turn = evt.id ? turns.find((t) => t.id === evt.id) : null;
         if (turn?.status === "streaming" && !turn.backendDone) {
           flushReveal(turn);
+          if (!turn.text && !turn.media?.length && !turn.cachedMedia) turn.restoreDraft?.();
+          if (evt.code === "temporary_unavailable" && turn.selectionConsumed) {
+            chats.current.selectionTexts.unshift(...turn.selectionTexts);
+            turn.selectionConsumed = false;
+            renderAttachments();
+            saveChats();
+          }
           turn.status = "error";
           turn.code = evt.code;
+          if (attachmentRetryCodes.has(evt.code)) retainTurnFiles(turn);
+          else releaseTurnFiles(turn);
           turn.error = formatErrorCopy(evt.code, evt.message);
           recordPartial(turn);
           revealResponse(turn);
@@ -3336,7 +4480,7 @@
   listen("qchat://selection", ({ payload }) => {
     if (typeof payload !== "string" || !payload.trim()) return;
     chats.current.selectionTexts.push(payload);
-    chats.current.draft = el.promptInput.value;
+    chats.current.draft = draftValue();
     hideGlobalError();
     saveChats();
     renderAttachments();
@@ -3347,12 +4491,13 @@
   listen("qchat://selection-error", ({ payload }) => showGlobalError("selection_failed", typeof payload === "string" ? payload : "Could not copy the selection. Try selecting the text again."));
   listen("qchat://shown", () => {
     el.promptInput.focus();
-    try { if (!localStorage.getItem("qchat.introduced")) { firstRunHint = true; updateComposerMode(); } } catch (_) {}
     refreshTheme();
     renderTabs();
-    if (connectErrorShown) hideGlobalError();
-    invoke("chat_status").catch(() => {});
-    armConnectDeadline();
+    if (connectErrorShown) recoverConnection(15000);
+    else if (el.globalError.hidden && !isBusy()) {
+      invoke("chat_status").catch(() => {});
+      armConnectDeadline();
+    }
     // The first placement can use a stale size. Settle it now, not on the first click.
     lastFit = { width: 0, height: 0 };
     queueSizes();
@@ -3384,6 +4529,20 @@
   fitNow();
   el.promptInput.focus();
   refreshTheme();
-  invoke("chat_status").catch(() => {});
+  (async () => {
+    try { await invoke("provider_set", {provider:activeProvider}); }
+    catch (_) {
+      // Native keeps its current provider, so the UI has to follow it, not the other way round.
+      const restored = activeProvider;
+      activeProvider = await invoke("provider_get").catch(() => "chatgpt") || "chatgpt";
+      if (activeProvider !== restored) {
+        await resetChatPreservingComposer();
+        showGlobalError(null, `Couldn't load ${restored === "gemini" ? "Gemini" : "ChatGPT"}. Using ${providerName()} for now.`);
+      }
+      syncReasoningButton();
+    }
+    await invoke("chat_status").catch(() => {});
+    try { const info = await launchInfo; if (info && (!info.autostart || QSettings.settings.showBarAtStartup)) await invoke("show_main"); } catch (_) {}
+  })();
   armConnectDeadline();
 })();

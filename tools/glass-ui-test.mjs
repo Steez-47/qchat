@@ -241,7 +241,8 @@ try {
   check('slash entrance stays inside the resized native viewport', entranceBounds.length > 2 && entranceBounds.every(r => r.top >= 0 && r.bottom <= r.height), JSON.stringify(entranceBounds));
   await settle();
   const slashBounds = await evalJS(`(()=>{const menu=document.getElementById('slash-menu').getBoundingClientRect();return {top:menu.top,bottom:menu.bottom,height:innerHeight,items:[...document.querySelectorAll('#slash-menu [role=option]')].map(n=>{const r=n.getBoundingClientRect();return {command:n.dataset.command,top:r.top,bottom:r.bottom};})};})()`);
-  check('all slash commands fit inside the native fitted viewport', slashBounds.items.length === 9 && slashBounds.top >= 27 && slashBounds.bottom <= slashBounds.height - 27 && slashBounds.items.every(r => r.top >= slashBounds.top && r.bottom <= slashBounds.bottom), JSON.stringify(slashBounds));
+  const expectedCommands = ['settings','new','signin','clear','hide','rename','find','copy','export','gemini','startup','model','temp','chats','keys','discard'];
+  check('all slash commands fit inside the native fitted viewport', slashBounds.items.length === expectedCommands.length && expectedCommands.every(name=>slashBounds.items.some(item=>item.command===name)) && slashBounds.top >= 27 && slashBounds.bottom <= slashBounds.height - 27 && slashBounds.items.every(r => r.top >= slashBounds.top && r.bottom <= slashBounds.bottom), JSON.stringify(slashBounds));
   await type('/se');
   const filtered = await evalJS(`[...document.querySelectorAll('#slash-menu [role=option]')].map(n=>n.dataset.command)`);
   check('slash menu filters as you type', filtered.length === 1 && filtered[0] === 'settings', filtered.join());
@@ -333,12 +334,12 @@ try {
   // --- Tabs -----------------------------------------------------------------
   await open('/', { chats: seeded(chat('cur', 'conv-current', 5 * MIN, 'Current chat'), chat('old', 'conv-old', 3 * DAY, 'Oldest chat'), chat('mid', 'conv-mid', 5 * HOUR, 'Middle chat'), chat('new', 'conv-new', 30 * MIN, 'A very recent chat')) });
   await settle();
-  const tabInfo = () => evalJS(`[...document.querySelectorAll('#tabs .tab')].map(t=>({key:t.dataset.key,label:t.querySelector('.tab-label').textContent,disabled:t.disabled,title:t.title,clock:t.querySelector('.icon').textContent.codePointAt(0)}))`);
+  const tabInfo = () => evalJS(`[...document.querySelectorAll('#tabs .tab')].map(t=>({key:t.dataset.key,label:t.querySelector('.tab-label').textContent,disabled:t.disabled,ariaDisabled:t.getAttribute('aria-disabled'),title:t.title,logo:t.querySelector('svg.icon')?.dataset.provider}))`);
   let tabs = await tabInfo();
   check('exactly 3 tabs for 3 chats', tabs.length === 3);
   check('tabs are ordered most recent first', tabs.map((t) => t.key).join() === 'new,mid,old', tabs.map((t) => t.key).join());
   check('labels use m/h/d', tabs.map((t) => t.label).join() === '30m,5h,3d', tabs.map((t) => t.label).join());
-  check('tabs use the clock glyph', tabs.every((t) => t.clock === 0xE121));
+  check('tabs use the provider logo', tabs.every((t) => t.logo === 'chatgpt'));
   check('tab tooltip has title and last active', tabs[0].title.includes('A very recent chat') && tabs[0].title.includes('Last active 30m ago'), tabs[0].title);
   check('recent chats show the title before the timestamp', await evalJS(`(()=>{const t=document.querySelector('#tabs .tab'),title=t.querySelector('.tab-title'),time=t.querySelector('.tab-label');return title?.textContent==='A very recent chat' && !!(title.compareDocumentPosition(time)&Node.DOCUMENT_POSITION_FOLLOWING);})()`));
   check('recent chats attach to the left of the composer with visible labels', await evalJS(`(()=>{const bar=document.getElementById('bar').getBoundingClientRect(),nav=document.getElementById('tabs').getBoundingClientRect(),tabs=[...document.querySelectorAll('#tabs .tab')];return Math.abs(tabs[0].getBoundingClientRect().left-bar.left)<30 && Math.abs(nav.bottom-bar.top)<4 && tabs.every(t=>{const title=t.querySelector('.tab-title').getBoundingClientRect(),time=t.querySelector('.tab-label').getBoundingClientRect();return title.bottom<=bar.top && time.bottom<=bar.top && document.elementFromPoint(title.left+2,title.top+2)?.closest('.tab')===t;});})()`));
@@ -396,7 +397,7 @@ try {
   await send('still here');
   await sleep(20);
   tabs = await tabInfo();
-  check('tabs are disabled while waiting or streaming', tabs.every((t) => t.disabled));
+  check('tabs are disabled while waiting or streaming', tabs.length > 0 && tabs.every((t) => t.ariaDisabled === 'true' && !t.disabled) && await evalJS(`document.querySelector('#tabs .tab-all').disabled`));
   const opensBefore = await count('chat_open');
   await evalJS(`document.querySelector('#tabs .tab').click()`);
   check('disabled tab does nothing', await count('chat_open') === opensBefore);
