@@ -94,11 +94,7 @@
 
   // What should be rendered for this tail right now. The canonical text is untouched.
   function stabilize(text) {
-    let source = text;
-    // The site's own markup is never reading material, finished or not.
-    source = source.replace(/<Entity\b[^>]*?\bvalue\s*=\s*"([^"]*)"[^>]*?(?:\/>|>(?:\s*<\/Entity>)?)/g, "$1").replace(/<\/?(?:E|En|Ent|Enti|Entit|Entity\b[^>]*)$/, "");
-    // Native citation tokens and Cite tags are only meaningful when complete.
-    source = source.replace(/[^]*$/, "").replace(/<Cite\b[^>]*$/i, "").replace(/<\/?C?i?t?e?$/i, match => (match.startsWith("<") && match.length > 1 ? "" : match));
+    let source = window.QResponseTags.stabilize(text);
     const fence = scanFences(source);
     if (fence) {
       // Keep the opener line out until its language is known; the block appears whole.

@@ -261,7 +261,6 @@
     return `![${label}](qchat-web:${btoa(url).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')})`;
   }
   function layoutToMarkdown(text, message) {
-    if (!/<(?:AsyncImage|box|row|grid|text|title|divider|icon|Cite)\b/.test(text)) return entityText(text);
     const results = message?.metadata?.model_dil_v2?.appData?.opGenui?.componentResults || {};
     const byQuery = new Map();
     for (const result of Object.values(results)) {
@@ -269,41 +268,7 @@
         if (image?.image_search_query && !byQuery.has(image.image_search_query)) byQuery.set(image.image_search_query, image);
       }
     }
-    const queries = attributes => [...attributes.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(match => match[1].replace(/\\"/g, '"'));
-    const convert = part => {
-      let out = entityText(part);
-      out = out.replace(/<grid-item\b[^>]*>([\s\S]*?)<\/grid-item>/g, (_, inner) => {
-        const image = /<AsyncImage\b[^>]*\bquery="([^"]*)"[^>]*\/?>/.exec(inner);
-        const words = inner.replace(/<AsyncImage\b[^>]*>/g, '').replace(/<\/?[a-zA-Z][^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-        if (image) return `${webImageToken(byQuery.get(image[1]), words)}\n`;
-        return words ? `- ${words}\n` : '';
-      });
-      out = out.replace(/<AsyncImageGroup\b[^>]*?\bquery=\{\[([\s\S]*?)\]\}[^>]*?\/?>/g, (_, list) => `\n\n${queries(list).map(query => webImageToken(byQuery.get(query))).filter(Boolean).join(' ')}\n\n`);
-      out = out.replace(/<AsyncImage\b[^>]*?\bquery="([^"]*)"[^>]*?\/?>/g, (_, query) => `\n\n${webImageToken(byQuery.get(query))}\n\n`);
-      out = out.replace(/<Cite\b[^>]*?\brefs?=(?:\{[\[{]([\s\S]*?)[\]}]\}|"([^"]*)")[^>]*?\/?>/g, (_, list, single) => {
-        const refs = list ? queries(list) : [single];
-        return `\uE200cite\uE202${refs.join('\uE202')}\uE201`;
-      });
-      const attribute = (tag, name) => new RegExp(`\\b${name}="([^"]*)"`).exec(tag)?.[1];
-      out = out.replace(/<Link\b[^>]*?\/>/g, tag => {
-        const url = attribute(tag, 'url') || attribute(tag, 'href');
-        const label = attribute(tag, 'title') || url;
-        return url ? `[${label.replace(/[\[\]]/g, ' ')}](${url})` : (label || '');
-      });
-      out = out.replace(/<Link\b([^>]*)>([\s\S]*?)<\/Link>/g, (tag, attrs, words) => {
-        const url = attribute(attrs, 'url') || attribute(attrs, 'href');
-        return url ? `[${words.replace(/[\[\]]/g, ' ')}](${url})` : words;
-      });
-      out = out.replace(/<caption\b[^>]*>([\s\S]*?)<\/caption>/g, (_, words) => `\n\n*${words.trim()}*\n\n`);
-      out = out.replace(/<title\b[^>]*>([\s\S]*?)<\/title>/g, '**$1** ').replace(/<divider\b[^>]*\/?>/g, '\n\n---\n\n');
-      // New components arrive over time. Any other tag is layout, never reading material: its words stay.
-      out = out.replace(/<\/?(?:box|row|col|column|stack|grid|grid-item|text|icon|card|section)\b[^>]*>/g, '\n').replace(/<\/?[a-zA-Z][\w-]*\b[^<>]*>/g, '');
-      // Indentation here is only the layout's nesting; Markdown would read it as code.
-      out = out.replace(/^[ \t]+/gm, '');
-      out = out.replace(/(qchat-web:[\w-]+\))\s*\n+\s*(!\[)/g, '$1 $2');
-      return out.replace(/\n{3,}/g, '\n\n');
-    };
-    return text.split(/(^ *`{3,}[^\n]*\n[\s\S]*?^ *`{3,} *$)/m).map((part, index) => index % 2 ? part : convert(part)).join('').trim();
+    return window.QResponseTags.toMarkdown(text, { image: (query, caption) => webImageToken(byQuery.get(query), caption) }).trim();
   }
   function storedSources(message) {
     const out = [];
@@ -457,18 +422,13 @@
   }
   // <Entity value="R34"/> is how the site marks a named thing: its value is the visible text.
   function entityText(text) {
-    return text.replace(/<Entity\b[^>]*?\bvalue\s*=\s*"([^"]*)"[^>]*?(?:\/>|>(?:\s*<\/Entity>)?)/g, '$1').replace(/<\/?Entity\b[^>]*(?:>|$)/g, '');
+    return window.QResponseTags.toMarkdown(text);
   }
   function citationText(job, text) {
-    const links = refs => [...new Set(refs.split(/[\s,;\uE202]+/).filter(Boolean))].map(ref => {
+    return window.QResponseTags.toMarkdown(text, { citation: refs => refs.split(/\s+/).map(ref => {
       const item = job.sourceRefs?.get(ref);
-      return item ? `[${item.title.replace(/[\\[\]]/g, '\\$&')}](${item.url})` : '';
-    }).filter(Boolean).join(' ');
-    return entityText(text).replace(/^image_group\{.*\}[ \t]*$/gm, '').replace(/<Cite\b[^>]*\bref\s*=\s*["']([^"']*)["'][^>]*\/?>(?:\s*<\/Cite>)?/gi, (_, refs) => links(refs))
-      .replace(/\uE200(?:cite|navlist|image)\uE202([^\uE201]*)\uE201/g, (_, refs) => links(refs))
-      .replace(/<\/?Cite\b[^>]*>/gi, '')
-      .replace(/<(?:C|Ci|Cit|Cite\b[^>]*)$|\uE200[^\uE201]*$/gi, '')
-      .replace(/[\uE200-\uE202]/g, '');
+      return item ? `[${item.title.replace(/[\\[\]]/g, '\\$&').replace(/</g, '&lt;').replace(/[\r\n]/g, ' ')}](${item.url})` : '';
+    }).filter(Boolean).join(' ') });
   }
   function attachmentURL(url) {
     return /^(?:sandbox:|blob:|data:)/i.test(url || '') ||
@@ -677,14 +637,7 @@
         Date.now() - job.noStopAt >= 800) finish(job);
   }
   function richLayout(text) {
-    // Leave literal markup in fenced/inline code alone. These components and
-    // JSX props identify the site's rich layout stream outside code examples.
-    const prose = text.replace(/(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\1[^\n]*|$)|`+[^`\n]*`+/g, '');
-    const partial = /<([a-z]+)$/i.exec(prose)?.[1].toLowerCase();
-    // Any JSX-style component is the site's own markup; only citations are handled here.
-    const component = [...prose.matchAll(/<\/?([A-Z][A-Za-z]*)\b/g)].some(match => match[1] !== 'Cite');
-    return component || /<\/?(?:row|box|text|grid|grid-item|title|divider|icon)\b/.test(prose) ||
-      !!partial && ['asyncimage', 'row', 'box', 'text', 'entity'].some(name => name.startsWith(partial));
+    return window.QResponseTags.hasLayout(text);
   }
   function networkText(job, text, canonicalFallback = false) {
     if (active !== job || job.finished || job.finishing) return;
@@ -1147,6 +1100,120 @@
     if (probe) { await probe; if (loginProbe === probe) loginProbe = null; }
     emit({ type: 'status', ready: !!find('composer'), loggedIn: !!loginCache, authPending: loginUnknown, url: location.href });
   }
+  // Select only explicitly labelled thinking controls, never model entries.
+  let reasoningSelection = false;
+  async function selectReasoning(job, composer, effort) {
+    if (effort == null) return true;
+    const alive = () => active === job && !job.cancelled;
+    const shown = node => node && node.isConnected !== false && node.getClientRects().length && !node.closest('[hidden], [aria-hidden="true"]');
+    const label = node => (node.getAttribute('aria-label') || node.innerText || node.textContent || '').trim();
+    const accessibleName = node => {
+      const ids = node.getAttribute('aria-labelledby');
+      return ids ? ids.split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ').trim() : label(node);
+    };
+    const names = { low: ['Light', 'Low', 'Instant'], medium: ['Standard', 'Medium'], high: ['Extended', 'High'] };
+    const unsupported = () => {
+      if (alive()) fail(job, 'reasoning_unavailable', 'This ChatGPT control cannot verify that thinking level. Choose Medium reasoning or a model with labelled thinking controls in ChatGPT.');
+      return false;
+    };
+    if (!names[effort]) return unsupported();
+    const controls = [...(composerArea()?.querySelectorAll('button[aria-haspopup]') || [])].filter(node =>
+      shown(node) && (/^Thinking(?: time)?(?:[:,].*)?$/i.test(label(node)) || /^(Light|Low|Standard|Medium|Extended|High)$/.test(label(node))));
+    // The model switcher may be opened, but only its Thinking group is writable.
+    const modelControls = controls.length ? [] : [...document.querySelectorAll('button[data-testid="model-switcher-dropdown-button"][aria-haspopup], button[aria-label="Select ChatGPT model"][aria-haspopup]')].filter(shown);
+    if (!controls.length && !modelControls.length) return effort === 'medium' || unsupported();
+    if ((controls.length || modelControls.length) !== 1) return unsupported();
+    const modelMenu = !controls.length;
+    const control = (modelMenu ? modelControls : controls)[0];
+    if (control.disabled || control.getAttribute('aria-disabled') === 'true' || control.getAttribute('aria-expanded') === 'true') return unsupported();
+    let opened = false;
+    reasoningSelection = true;
+    const popup = () => {
+      const id = control.getAttribute('aria-controls');
+      const menu = id && document.getElementById(id);
+      return shown(menu) && control.getAttribute('aria-expanded') === 'true' ? menu : null;
+    };
+    const scope = menu => {
+      if (!modelMenu) return menu;
+      const groups = [...menu.querySelectorAll('[role="radiogroup"], [role="group"]')].filter(node => shown(node) && /^Thinking(?: time)?$/i.test(accessibleName(node)));
+      return groups.length === 1 ? groups[0] : null;
+    };
+    const options = () => {
+      const menu = popup(), group = menu && scope(menu);
+      return group ? [...group.querySelectorAll('[role="menuitemradio"], [role="option"], [role="radio"]')].filter(shown) : [];
+    };
+    const matches = () => options().filter(node => names[effort].includes(label(node).split('\n')[0].trim()));
+    const selected = node => node.getAttribute('aria-checked') === 'true' || node.getAttribute('aria-selected') === 'true';
+    // Current ChatGPT exposes keyboard input on a Power menuitem; its visual
+    // Radix slider is aria-hidden. The linked live status names every position.
+    const selectPower = async () => {
+      const read = () => {
+        const menu = popup();
+        const powers = [...(menu?.querySelectorAll('[data-reasoning-slider][role="menuitem"][aria-label="Power"]') || [])].filter(shown);
+        if (powers.length !== 1) return null;
+        const power = powers[0];
+        if (power.getAttribute('aria-disabled') === 'true') return null;
+        const statuses = (power.getAttribute('aria-describedby') || '').split(/\s+/).map(id => document.getElementById(id))
+          .filter(node => node && menu.contains(node) && node.getAttribute('role') === 'status');
+        if (statuses.length !== 1) return null;
+        const status = (statuses[0].textContent || '').trim().match(/^(Instant|Light|Low|Medium|Standard|High|Extended), ([1-3]) of 3\.$/);
+        if (!status) return null;
+        const index = Number(status[2]), level = ['low', 'medium', 'high'][index - 1];
+        return names[level].includes(status[1]) ? { power, index, level } : null;
+      };
+      const desired = ['low', 'medium', 'high'].indexOf(effort) + 1;
+      for (let step = 0; step < 3 && alive(); step++) {
+        const before = read();
+        if (!before) return unsupported();
+        if (before.level === effort) return true;
+        const key = before.index < desired ? 'ArrowRight' : 'ArrowLeft';
+        before.power.focus?.();
+        before.power.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true }));
+        let changed;
+        for (let i = 0; i < 20 && alive(); i++) {
+          await sleep(50);
+          changed = read();
+          if (changed && changed.index !== before.index) break;
+        }
+        if (!alive()) return false;
+        if (!changed || changed.index !== before.index + (key === 'ArrowRight' ? 1 : -1)) return unsupported();
+      }
+      return alive() ? unsupported() : false;
+    };
+    try {
+      if (!alive()) return false;
+      opened = true;
+      control.focus?.();
+      control.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true, cancelable: true }));
+      await sleep(50);
+      if (!alive()) return false;
+      if (control.getAttribute('aria-expanded') !== 'true') control.click();
+      for (let i = 0; i < 30 && alive() && !popup(); i++) await sleep(50);
+      if (!alive()) return false;
+      if ([...(popup()?.querySelectorAll('[data-reasoning-slider][role="menuitem"][aria-label="Power"]') || [])].some(shown)) return await selectPower();
+      const found = matches();
+      if (found.length !== 1) return unsupported();
+      const option = found[0];
+      if (option.disabled || option.getAttribute('aria-disabled') === 'true') return unsupported();
+      if (!selected(option)) option.click();
+      let reopened = false;
+      for (let i = 0; i < 20 && alive(); i++) {
+        // Re-query live state: a detached radio's checked state is not evidence.
+        const fresh = matches();
+        if (fresh.length === 1 && selected(fresh[0])) return true;
+        if (!modelMenu && shown(control) && names[effort].includes(label(control))) return true;
+        if (!popup() && !reopened && shown(control)) { control.click(); reopened = true; }
+        await sleep(50);
+      }
+      return alive() ? unsupported() : false;
+    } finally {
+      if (opened && control.getAttribute('aria-expanded') === 'true') {
+        const target = popup() || control;
+        target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+      }
+      reasoningSelection = false;
+    }
+  }
   window.__qchat = {
     attachmentInput,
     cancelAttachmentSelection,
@@ -1154,8 +1221,9 @@
     activateMedia,
     mediaDownloadAction,
     resolveMedia,
-    async send({ id, prompt = '', attachmentCount = 0 }) {
-      if (active) { error(id, 'busy', 'A request is already in progress.'); return; }
+    async send({ id, prompt = '', attachmentCount = 0, reasoningEffort }) {
+      if (reasoningEffort != null && !['low', 'medium', 'high'].includes(reasoningEffort)) { error(id, 'invalid_reasoning_effort', 'Choose low, medium or high reasoning.'); return; }
+      if (active || reasoningSelection) { error(id, 'busy', 'A request is already in progress.'); return; }
       if (cancelledAttachments) {
         const cleared = cancelledAttachments.hadControls && uploads === 0 && attachmentRemovers(cancelledAttachments.names).length === 0;
         if (cleared) cancelledAttachments = null;
@@ -1180,6 +1248,10 @@
         }
         if (active !== job || job.cancelled) return;
         if (!composer) { fail(job, 'not_ready', 'Composer did not appear within 15 seconds.'); return; }
+        if (reasoningEffort != null && !await selectReasoning(job, composer, reasoningEffort)) return;
+        if (active !== job || job.cancelled) return;
+        composer = find('composer');
+        if (!composer) { fail(job, 'not_ready', 'ChatGPT composer changed. Please try again.'); return; }
         composer.focus();
         if (composer.tagName === 'TEXTAREA') {
           Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(composer, prompt);

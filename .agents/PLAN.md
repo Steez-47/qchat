@@ -1,3 +1,25 @@
+## Main consolidation (2026-10-31)
+
+Owner requested merging all work into main and reopening QChat. Snapshot and reasoning are the only unmerged feature branches; older feature and polish branches are already ancestors. Preserved both composer state updates and made the icon controls/picker padding compact at narrow widths so the 340px bar still leaves at least 150px for the prompt. The narrow-layout regression covers Snapshot alongside reasoning.
+
+Verified: Rust19; reasoning UI/bridge, Snapshot UI, glass, media, auth17, stream71, feature, presets, UX, animation and history suites; native Snapshot8 and profile/default-reasoning persistence all PASS using isolated test profiles. Release npm run build PASS; dist/QChat.exe SHA256 matches the compiled release. Restart uses that executable and the existing saved profile. Original main preserved in a timestamped backup branch; original executable preserved at .tmp/QChat-before-main-merge.exe. Existing Snapshot worktree remains clean.
+
+## Reasoning picker (2026-10-31)
+
+Goal: Low / Medium / High reasoning in the composer, with a saved default in Settings (initially Medium). Use ChatGPT's own reasoning controls and preserve the running app/session.
+
+| id | task | model | owns | deps | status |
+|---|---|---|---|---|---|
+| R1 | Composer picker, default setting and focused UI checks | DeepSeek high | ui/**, tools/reasoning-ui-test.mjs | IPC contract | done |
+| R2 | Native send option, real site reasoning control and bridge checks | Sol medium + parent | src-tauri/**, tools/reasoning-bridge-test.mjs, tools/live/reasoning-live-check.mjs | IPC contract | done; live verified |
+| R3 | Integration, review, required suites and release | parent | integration | R1,R2 | done; independent review quota unavailable |
+
+Contract: UI sends optional `reasoningEffort: "low" | "medium" | "high"` on `chat_send`; Rust forwards `reasoningEffort` to bridge `send`. UI default setting is `defaultReasoning` (medium). Conversation overrides use `reasoningEffort`; absent override follows saved default. No chat API reimplementation or exposed reasoning text.
+
+Current site labels: Low maps to Instant (or legacy Light); Medium to Medium/Standard; High to High/Extended. Owner authorized restart. Live copied-profile inspection recovered the actual `data-reasoning-slider` Power menuitem and its linked status (`Medium, 2 of 3.`); the visual numeric slider is aria-hidden. Parent implemented keyboard selection with fresh label/position verification after each step. Exact production selector verified Low/Medium/High and repeated transitions on the signed-in page, restoring the original level, closing every menu and sending no chats. Original profile preserved; disposable copy recycled after automatic review rejected permanent removal. Updated dist/QChat.exe running and responsive (PID26764); hash matches compiled release.
+
+Verification: reasoning UI26, presets15, features46, glass, media, animation, history, UX, math28, highlight11, auth17, stream71, Rust16, native settings/surfaces/selection/media and persistence PASS; live guest normal send/context/new-chat PASS. Persistence harness now waits for completed initial navigation and confirms marker insertion before Quit, and verifies saved defaultReasoning on restart. One guest Stop smoke assertion fails on a completed single-chunk reply, reproduced unchanged with the older target-surfaces-test build. Deterministic Stop/cancellation suites pass. No assertion was weakened. Build PASS. Parent reviewed final integration; Antigravity Sonnet review returned only quota exhaustion (no findings). Provider work: one DeepSeek UI task, two Sol backend tasks, one unsuccessful Sonnet review attempt.
+
 ## Rich replies and the real jitter cause (2026-10-31)
 
 Rich replies are stored as a layout language (box, row, grid, grid-item, text, title, divider, icon, Entity, Cite, AsyncImage, AsyncImageGroup). Images exist only as search queries in the text; metadata.model_dil_v2.appData.opGenui.componentResults[*].state.images[] holds each image, matched by image_search_query (19 of 19 in the sample). Citations resolve through metadata.search_result_groups. fallbackMarkdown drops the images, so the bridge converts the layout itself. Generated images are on tool messages and go above the reply text. After a rich live reply finishes, the reply is rebuilt from the saved record, which is the only source of its images.
@@ -237,3 +259,20 @@ Contract: main-only async `snapshot_capture` returns `{ name, mime: "image/png",
 Verified: Rust18, Snapshot UI27, native PNG pixels/dimensions and real camera-to-staging/removal, closed-target failure and QChat/settings exclusion. Auth17, stream/media71, glass, media, feature, UX, animation, history, presets, math and highlight suites PASS. Headless UI screenshots inspected. Final npm run build PASS; dist/QChat.exe matches compiled release. Running PID37108 and saved profile preserved.
 Review fixes: sample foreground before showing/focusing QChat and selection activation; serialize observations; clear stale targets on inaccessible process lookup; ignore tool, cloaked, tiny and transient shell windows. Parent fixed native harness startup readiness and bounded temporary-profile cleanup.
 Limitations: PrintWindow support varies; protected/incorrectly rendered captures are not always detectable. Four-second timeout with a single worker slot. Full window bounds may include invisible frame margins. Real global hotkey timing, elevated targets and mixed-DPI capture remain unverified. No saved-account messages were sent by this task. Delegation: one Codex implementation, one OpenCode UI implementation and one Antigravity review.
+## Response tag coverage (2026-10-31)
+
+Goal: research the output markup ChatGPT can emit and render it readably in QChat, including nesting and partial streams. Official docs describe arbitrary XML delimiters and citation/Harmony tokens; there is no established exhaustive public registry of ChatGPT's private rich layout components. Preserve unknown content and literal code rather than claiming a closed list.
+
+| id | task | model | owns | deps | status |
+|---|---|---|---|---|---|
+| T1 | Research official formats and current site evidence; record supported inventory | parent + DeepSeek high | tools/tag-research.md, tools/tag-site-inventory.mjs, .agents/** | none | done |
+| T2 | Shared safe tag parser, bridge/UI integration, focused regression checks | Sol medium | ui/**, src-tauri/**, tools/*tag*test.mjs, bridge harness integration | parent contract | done |
+| T3 | Cross-family review, full relevant checks, runtime render and release build | parent + Argon low reviewer | integration | T1,T2 | done |
+
+Implemented a shared DOM-free parser in ui/response-tags.js, loaded by both WebViews and standalone harnesses. Known DIL tags convert through the existing image/source metadata paths; safe HTML semantics and unfamiliar wrapper labels remain readable. Generated actions stay inert. Inline/fenced code and TeX are protected before conversion, including HTML code blocks and quoted/list-nested fences. Partial tags and citation prefixes do not flash source. Parent fixed sanitizer attribute injection, unique nested shield placeholders, list numbering/indentation, HTML attribute entity decoding, unquoted URL attributes and literal unsupported media.
+
+Review: Argon returned six findings, all fixed and covered: adjacent inline spacing, TeX inequalities, HTML code/backticks, malformed-tag/prose truncation, citation/autolink/escaped-angle false positives, and repeated rendering of nested code/source titles. No extra review delegates were started.
+
+Verified after review fixes: parser unit PASS; stream73/auth17/reasoning bridge; animation59/media48/features46/UX48/presets15/math28/highlight11/Snapshot27/reasoning UI26/glass160/history ALL PASS. Focused Edge UI8 checks include streaming, XSS, four real KaTeX inequalities, nested code, numbered lists and generic prose. Screenshot .tmp/tag-shots/response-tags.png inspected. Rust19 PASS; debug build and native guest smoke PASS (both WebView parser injection and actual rich reply rendering). npm run build PASS. dist/QChat.exe SHA256 91784389805D2DDABC2328B164D54361B970C63D54CFEC301B0BB4D236B38FEB matches compiled release. Previous executable preserved at .tmp/QChat-before-tags-20261031-180745.exe. Existing root-process PID38840 had exited; launch attempts correctly forwarded to the globally running QChat PID33096 from another worktree (.t3/worktrees/qchat/t3-c361152a/dist/QChat.exe). That session was preserved; the new release is ready but will load only after quitting the running copy and opening this checkout's dist/QChat.exe. No account chat messages were sent; saved profile preserved.
+
+Limitations: guest bundle inventory was blocked by Cloudflare; no exhaustive private component registry verified. Proprietary interactive widgets need separate data channels and remain readable fallbacks. Research/probe in tools/tag-research.md distinguishes documented XML/citations, historical DIL observations and compatibility aliases. Delegation: one Sol implementation, one DeepSeek research, one Argon review. Local feature branch feat/response-tags; no publication.

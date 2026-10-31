@@ -49,7 +49,18 @@ let app = start();
 let ok = false;
 try {
   let { ui, gpt } = await pages();
-  await evaluate(gpt, `document.cookie = "${marker}; Secure; Path=/; Max-Age=86400"`);
+  // CDP lists a target before its initial navigation is finished. Writing then
+  // can set the cookie on a document that ChatGPT immediately replaces.
+  let ready = false;
+  for (let i = 0; i < 60 && !ready; i++) {
+    ready = await evaluate(gpt, `location.hostname==='chatgpt.com' && document.readyState==='complete' && !!window.__qchat`);
+    if (!ready) await sleep(500);
+  }
+  if (!ready) throw new Error('ChatGPT document did not finish loading');
+  const written = await evaluate(gpt, `document.cookie = "${marker}; Secure; Path=/; Max-Age=86400"; document.cookie.includes('${marker}')`);
+  if (!written) throw new Error('Persistence marker was not written');
+  await evaluate(ui, `QSettings.save({...QSettings.settings,defaultReasoning:'high'}); true`);
+  await sleep(1000);
   const exited = new Promise(r => app.once('exit', r));
   evaluate(ui, `window.__TAURI__.core.invoke('quit_app')`).catch(() => {});
   await Promise.race([exited, sleep(15000)]);
@@ -58,12 +69,14 @@ try {
   console.log(`${closed ? 'PASS' : 'FAIL'} WebView2 shut down`);
 
   app = start();
-  ({ gpt } = await pages());
+  ({ ui, gpt } = await pages());
   let saved = '';
   for (let i = 0; i < 20 && !saved.includes(marker); i++) { saved = (await evaluate(gpt, 'document.cookie')) || ''; await sleep(500); }
   const kept = saved.includes(marker);
   console.log(`${kept ? 'PASS' : 'FAIL'} profile data survives Quit and restart`);
-  ok = kept && closed;
+  const reasoningKept = await evaluate(ui, `QSettings.load().defaultReasoning==='high'`);
+  console.log(`${reasoningKept ? 'PASS' : 'FAIL'} default reasoning survives Quit and restart`);
+  ok = kept && reasoningKept && closed;
 } catch (e) {
   console.log('FAIL harness ::', e.message);
 } finally {

@@ -43,7 +43,7 @@ try {
     return result.result.value;
   };
   await cdp('Page.enable'); await cdp('Network.enable');
-  await cdp('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__QCHAT_DISABLE_NET__ = ' + domOnly + '; window.__QCHAT_EMIT__ = e => { (window.__qlog ||= []).push(e); };\n' + await readFile(join(root, 'src-tauri/bridge/chatgpt-bridge.js'), 'utf8') });
+  await cdp('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__QCHAT_DISABLE_NET__ = ' + domOnly + '; window.__QCHAT_EMIT__ = e => { (window.__qlog ||= []).push(e); };\n' + await readFile(join(root, 'ui/response-tags.js'), 'utf8') + '\n' + await readFile(join(root, 'src-tauri/bridge/chatgpt-bridge.js'), 'utf8') });
   await cdp('Page.bringToFront');
   await cdp('Page.navigate', { url: 'https://chatgpt.com/' });
   await until(() => evaluate('window.__qlog?.some(e => e.type === "status" && e.ready)'));
