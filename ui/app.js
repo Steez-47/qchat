@@ -2482,7 +2482,6 @@
         // Nothing arrived, so there is no reply to keep: restore the prompt and
         // remove the empty exchange instead of leaving a completed-looking one.
         t.restoreDraft?.();
-        t.undoEmptyExchange?.();
         if (t.selectionConsumed) {
           chats.current.selectionTexts.unshift(...t.selectionTexts);
           t.selectionConsumed = false;
@@ -2490,6 +2489,8 @@
           saveChats();
         }
         for (const turn of turns.slice()) retireTurn(turn, true);
+        // After retiring: retireTurn writes each turn back to the transcript.
+        t.undoEmptyExchange?.();
         continue;
       }
       t.stopped = true;
@@ -3316,7 +3317,16 @@
     } else if (button?.dataset.action === "view-media") {
       const media = button.closest(".turn-row")?.querySelector(".turn-media .media-card");
       if (media) media.scrollIntoView({ block: "nearest" });
-      else openSignin();
+      else {
+        const chat = chats.current;
+        button.disabled = true;
+        pageSync = pageSync.catch(() => {}).then(() => {
+          if (chats.current === chat && chat.conversationId && page.conv !== chat.conversationId) return openInPage(chat);
+        });
+        void pageSync.then(() => {
+          if (chats.current === chat) openSignin();
+        }).catch((err) => showGlobalError(errorCode(err))).finally(() => { button.disabled = false; });
+      }
     } else if (button?.dataset.action === "history-media") {
       const chat = chats.current;
       button.disabled = true;
