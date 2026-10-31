@@ -47,24 +47,25 @@
         <button type="button" class="suggestion glass glass-tiny" data-suggestion="Draft a short, friendly email about "><span class="icon" aria-hidden="true">&#xE715;</span>Draft an email</button>
       </div>
 
-      <div class="slash-menu glass glass-tiny" id="slash-menu" role="listbox" aria-label="Commands" hidden></div>
-
       <div class="attachments" id="attachments" aria-live="polite" hidden></div>
 
       <nav class="tabs" id="tabs" aria-label="Recent chats" hidden></nav>
 
-      <footer class="bar glass" id="bar">
-        <input id="attachment-input" type="file" multiple hidden>
-        <div class="orb" id="orb" role="button" tabindex="0" aria-label="QChat menu" title="QChat menu">
-          <span class="status-dot" id="status-dot" data-state="connecting"></span>
-        </div>
-        <span class="sr-only" id="status-label" role="status">Connecting…</span>
-        <textarea class="bar-input" id="prompt-input" rows="1" placeholder="Ask anything" aria-label="Message" spellcheck="true" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="slash-menu"></textarea>
-        <button type="button" class="bar-btn reasoning-btn" id="btn-reasoning" aria-label="Reasoning: Medium" title="Reasoning effort"><span class="reasoning-label">Medium</span></button>
-        <button type="button" class="bar-btn" id="btn-attach" aria-label="Attach files" title="Attach files"><span class="icon" aria-hidden="true">&#xE723;</span></button>
-        <button type="button" class="bar-btn" id="btn-snapshot" aria-label="Snapshot current window" title="Snapshot current window"><span class="icon" aria-hidden="true">&#xE722;</span></button>
-        <button type="button" class="bar-btn send-btn" id="btn-send" data-mode="send" title="Send" aria-label="Send" disabled><span class="icon" aria-hidden="true">&#xE74A;</span></button>
-      </footer>
+      <div class="composer">
+        <div class="slash-menu glass glass-tiny" id="slash-menu" role="listbox" aria-label="Commands" hidden></div>
+        <footer class="bar glass" id="bar">
+          <input id="attachment-input" type="file" multiple hidden>
+          <div class="orb" id="orb" role="button" tabindex="0" aria-label="QChat menu" title="QChat menu">
+            <span class="status-dot" id="status-dot" data-state="connecting"></span>
+          </div>
+          <span class="sr-only" id="status-label" role="status">Connecting…</span>
+          <textarea class="bar-input" id="prompt-input" rows="1" placeholder="Ask anything" aria-label="Message" spellcheck="true" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="slash-menu"></textarea>
+          <button type="button" class="bar-btn reasoning-btn" id="btn-reasoning" aria-label="Reasoning: Medium" title="Reasoning effort"><span class="reasoning-label">Medium</span></button>
+          <button type="button" class="bar-btn" id="btn-attach" aria-label="Attach files" title="Attach files"><span class="icon" aria-hidden="true">&#xE723;</span></button>
+          <button type="button" class="bar-btn" id="btn-snapshot" aria-label="Snapshot current window" title="Snapshot current window"><span class="icon" aria-hidden="true">&#xE722;</span></button>
+          <button type="button" class="bar-btn send-btn" id="btn-send" data-mode="send" title="Send" aria-label="Send" disabled><span class="icon" aria-hidden="true">&#xE74A;</span></button>
+        </footer>
+      </div>
     </div>
   </div>
 

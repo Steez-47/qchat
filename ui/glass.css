@@ -288,6 +288,7 @@ html[data-motion="on"][data-tabpop="true"] .tab.pop {
    Bubbles
    --------------------------------------------------------------------------- */
 .bubble {
+  --bw: var(--reply-bw, 1px);
   border-radius: var(--r-bubble);
   overflow: hidden;
 }

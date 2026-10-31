@@ -1,5 +1,5 @@
 (() => {
-  let started = false, scheduled = false, last = '', lastFrame = 0, observed = new Set();
+  let started = false, scheduled = false, last = '', lastFrame = 0, observed = new Set(), barBlur = 1, chatBlur = 1;
   const invoke = (name, args) => window.__TAURI__?.core?.invoke(name, args);
   function refresh() {
     if (!window.__TAURI__?.core?.invoke || scheduled) return;
@@ -27,7 +27,7 @@
           if(/(auto|scroll|hidden|clip)/.test(style.overflowX)){left=Math.max(left,clip.left+parent.clientLeft);right=Math.min(right,clip.left+parent.clientLeft+parent.clientWidth);}
           if(/(auto|scroll|hidden|clip)/.test(style.overflowY)){top=Math.max(top,clip.top+parent.clientTop);bottom=Math.min(bottom,clip.top+parent.clientTop+parent.clientHeight);}
         }
-        if(right>left && bottom>top) rects.push({x:left,y:top,w:right-left,h:bottom-top,r:Math.min(radius||0,(right-left)/2,(bottom-top)/2),b:n.matches('.glass, .thinking')});
+        if(right>left && bottom>top) rects.push({x:left,y:top,w:right-left,h:bottom-top,r:Math.min(radius||0,(right-left)/2,(bottom-top)/2),b:n.matches('.glass, .thinking'),s:n.matches('.bubble, .thinking') ? chatBlur : barBlur});
       }
       const next = JSON.stringify(rects);
       if (next !== last) { last=next; Promise.resolve(invoke('surfaces_set', {rects:rects.slice(0,2048)})).catch(() => {}); }
@@ -51,5 +51,5 @@
     }
     start();
   });
-  window.QSurfaces = {start,refresh,setBlur(enabled,tintArgb,strength=1) {return Promise.resolve(invoke('surfaces_set_blur',{enabled:!!enabled,tintArgb:tintArgb >>> 0,strength}));}};
+  window.QSurfaces = {start,refresh,setBlur(enabled,tintArgb,strength=1,replyStrength=strength) {barBlur=strength;chatBlur=replyStrength;refresh();return Promise.resolve(invoke('surfaces_set_blur',{enabled:!!enabled,tintArgb:tintArgb >>> 0,strength}));}};
 })();

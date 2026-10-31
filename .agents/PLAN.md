@@ -322,3 +322,23 @@ Goal: render screenshot-style body declarations, stateful component loops and lo
 Interactive implementation and review complete: body declarations, state setters/functional updates, derived expressions, component loops, if/else, buttons, inputs/onInput, selects, textarea, sliders, checkbox/switch. Raw DIL preserved through SSE/NDJSON/history; reply-local state survives completion. Acorn 8.15.0 vendored with MIT license. Reviewer found native coercion budget bypass and event/default-selection bugs; all fixed with regressions. Interactive unit/browser16, parser/boundary, bridge75/auth17, response tags and paragraph UI PASS; animation/history/math finishing, release compiling. No signed-in chat sent. Unsupported host actions stay disabled; arbitrary JS/proprietary widget parity and state persistence across app restarts are outside this compatibility subset.
 
 Final: interactive unit/browser16, parser/boundary, stream75/auth17, tag UI, paragraph, animation, history and math suites all PASS. Screenshot .tmp/interactive-shots/interactive-games.png inspected. Release compile PASS. Build staging hit EPERM on running dist/QChat.exe; preserved it by rename, copied the compiled binary to dist and verified matching SHA256 3C27400D61FB5AC3FB28981AAF18C1F6DA264462E33917E4CE3A0D824C961353. Current process PID27832 preserved; restart required. No live signed-in chat exercised.
+
+## Slash command menu stability (2026-10-31)
+
+Fixed the command menu as an overlay above a composer wrapper. Opening/filtering no longer changes stack height, resizes the reply, or removes recent tabs from layout. Fade-only entrance avoids crossing the input; native content measurement includes the overlay so it can remain visible near the work-area edge. Feature pickers retain their original stack location. Native Sol worker implemented bounded UI edits; parent added frame-sampled browser regression and inspected .tmp/slash-menu/commands.png. UX regression and animation suites PASS. Feature suite has one unrelated source-string failure for retry guards while selection-attachment work is changing concurrently; no unrelated edits reverted. Release build pending. Existing QChat session preserved.
+Release compilation PASS. Build staging hit EPERM because dist/QChat.exe was running; moved that executable to a timestamped .tmp/QChat-before-slash backup, copied the compiled release into dist, and verified matching SHA256. Existing process preserved. Restart required; native compositor behavior not manually exercised.
+
+
+## Selection shortcut repair (2026-10-31)
+
+Goal: capture highlighted text from the foreground Windows app with Ctrl+Alt+Q and show a compact removable Selection chip, preserving the typed question.
+
+- Native Sol medium worker: bounded UIA and Ctrl+C capture, modifier release, clipboard preservation, foreground guards and explicit failures (implementation complete, native fixture under investigation).
+- Parent: per-chat hidden selection context, send/retry/history/draft handling, focused browser/native validation and release build (in progress).
+- Preserve existing QChat process/profile and concurrent unrelated settings/layout work. Referenced ORCHESTRATOR.md remains absent.
+
+## Independent chat panel material (2026-10-31)
+
+Added Settings > Chat panel: background opacity (0-100%), readability guard, independent native desktop blur toggle/strength, corners, border, width, padding, spacing and height limit. Shared settings version 5 migrates saved glass choices to preserve existing chat appearance. Native surfaces carry optional per-rectangle strength; hit-testing and existing default clients are preserved.
+
+Native worker owned surfaces.rs; parent owns UI/settings and integration. Focused settings/browser21 and Rust20 PASS (one interactive desktop fixture ignored); settings screenshot inspected. Glass UI160 and final npm run build PASS; dist/QChat.exe SHA256 matches compiled release. Concurrent selection and slash-menu changes preserved. Existing running session stays open; restart required for updated executable. Desktop blur appearance has not been visually measured on the actual desktop.

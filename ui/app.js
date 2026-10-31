@@ -459,10 +459,42 @@
     lastHasMedia: false,
     transcript: [],
     draft: "",
+    selectionTexts: [],
     createdAt: Date.now()
   });
 
-  const hasContent = (chat) => Boolean(chat.transcript?.length || chat.lastPrompt || chat.lastResponse || chat.lastHasMedia || chat.conversationId);
+  const hasContent = (chat) => Boolean(chat.transcript?.length || chat.lastPrompt || chat.lastResponse || chat.lastHasMedia || chat.conversationId || chat.selectionTexts?.length);
+
+  const cleanSelections = (items) => (Array.isArray(items) ? items : []).filter(text => typeof text === "string" && text.trim());
+  const hasTurnContent = (item) => Boolean(item.text || item.hasMedia || (item.role === "user" && item.selectionTexts?.length));
+  const wirePrompt = (prompt, selections) => [prompt, ...selections.map(text => text.replace(/\r\n?/g, "\n").split("\n").map(line => "> " + line).join("\n"))].filter(Boolean).join("\n\n");
+
+  function selectionChip(removable = false, index = 0) {
+    const chip = make("span", "attachment-chip selection-chip" + (removable ? " glass glass-tiny" : ""));
+    chip.append(makeIcon("\uE8A5"), make("span", "attachment-name", "Selection"));
+    chip.setAttribute("aria-label", "Selected text attached");
+    if (removable) {
+      const remove = make("button", "icon-btn");
+      remove.type = "button";
+      remove.setAttribute("aria-label", "Remove selection");
+      remove.disabled = sending;
+      remove.append(makeIcon(GLYPH.close));
+      remove.addEventListener("click", () => {
+        if (sending) return;
+        chats.current.selectionTexts.splice(index, 1);
+        saveChats(); renderAttachments(); updateIdleChips(); queueSizes();
+      });
+      chip.append(remove);
+    }
+    return chip;
+  }
+
+  function userContent(item) {
+    const fragment = document.createDocumentFragment();
+    fragment.append(document.createTextNode(item.text));
+    for (const _ of item.selectionTexts || []) fragment.append(selectionChip());
+    return fragment;
+  }
 
   // Media handles and signed image URLs belong to one bridge session. History
   // keeps prose and a hint to view prior media in ChatGPT.
@@ -493,7 +525,7 @@
       typeof item.id === "string" && (item.role === "user" || item.role === "assistant") && typeof item.text === "string")
       .map(item => {
         const snapshot = item.role === "user" ? { text: item.text, hasMedia: Boolean(item.hasMedia) } : completedSnapshot(item.text, item.hasMedia);
-        return { id: item.id, role: item.role, text: snapshot.text, hasMedia: snapshot.hasMedia, media: cleanStoredMedia(item.media), hadAttachments: Boolean(item.hadAttachments), stopped: item.role === "assistant" && Boolean(item.stopped), sources: cleanSources(item.sources) };
+        return { id: item.id, role: item.role, text: snapshot.text, selectionTexts: cleanSelections(item.selectionTexts), hasMedia: snapshot.hasMedia, media: cleanStoredMedia(item.media), hadAttachments: Boolean(item.hadAttachments), stopped: item.role === "assistant" && Boolean(item.stopped), sources: cleanSources(item.sources) };
       });
     // Older versions saved only the latest exchange; earlier turns are unavailable.
     const transcript = [];
@@ -509,6 +541,7 @@
       id: turn.id,
       role: turn.role,
       text: snapshot.text,
+      selectionTexts: cleanSelections(turn.selectionTexts),
       hasMedia: snapshot.hasMedia,
       hadAttachments: Boolean(turn.hadAttachments),
       sources: cleanSources(turn.sources),
@@ -536,7 +569,7 @@
       if (index < 0) items.push(item);
       else items[index] = { ...item, media: items[index].media };
     }
-    return items.filter(item => item.text || item.hasMedia);
+    return items.filter(hasTurnContent);
   }
 
   // The same bubble markup as the live view, without its per-reply viewport:
@@ -574,7 +607,7 @@
     if (!historyOpen) {
       // Called on every streamed frame, so this path must not touch the message text.
       const shown = el.zone.querySelectorAll(".turn-row:not(.leaving):not([hidden])").length;
-      const saved = chats.current.transcript.filter(item => item.text || item.hasMedia).length;
+      const saved = chats.current.transcript.filter(hasTurnContent).length;
       const moreOnPage = chats.current.conversationId && !backfilled.has(chats.current);
       el.historyControls.hidden = saved <= shown && !moreOnPage;
       return;
@@ -603,14 +636,14 @@
         if (!stoppedNote) row.append(make("div", "turn-note", "Stopped"));
       } else if (stoppedNote) stoppedNote.remove();
       // Completed messages are immutable during a stream; avoid reparsing them.
-      const fingerprint = JSON.stringify([item.text, item.hasMedia, item.media, item.sources, item.stopped]);
+      const fingerprint = JSON.stringify([item.text, item.selectionTexts, item.hasMedia, item.media, item.sources, item.stopped]);
       if (row._historyFingerprint === fingerprint) continue;
       row._historyFingerprint = fingerprint;
       row._copyText = item.text;
       row.toggleAttribute("data-wide", /\n/.test(item.text));
       const content = row.querySelector(".turn-content");
       const template = document.createElement("template");
-      if (item.role === "user") template.content.append(document.createTextNode(item.text));
+      if (item.role === "user") template.content.append(userContent(item));
       else if (window.QInteractive && window.QResponseTags.hasInteractive(item.text)) {
         renderInteractive(content,item.text,item.sources);
       } else template.innerHTML = renderMarkdownSafe(item.text, item.sources);
@@ -831,21 +864,21 @@
     backfillTimer = null;
     setHistoryStatus("");
     const older = cleanTranscript({ transcript: messages.map(item => ({ ...item, id: crypto.randomUUID() })) }).filter(item => item.text || item.hasMedia);
-    const local = chat.transcript.filter(item => item.text || item.hasMedia);
+    const local = chat.transcript.filter(hasTurnContent);
     if (complete) {
       // The account's record is the truth, including anything said on the website. A longer
       // local list means messages this PC misfiled or lost the text of, never more truth.
       // Messages this PC already has keep their markdown and sources.
       const known = new Map();
       for (const item of local) {
-        if (!item.text) continue;
-        const key = `${item.role}:${comparable(item.text)}`;
+        if (!hasTurnContent(item)) continue;
+        const key = `${item.role}:${comparable(item.role === "user" ? wirePrompt(item.text, item.selectionTexts || []) : item.text)}`;
         if (!known.has(key)) known.set(key, []);
         known.get(key).push(item);
       }
       chat.transcript = older.map(item => {
         const mine = known.get(`${item.role}:${comparable(item.text)}`)?.shift();
-        return mine ? { ...mine, text: item.text || mine.text, media: item.media, sources: item.sources?.length ? item.sources : mine.sources, hasMedia: item.hasMedia || mine.hasMedia } : item;
+        return mine ? { ...mine, text: item.role === "user" && mine.selectionTexts?.length ? mine.text : item.text || mine.text, media: item.media, sources: item.sources?.length ? item.sources : mine.sources, hasMedia: item.hasMedia || mine.hasMedia } : item;
       });
       if (chat === chats.current) refreshAfterRecord(chat);
       saveChats();
@@ -854,10 +887,10 @@
     }
     let end = older.length;
     if (local.length) {
-      const anchor = local.find(item => item.role === "user" && comparable(item.text));
+      const anchor = local.find(item => item.role === "user" && hasTurnContent(item));
       if (!anchor) return;
-      const key = comparable(anchor.text);
-      const isAnchor = item => item.role === "user" && comparable(item.text) === key;
+      const key = comparable(wirePrompt(anchor.text, anchor.selectionTexts || []));
+      const isAnchor = item => item.role === "user" && comparable(wirePrompt(item.text, item.selectionTexts || [])) === key;
       // A repeated prompt: count back from the end, as the local copy is the tail.
       const matches = older.flatMap((item, index) => isAnchor(item) ? [index] : []);
       end = matches[matches.length - local.filter(isAnchor).length] ?? -1;
@@ -931,6 +964,7 @@
       lastSources: cleanSources(raw.lastSources),
       transcript: cleanTranscript(raw, snapshot),
       draft: text(raw.draft, Infinity),
+      selectionTexts: cleanSelections(raw.selectionTexts),
       createdAt: time(raw.createdAt),
       ...(reasoningEffort ? { reasoningEffort } : {})
     };
@@ -1057,6 +1091,7 @@
     chats.current = freshChat();
     setModeLabel("");
     el.promptInput.value = "";
+    renderAttachments();
     autoResizePrompt();
     saveChats();
     renderTabs();
@@ -1178,7 +1213,9 @@
   }
   function renderAttachments() {
     el.attachments.replaceChildren();
-    el.attachments.hidden = !pendingFiles.length;
+    const selections = chats.current.selectionTexts;
+    el.attachments.hidden = !pendingFiles.length && !selections.length;
+    selections.forEach((_, index) => el.attachments.append(selectionChip(true, index)));
     for (const item of pendingFiles) {
       const chip = make("div", "attachment-chip glass glass-tiny");
       chip.dataset.state = item.state;
@@ -1556,6 +1593,12 @@
     }
     // Same for the history viewport: the window grows first, then the panel eases into it.
     if (historyOpen) height += Math.max(0, parseFloat(el.historyPanel.style.height || 0) - el.historyPanel.offsetHeight);
+    // The command menu overlays the conversation, but its top still needs native
+    // window space. Measure layout heights so its entrance transform cannot move the window.
+    if (!el.slashMenu.hidden) {
+      const gap = parseFloat(getComputedStyle(el.stack).gap) || 0;
+      height = Math.max(height, el.bar.offsetHeight + gap + el.slashMenu.offsetHeight);
+    }
     const content = height + 2 * GUTTER;
     // The window keeps its full height, and the empty part is click-through. Resizing it as
     // things open and close made everything jump: the webview follows a frame behind the window.
@@ -1623,7 +1666,8 @@
     row.setAttribute("aria-label", "You said");
 
     const bubble = make("div", "bubble bubble-user glass glass-tiny");
-    const contentEl = make("div", "turn-content", turn.text);
+    const contentEl = make("div", "turn-content");
+    contentEl.append(userContent(turn));
     const mediaEl = make("div", "turn-media");
     for (const file of turn.attachments || []) {
       if (!file.previewURL) { mediaEl.append(make("div", "attachment-chip", `${file.name} · ${fileSize(file.size)}`)); continue; }
@@ -1751,7 +1795,7 @@
       signin.dataset.action = "signin";
       actions.appendChild(signin);
     }
-    if ((!turn.hadAttachments && turn.prompt) || pendingFiles.some((f) => f.state === "ready")) {
+    if ((!turn.hadAttachments && (turn.prompt || turn.selectionTexts?.length)) || pendingFiles.some((f) => f.state === "ready")) {
       const retry = make("button", "btn btn-compact", "Retry");
       retry.type = "button";
       retry.dataset.action = "retry-turn";
@@ -1782,7 +1826,7 @@
 
     entry.row.dataset.status = turn.status;
     const retryTool = entry.row.querySelector('[data-action="retry-reply"]');
-    if (retryTool) retryTool.hidden = turn.status !== "done" || !turn.prompt || turn.hadAttachments;
+    if (retryTool) retryTool.hidden = turn.status !== "done" || (!turn.prompt && !turn.selectionTexts?.length) || turn.hadAttachments;
     const openTool = entry.row.querySelector('[aria-label="Open in ChatGPT"]');
     if (openTool) openTool.hidden = !chats.current.conversationId;
     const activity = entry.activity;
@@ -2132,7 +2176,7 @@
     const stored = chat.conversationId ? (cachedTurn?.media || []) : [];
     const fallback = !stored.length && (snapshot.hasMedia || (!snapshot.text && chat.conversationId && chat.lastPrompt));
     if (!snapshot.text && !fallback && !stored.length) return;
-    const turn = { id: cachedTurn?.id || crypto.randomUUID(), role: "assistant", text: snapshot.text, sources: cleanSources(cachedTurn ? cachedTurn.sources : chat.lastSources), status: "done", restored: true, cachedMedia: Boolean(fallback), chatKey: chat.key, prompt: chat.lastPrompt, hadAttachments: cachedTurn?.hadAttachments || chat.lastHadAttachments, stopped: Boolean(cachedTurn?.stopped) };
+    const turn = { id: cachedTurn?.id || crypto.randomUUID(), role: "assistant", text: snapshot.text, sources: cleanSources(cachedTurn ? cachedTurn.sources : chat.lastSources), status: "done", restored: true, cachedMedia: Boolean(fallback), chatKey: chat.key, prompt: chat.lastPrompt, selectionTexts: cachedTurn?.selectionTexts || [], hadAttachments: cachedTurn?.hadAttachments || chat.lastHadAttachments, stopped: Boolean(cachedTurn?.stopped) };
     turns.push(turn);
     el.zone.append(createResponseRow(turn));
     const entry = turnNodes.get(turn.id);
@@ -2172,8 +2216,9 @@
     const staging = pendingFiles.some((f) => f.state === "staging");
     const attachable = pendingFiles.some((f) => f.state === "ready");
     el.btnAttach.disabled = active || sending;
+    for (const button of el.attachments.querySelectorAll(".selection-chip button")) button.disabled = sending;
     el.btnSnapshot.disabled = active || sending || snapshotCapturing;
-    el.btnSend.disabled = !active && (!bridge.ready || sending || staging || snapshotCapturing || (!el.promptInput.value.trim() && !attachable));
+    el.btnSend.disabled = !active && (!bridge.ready || sending || staging || snapshotCapturing || (!el.promptInput.value.trim() && !attachable && !chats.current.selectionTexts.length));
     syncReasoningButton();
     syncTabsDisabled();
   }
@@ -2203,15 +2248,16 @@
 
   const IMAGE_PROMPT = /^(?:please\s+)?(?:generate|create|draw|paint|render|make|design)\b[\s\S]{0,100}\b(?:image|picture|photo|illustration|artwork|portrait)\b/i;
 
-  async function sendPrompt(rawPrompt, { fromInput = false } = {}) {
+  async function sendPrompt(rawPrompt, { fromInput = false, selectionTexts = fromInput ? chats.current.selectionTexts.slice() : [] } = {}) {
     const prompt = String(rawPrompt ?? "").trim();
     const files = pendingFiles.filter((f) => f.state === "ready");
-    if (snapshotCapturing || isBusy() || pendingFiles.some((f) => f.state === "staging") || (!prompt && !files.length)) return;
+    if (snapshotCapturing || isBusy() || pendingFiles.some((f) => f.state === "staging") || (!prompt && !files.length && !selectionTexts.length)) return;
     prompts.push(prompt); recallIndex = -1; firstRunHint = false;
     try { localStorage.setItem("qchat.introduced", "1"); } catch (_) {}
     el.promptInput.placeholder = QSettings.settings.placeholderText || "Ask anything";
     const chat = chats.current;
     const reasoningEffort = effectiveReasoning(chat);
+    const consumeSelections = fromInput || (selectionTexts.length > 0 && selectionTexts.every((text, index) => chat.selectionTexts[index] === text));
     sending = true;
     sentReasoning = reasoningEffort;
     const generation = chatGeneration;
@@ -2228,8 +2274,8 @@
     dismissExchange();
     sentThisSession = true;
 
-    const userTurn = { id: crypto.randomUUID(), role: "user", text: prompt, status: "done", chatKey: chat.key, attachments: files.map((f) => ({ name: f.file.name, size: f.file.size, previewURL: imagePreview(f.file) })) };
-    const assistantTurn = { id: crypto.randomUUID(), role: "assistant", text: "", status: "streaming", prompt, hadAttachments: files.length > 0, chatKey: chat.key };
+    const userTurn = { id: crypto.randomUUID(), role: "user", text: prompt, selectionTexts, status: "done", chatKey: chat.key, attachments: files.map((f) => ({ name: f.file.name, size: f.file.size, previewURL: imagePreview(f.file) })) };
+    const assistantTurn = { id: crypto.randomUUID(), role: "assistant", text: "", status: "streaming", prompt, selectionTexts, hadAttachments: files.length > 0, chatKey: chat.key };
     if (IMAGE_PROMPT.test(prompt)) assistantTurn.imageProgress = { state: "generating", phase: "preparing" };
 
     turns.push(userTurn, assistantTurn);
@@ -2244,7 +2290,7 @@
       setTimeout(() => { if (assistantTurn.status === "streaming") revealResponse(assistantTurn); }, QSettings.timings.t4);
     }
 
-    const label = prompt || files[0]?.file.name || "Attachment";
+    const label = prompt || (selectionTexts.length ? "Selected text" : files[0]?.file.name) || "Attachment";
     chat.title = chat.title || label.slice(0, 40);
     chat.lastPrompt = prompt;
     chat.lastHadAttachments = files.length > 0;
@@ -2263,7 +2309,12 @@
       await ensurePage(chat);
       if (generation !== chatGeneration) return;
       if (assistantTurn.status !== "streaming") throw { code: "stopped" };
-      await invoke("chat_send", { id: assistantTurn.id, prompt, attachmentIds: files.map((f) => f.id), reasoningEffort });
+      await invoke("chat_send", { id: assistantTurn.id, prompt: wirePrompt(prompt, selectionTexts), attachmentIds: files.map((f) => f.id), reasoningEffort });
+      if (consumeSelections && assistantTurn.status !== "error" && !(assistantTurn.status === "done" && !assistantTurn.text && !assistantTurn.media?.length)) {
+        chat.selectionTexts.splice(0, selectionTexts.length);
+        assistantTurn.selectionConsumed = true;
+        saveChats();
+      }
       page = { ...page, key: chat.key, pristine: false };
       for (const file of files) {
         const index = pendingFiles.indexOf(file);
@@ -2305,6 +2356,12 @@
         // Nothing arrived, so there is no reply to keep: restore the prompt and
         // remove the empty exchange instead of leaving a completed-looking one.
         if (!el.promptInput.value) { el.promptInput.value = t.prompt || ""; autoResizePrompt(); }
+        if (t.selectionConsumed) {
+          chats.current.selectionTexts.unshift(...t.selectionTexts);
+          t.selectionConsumed = false;
+          renderAttachments();
+          saveChats();
+        }
         for (const turn of turns.slice()) retireTurn(turn, true);
         continue;
       }
@@ -2342,6 +2399,7 @@
 
     if (hasContent(chats.current)) { chats.current.lastActive = Date.now(); pushRecent(chats.current); }
     chats.current = freshChat();
+    renderAttachments();
     setModeLabel("");
     setHistoryOpen(false);
     renderHistory();
@@ -2441,6 +2499,7 @@
     chats.recent = chats.recent.slice(0, MAX_RECENT);
     target.lastActive = now;
     chats.current = target;
+    renderAttachments();
     el.promptInput.value = target.draft || "";
     autoResizePrompt();
     setHistoryOpen(false);
@@ -2489,7 +2548,7 @@
     } }
   );
   const featureList = make("section", "feature-list glass");
-  featureList.hidden = true; featureList.tabIndex = -1; el.slashMenu.before(featureList);
+  featureList.hidden = true; featureList.tabIndex = -1; el.attachments.before(featureList);
   // The control that opened the list. A pointer-down on it must not close the
   // list, or its click would reopen it and the panel would flash.
   let featureListAnchor = null;
@@ -2630,6 +2689,7 @@
   function syncMenuFlag() {
     const away = slashOpen() || !el.clearConfirm.hidden;
     if (away) el.stack.dataset.menu = ""; else delete el.stack.dataset.menu;
+    el.stack.toggleAttribute("data-slash-menu", slashOpen());
   }
 
   function closeSlashMenu() {
@@ -2931,8 +2991,8 @@
       el.promptInput.focus();
     } else if (action === "retry-turn" || action === "retry-reply") {
       const turn = turns.find((t) => t.id === actionBtn.dataset.id);
-      if (turn && turn.prompt && !turn.hadAttachments && !isStreaming()) {
-        sendPrompt(turn.prompt);
+      if (turn && (turn.prompt || turn.selectionTexts?.length) && !turn.hadAttachments && !isStreaming()) {
+        sendPrompt(turn.prompt, { selectionTexts: turn.selectionTexts || [] });
         el.promptInput.focus();
       }
     } else if (action === "view-media") {
@@ -3256,14 +3316,16 @@
   });
 
   listen("qchat://selection", ({ payload }) => {
-    if (typeof payload !== "string" || !payload) return;
-    const quote = payload.replace(/\r\n?/g, "\n").split("\n").map(line => "> " + line).join("\n");
-    el.promptInput.value += (el.promptInput.value ? "\n\n" : "") + quote + "\n\n";
-    el.promptInput.dispatchEvent(new Event("input", { bubbles: true }));
+    if (typeof payload !== "string" || !payload.trim()) return;
+    chats.current.selectionTexts.push(payload);
+    hideGlobalError();
+    saveChats();
+    renderAttachments();
+    updateIdleChips();
     el.promptInput.focus();
-    el.promptInput.setSelectionRange(el.promptInput.value.length, el.promptInput.value.length);
-    autoResizePrompt();
+    queueSizes();
   });
+  listen("qchat://selection-error", ({ payload }) => showGlobalError("selection_failed", typeof payload === "string" ? payload : "Could not copy the selection. Try selecting the text again."));
   listen("qchat://shown", () => {
     el.promptInput.focus();
     try { if (!localStorage.getItem("qchat.introduced")) { firstRunHint = true; updateComposerMode(); } } catch (_) {}
@@ -3297,6 +3359,7 @@
   showCachedResponse(chats.current);
   updateIdleChips();
   if (chats.current.draft) el.promptInput.value = chats.current.draft;
+  renderAttachments();
   autoResizePrompt();
   updateBubbleMax();
   fitNow();

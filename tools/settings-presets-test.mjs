@@ -106,6 +106,9 @@ try {
   check('settings rows cover schema', await evalJS(`Object.keys(QSettings.SCHEMA).every(k=>k==='look'||document.querySelector('.row[data-key="'+k+'"]'))`));
   check('literal glass and guarded replies',await evalJS(`(()=>{QSettings.apply(document.documentElement,{...QSettings.DEFAULTS,glassOpacity:20,replyOpacity:20});const s=document.documentElement.style;return s.getPropertyValue('--glass-a')==='0.200' && +s.getPropertyValue('--reply-a')>.2})()`));
   check('unguarded reply opacity',await evalJS(`(()=>{QSettings.apply(document.documentElement,{...QSettings.DEFAULTS,replyOpacity:20,readableGuard:false});return document.documentElement.style.getPropertyValue('--reply-a')==='0.200'})()`));
+  check('chat settings grouped and independent',await evalJS(`['replyOpacity','replyNativeBlur','replyBlur','replyCorners','replyBorder','replyWidth','replyPadding','bubbleGap','maxHeightPct'].every(k=>document.querySelector('#section-chatpanel .row[data-key="'+k+'"]'))`));
+  check('chat shape does not change bar shape',await evalJS(`(()=>{QSettings.apply(document.documentElement,{...QSettings.DEFAULTS,replyCorners:3,replyBorder:0,replyOpacity:0,readableGuard:false});const s=document.documentElement.style;return s.getPropertyValue('--r-bubble')==='3px'&&s.getPropertyValue('--reply-bw')==='0px'&&s.getPropertyValue('--bw')==='1px'&&s.getPropertyValue('--reply-a')==='0.000'&&s.getPropertyValue('--glass-a')==='0.620'})()`));
+  check('old shared glass choices migrate to chat',await evalJS(`(()=>{localStorage.setItem('qchat.settings',JSON.stringify({v:4,nativeBlur:false,blur:20,cornerWeight:0,border:.5}));const s=QSettings.load();return !s.replyNativeBlur&&s.replyBlur===50&&s.replyCorners===6&&s.replyBorder===.5&&JSON.parse(localStorage.getItem('qchat.settings')).v===5})()`));
   check('presets sanitize and preserve behavior',await evalJS(`QSettings.PRESETS.length>=14 && QSettings.PRESETS.every(p=>{const s={...QSettings.DEFAULTS,keepHistory:false,alwaysOnTop:false,sendKey:'ctrl',rememberPosition:false,hideOnBlur:true,selectionClipboard:false,autoDismiss:30}; const r=QSettings.applyPreset(s,p.id);return JSON.stringify(r)===JSON.stringify(QSettings.sanitize(r)) && ['keepHistory','alwaysOnTop','sendKey','rememberPosition','hideOnBlur','selectionClipboard','autoDismiss'].every(k=>r[k]===s[k])})`));
   check('v2 migration preserves choices',await evalJS(`(()=>{localStorage.setItem('qchat.settings',JSON.stringify({v:2,glassOpacity:25,blur:3,feel:'springy',textSize:14,lineHeight:1.6,keepHistory:false}));const s=QSettings.load();return s.glassOpacity===25&&s.blur===40&&s.feel==='calm'&&s.textSize===15&&s.lineHeight===1.65&&!s.keepHistory&&s.replyOpacity===92})()`));
   check('save export import delete and malformed input',await evalJS(`(()=>{const p=QSettings.savePreset('Mine',{...QSettings.DEFAULTS,textSize:19});const j=QSettings.exportPreset(p.id);const imported=QSettings.importPreset(j);const ok=imported&&imported.values.textSize===19&&!('keepHistory' in imported.values)&&QSettings.importPreset('{')===null&&QSettings.importPreset('null')===null;QSettings.deletePreset(p.id);return ok&&!QSettings.listPresets().some(x=>x.id===p.id)})()`));
@@ -117,11 +120,25 @@ try {
   check('search empty state',await evalJS(`!document.getElementById('search-empty').hidden`));
   await evalJS(`document.getElementById('settings-search').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
   check('escape clears search',await evalJS(`document.getElementById('settings-search').value===''&&!document.querySelector('[data-key=replyWidth]').hidden`));
-  check('no-blur fallback and blur strength',await evalJS(`(()=>{let call;window.QSurfaces={setBlur:(...args)=>{call=args;return Promise.resolve()}};QSettings.apply(document.documentElement,{...QSettings.DEFAULTS,glassOpacity:20,nativeBlur:false,blur:10});return +document.documentElement.style.getPropertyValue('--glass-a')>.2&&call[0]===false&&call[2]===.25})()`));
+  check('no-blur fallback and blur strength',await evalJS(`(()=>{let call;window.QSurfaces={setBlur:(...args)=>{call=args;return Promise.resolve()}};QSettings.apply(document.documentElement,{...QSettings.DEFAULTS,glassOpacity:20,nativeBlur:false,replyNativeBlur:false,blur:10});return +document.documentElement.style.getPropertyValue('--glass-a')>.2&&call[0]===false&&call[2]===0&&call[3]===0})()`));
   await evalJS(`document.querySelector('[data-preset=reader]').click()`);
   check('preset card applies and relays',await evalJS(`JSON.parse(localStorage.getItem('qchat.settings')).fontFamily==='serif'&&document.getElementById('preset-status').textContent==='Reader'&&__mock.calls.filter(c=>c.cmd==='emit:qchat://settings-changed').at(-1).args.textSize===18`));
   await evalJS(`document.getElementById('control-textSize').value=19;document.getElementById('control-textSize').dispatchEvent(new Event('input'))`);
   check('modified preset state',await evalJS(`document.getElementById('preset-status').textContent==='Modified'`));
+  await evalJS(`document.querySelector('[data-section=chatpanel]').click()`);
+  if (shotsDir) {
+    await mkdir(shotsDir,{recursive:true}); await sleep(300);
+    const shot=await cdp('Page.captureScreenshot',{format:'png'});
+    await writeFile(path.join(shotsDir,'chat-panel-settings.png'),Buffer.from(shot.data,'base64'));
+  }
+  await open('/', {settings:{v:5,...await evalJS('QSettings.DEFAULTS'),animations:'off',nativeBlur:false,replyNativeBlur:true,replyBlur:65,replyOpacity:25,readableGuard:false,replyCorners:4,replyBorder:.5,showPrompt:true}});
+  await send('Chat material test'); await finishReply(); await settle();
+  check('rendered chat material is independent',await evalJS(`(()=>{const c=getComputedStyle(document.querySelector('.bubble-response')),b=getComputedStyle(document.getElementById('bar'));return c.getPropertyValue('--fill-alpha').trim()==='0.250'&&c.borderTopLeftRadius==='4px'&&c.getPropertyValue('--bw').trim()==='0.5px'&&b.getPropertyValue('--fill-alpha').trim()==='0.620'})()`));
+  await until(`__mock.last('surfaces_set')?.args.rects.some(r=>r.s===.65)`, 'chat native surface strength');
+  check('native chat and bar blur strengths independent',await evalJS(`(()=>{const a=__mock.last('surfaces_set').args.rects;return a.some(r=>r.b&&r.s===.65)&&a.some(r=>r.b&&r.s===0)&&__mock.last('surfaces_set_blur').args.enabled})()`));
+  await evalJS(`__mock.emit('qchat://settings-changed',{...QSettings.settings,replyBlur:0,replyNativeBlur:false,nativeBlur:true,blur:40,replyOpacity:35,readableGuard:false})`);
+  await until(`__mock.last('surfaces_set')?.args.rects.some(r=>r.b&&r.s===1)`, 'bar blur update');
+  check('live chat material update reaches native surfaces',await evalJS(`(()=>{const a=__mock.last('surfaces_set').args.rects;return a.some(r=>r.b&&r.s===0)&&a.some(r=>r.b&&r.s===1)&&getComputedStyle(document.querySelector('.bubble-response')).getPropertyValue('--fill-alpha').trim()==='0.350'})()`));
   check('no runtime errors',problems.length===0,problems.join(' | '));
 } catch (e) { console.error(e); if (problems.length) console.error("console:", problems.slice(0, 5).join(" | ")); failed++; }
 finally {
