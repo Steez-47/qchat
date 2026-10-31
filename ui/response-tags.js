@@ -238,5 +238,5 @@
       return allowed && inert.has(allowed[1].toLowerCase()) ? part.toLowerCase() : escape(part);
     }).join('');
   }
-  window.QResponseTags = { toMarkdown, hasLayout, stabilize: text => toMarkdown(text), protect, sanitizeHTML, safeURL };
+  window.QResponseTags = { toMarkdown, hasLayout, stabilize: text => toMarkdown(text), protect, sanitizeHTML, safeURL, tagAt };
 })();
