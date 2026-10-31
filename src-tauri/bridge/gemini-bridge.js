@@ -105,10 +105,11 @@
     return (node?.innerText || node?.textContent || '').trim() || undefined;
   }
 
+  let currentSetupId = null;
   async function status() {
     loginCache = detectLoggedIn();
     loginAt = Date.now();
-    emit({ type: 'status', ready: !!find('composer'), loggedIn: !!loginCache, authPending: false, url: location.href, model: modelShort() });
+    emit({ type: 'status', setupId: currentSetupId, temporary: temporaryReady(), ready: !!find('composer'), loggedIn: !!loginCache, authPending: false, url: location.href, model: modelShort() });
   }
 
   function completeActivity(job) {
@@ -140,7 +141,7 @@
     job.failing = true;
     if (!job.started && job.attachmentCount > 0 && !job.cancelled) {
       job.cancelled = true;
-      if (!await clearFailedAttachments(job)) {
+      if (!await clearFailedAttachments(job) && code !== 'temporary_unavailable') {
         code = 'attachment_pending';
         message = 'Pending attachments could not be cleared. Remove them in Gemini or start a new chat before sending again.';
       }
@@ -788,6 +789,45 @@
     return false;
   }
 
+  function temporaryReady() {
+    const composer = find('composer');
+    const host = composer?.closest('chat-window');
+    return !!(detectLoggedIn() && shown(composer) && shown(host) && host.classList.contains('is-temporary-chat'));
+  }
+  let temporaryStage = null, stageEpoch = 0;
+  function clearTemporaryStage(id) {
+    if (!id || temporaryStage?.id === id) {
+      if (temporaryStage) temporaryStage.detached.value = '';
+      temporaryStage = null;
+      stageEpoch++;
+    }
+  }
+  async function stageTemporaryFiles(id) {
+    clearTemporaryStage();
+    const epoch = stageEpoch;
+    if (!temporaryReady()) throw new Error('temporary_unavailable');
+    const selector = await attachmentInput();
+    if (epoch !== stageEpoch || !temporaryReady()) throw new Error('temporary_unavailable');
+    const real = document.querySelector(selector), composer = find('composer');
+    if (!real?.isConnected || !composer) throw new Error('temporary_unavailable');
+    const detached = document.createElement('input');
+    detached.type = 'file'; detached.multiple = true;
+    temporaryStage = { id, real, composer, detached };
+    return detached;
+  }
+  function commitTemporaryFiles(id) {
+    const stage = temporaryStage;
+    if (!stage || stage.id !== id) return false;
+    try {
+      if (!temporaryReady() || !stage.real.isConnected || find('composer') !== stage.composer || document.querySelector(`[data-qchat-file-input="${stage.real.getAttribute('data-qchat-file-input')}"]`) !== stage.real) return false;
+      const transfer = new DataTransfer();
+      for (const file of stage.detached.files) transfer.items.add(file);
+      stage.real.files = transfer.files;
+      stage.real.dispatchEvent(new Event('input', { bubbles: true }));
+      stage.real.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    } finally { clearTemporaryStage(id); }
+  }
   async function attachmentInput() {
     loginCache = detectLoggedIn();
     if (!loginCache) {
@@ -876,13 +916,14 @@
 
   window.__qchat = {
     _htmlToMarkdown: htmlToMarkdown,
-    attachmentInput,
+    attachmentInput, temporaryReady, stageTemporaryFiles, commitTemporaryFiles, clearTemporaryStage,
     cancelAttachmentSelection,
     mediaInfo,
     activateMedia,
     mediaDownloadAction,
     resolveMedia,
-    async send({ id, prompt = '', attachmentCount = 0 }) {
+    async send({ id, prompt = '', attachmentCount = 0, temporary = false }) {
+      if (temporary && !temporaryReady()) { error(id, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
       if (active) { error(id, 'busy', 'A request is already in progress.'); return; }
       if (attachmentCount > 0 && !detectLoggedIn()) {
         error(id, 'attachment_unavailable', 'Sign in to Gemini to attach files.');
@@ -927,6 +968,7 @@
         }
         if (active !== job || job.cancelled) return;
         if (!composer) { fail(job, 'not_ready', 'Composer did not appear within 15 seconds.'); return; }
+        if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
         dismissNudges();
         composer.focus?.();
         if (composer.tagName === 'TEXTAREA') {
@@ -944,6 +986,7 @@
             if (pending) uploadQuietAt = Date.now();
             if (pending || Date.now() - uploadQuietAt < 800) { await sleep(100); continue; }
           }
+        if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           const button = find('send');
           if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
             job.startTimer = setTimeout(() => fail(job, 'send_failed', 'No conversation request started within 20 seconds.'), 20000);
@@ -960,6 +1003,7 @@
         if (active === job && !job.started && !job.cancelled) {
           if (attachmentCount > 0) { fail(job, 'attachment_failed', 'Attachments did not become ready within two minutes. Check them in Gemini.'); return; }
           job.startTimer = setTimeout(() => fail(job, 'send_failed', 'No conversation request started within 20 seconds.'), 20000);
+        if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           job.submitted = true;
           composer.dispatchEvent?.(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
           sampleDOM(job);
@@ -967,6 +1011,7 @@
       } catch (e) { fail(job, 'send_failed', e.message); }
     },
     stop() {
+      clearTemporaryStage();
       const job = active;
       if (!job) return Promise.resolve();
       // Whatever has rendered since the last sample belongs to the stopped reply.
@@ -1186,6 +1231,8 @@
     },
     async chooseModel(id) { return window.__qchat.listModels(id); },
     async newChat(options = {}) {
+      currentSetupId = options.temporary ? options.setupId || null : null;
+      clearTemporaryStage();
       await window.__qchat.stop();
       media.clear();
       cancelledAttachments = null;
@@ -1193,13 +1240,13 @@
       loginCache = detectLoggedIn();
       if (options?.temporary) {
         if (!loginCache) {
-          error(undefined, 'temporary_unavailable', 'Sign in to Gemini to use temporary chats.');
+          emit({type:'error', code:'temporary_unavailable', message:'Sign in to Gemini to use temporary chats.', setupId:options.setupId || null});
           return;
         }
         const tempBtn = [...document.querySelectorAll('button, a, [role="button"], gem-nav-list-item')].find(node =>
           shown(node) && /temp(?:orary)? chat/i.test(`${node.innerText || ''} ${node.getAttribute('aria-label') || ''} ${node.getAttribute('data-test-id') || ''}`));
         if (!tempBtn || tempBtn.disabled || tempBtn.getAttribute('aria-disabled') === 'true') {
-          error(undefined, 'temporary_unavailable', 'Temporary chat is unavailable in Gemini.');
+          emit({type:'error', code:'temporary_unavailable', message:'Temporary chat is unavailable in Gemini.', setupId:options.setupId || null});
           return;
         }
         dispatchClickSequence(tempBtn);
@@ -1223,12 +1270,15 @@
     status
   };
 
-  let lastURL = location.href, hadComposer = false, lastBlock = '';
+  let lastURL = location.href, hadComposer = false, lastTemporary = false, lastBlock = '';
   setInterval(() => {
     const ready = !!find('composer');
+    const currentTemporary = temporaryReady();
+    const changedTemporary = currentTemporary !== lastTemporary;
+    lastTemporary = currentTemporary;
     const changedURL = lastURL !== location.href;
     if (changedURL) lastURL = location.href;
-    if (hadComposer !== ready || changedURL || loginDue()) status();
+    if (hadComposer !== ready || changedURL || changedTemporary || loginDue()) status();
     hadComposer = ready;
     const block = blocking();
     if (block && block[1] !== lastBlock) {

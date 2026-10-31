@@ -407,10 +407,13 @@ pub fn abandon_turn(app: &tauri::AppHandle, id: &str) {
     retain_staged(&mut app.state::<MediaState>().staged.lock().unwrap(), id, Instant::now());
 }
 pub fn terminal_turn(app: &tauri::AppHandle, id: &str, error: bool, code: Option<&str>) {
-    if error && matches!(code, Some("send_failed" | "stream_failed" | "timeout" | "not_ready")) {
-        abandon_turn(app, id);
+    terminal_staged(&mut app.state::<MediaState>().staged.lock().unwrap(), id, error, code);
+}
+fn terminal_staged(staged: &mut HashMap<String, Staged>, id: &str, error: bool, code: Option<&str>) {
+    if error && matches!(code, Some("send_failed" | "stream_failed" | "timeout" | "not_ready" | "temporary_unavailable")) {
+        retain_staged(staged, id, Instant::now());
     } else {
-        finish_staged(&mut app.state::<MediaState>().staged.lock().unwrap(), id, false);
+        finish_staged(staged, id, false);
     }
 }
 fn finish_staged(staged: &mut HashMap<String, Staged>, id: &str, include_retained: bool) {
@@ -461,6 +464,15 @@ async fn cdp_scoped(
     params: Value,
     scope: Option<Scope>,
 ) -> Result<Value, String> {
+    cdp_provider(app, method, params, scope, crate::active_provider(app)).await
+}
+async fn cdp_provider(
+    app: &tauri::AppHandle,
+    method: &str,
+    params: Value,
+    scope: Option<Scope>,
+    provider: String,
+) -> Result<Value, String> {
     use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
     let (tx, rx) = tokio::sync::oneshot::channel();
     let sender = Arc::new(Mutex::new(Some(tx)));
@@ -468,7 +480,7 @@ async fn cdp_scoped(
     let params = HSTRING::from(params.to_string());
     let error_sender = sender.clone();
     let scope_app = app.clone();
-    app.get_webview_window(&crate::active_provider(app))
+    app.get_webview_window(&provider)
         .ok_or("Provider window unavailable")?
         .with_webview(move |w| unsafe {
             let allowed = match &scope {
@@ -557,6 +569,41 @@ pub async fn dispatch_turn(app: &tauri::AppHandle, id: &str, expression: String)
         return Err("Provider could not send this message".into());
     }
     Ok(())
+}
+pub async fn attach_temporary(app: &tauri::AppHandle, ids: &[String], turn_id: &str) -> Result<(), String> {
+    if ids.is_empty() { return Ok(()); }
+    if ids.len() > 10 { return Err("Attach up to 10 files at once".into()); }
+    let paths: Vec<String> = {
+        let state = app.state::<MediaState>();
+        let staged = state.staged.lock().unwrap();
+        ids.iter().map(|id| {
+            let item = staged.get(id).ok_or("Attachment is unavailable. Select it again.")?;
+            if !item.ready { return Err("Wait for the attachment to finish staging"); }
+            Ok(item.path.to_string_lossy().into_owned())
+        }).collect::<Result<_, &str>>().map_err(str::to_string)?
+    };
+    let provider = crate::active_provider(app);
+    let id = serde_json::to_string(turn_id).map_err(|e| e.to_string())?;
+    let result: Result<(), String> = async {
+        let stage = cdp_provider(app, "Runtime.evaluate", json!({"expression":format!("window.__qchat.stageTemporaryFiles({id})"),"awaitPromise":true,"returnByValue":false}), Some(Scope::Turn(turn_id.into())), provider.clone()).await?;
+        if stage.get("exceptionDetails").is_some() {
+            if let Some(object) = stage["result"]["objectId"].as_str() {
+                let _ = cdp_provider(app, "Runtime.releaseObject", json!({"objectId":object}), None, provider.clone()).await;
+            }
+            return Err("temporary_unavailable: Temporary attachment preparation failed".into());
+        }
+        let object = stage["result"]["objectId"].as_str().ok_or("temporary_unavailable: Temporary attachment preparation failed")?.to_owned();
+        let handoff: Result<(), String> = async {
+            cdp_provider(app, "DOM.setFileInputFiles", json!({"objectId":object,"files":paths}), Some(Scope::Turn(turn_id.into())), provider.clone()).await?;
+            let commit = cdp_provider(app, "Runtime.evaluate", json!({"expression":format!("window.__qchat.commitTemporaryFiles({id})"),"returnByValue":true}), Some(Scope::Turn(turn_id.into())), provider.clone()).await?;
+            if commit["result"]["value"] != true { return Err("temporary_unavailable: Temporary chat could not be confirmed".into()); }
+            Ok(())
+        }.await;
+        let _ = cdp_provider(app, "Runtime.releaseObject", json!({"objectId":object}), None, provider.clone()).await;
+        handoff
+    }.await;
+    let _ = cdp_provider(app, "Runtime.evaluate", json!({"expression":format!("window.__qchat && window.__qchat.clearTemporaryStage({id})"),"returnByValue":true}), None, provider.clone()).await;
+    result
 }
 pub async fn attach(app: &tauri::AppHandle, ids: &[String], turn_id: &str) -> Result<(), String> {
     if ids.is_empty() {
@@ -1180,6 +1227,17 @@ mod tests {
         assert_eq!(files["file"].owner.as_deref(), Some("old"));
         finish_staged(&mut files, "old", true);
         assert!(files.is_empty() && !path.exists());
+    }
+    #[test]
+    fn temporary_mode_loss_retains_staged_file_for_retry() {
+        let (mut files, path) = staged_fixture();
+        std::fs::write(&path, [0, 128, 255, 17]).unwrap();
+        claim_staged(&mut files, "first", &["file".into()]).unwrap();
+        terminal_staged(&mut files, "first", true, Some("temporary_unavailable"));
+        assert_eq!(std::fs::read(&path).unwrap(), [0, 128, 255, 17]);
+        claim_staged(&mut files, "retry", &["file".into()]).unwrap();
+        terminal_staged(&mut files, "retry", false, None);
+        assert!(!path.exists());
     }
     #[test]
     fn stale_terminals_cannot_delete_retried_files_or_extend_retention() {

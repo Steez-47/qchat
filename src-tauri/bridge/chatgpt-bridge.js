@@ -89,7 +89,7 @@
     job.failing = true;
     if (!job.started && job.attachmentCount > 0 && !job.cancelled) {
       job.cancelled = true;
-      if (!await clearFailedAttachments(job)) {
+      if (!await clearFailedAttachments(job) && code !== 'temporary_unavailable') {
         code = 'attachment_pending';
         message = 'Pending attachments could not be cleared. Remove them in ChatGPT or start a new chat before sending again.';
       }
@@ -893,6 +893,54 @@
     }
     return false;
   }
+  function temporaryReady() {
+    const visible = node => {
+      if (!node?.isConnected || !node.getClientRects().length) return false;
+      for (let parent = node; parent; parent = parent.parentElement) {
+        const style = getComputedStyle(parent);
+        if (parent.hidden || parent.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility !== 'visible') return false;
+      }
+      return true;
+    };
+    if (new URL(location.href).searchParams.get('temporary-chat') !== 'true' || !visible(find('composer'))) return false;
+    const excluded = 'article, [role="article"], [role="dialog"], [role="menu"], [role="menuitem"], [data-message-author-role], [data-message-role], [data-message-id], [data-dil-source-message-id], [data-dil-message-id], [data-turn], [data-turn-key], [data-testid^="conversation-turn-"], [data-testid^="message-"], [hidden], [aria-hidden="true"]';
+    return [...document.querySelectorAll('button[aria-label="Turn off temporary chat"]')].some(button =>
+      visible(button) && !button.closest(excluded));
+  }
+  let temporaryStage = null, stageEpoch = 0;
+  function clearTemporaryStage(id) {
+    if (!id || temporaryStage?.id === id) {
+      if (temporaryStage) temporaryStage.detached.value = '';
+      temporaryStage = null;
+      stageEpoch++;
+    }
+  }
+  async function stageTemporaryFiles(id) {
+    clearTemporaryStage();
+    const epoch = stageEpoch;
+    if (!temporaryReady()) throw new Error('temporary_unavailable');
+    const selector = await attachmentInput();
+    if (epoch !== stageEpoch || !temporaryReady()) throw new Error('temporary_unavailable');
+    const real = document.querySelector(selector), composer = find('composer');
+    if (!real?.isConnected || !composer) throw new Error('temporary_unavailable');
+    const detached = document.createElement('input');
+    detached.type = 'file'; detached.multiple = true;
+    temporaryStage = { id, real, composer, detached };
+    return detached;
+  }
+  function commitTemporaryFiles(id) {
+    const stage = temporaryStage;
+    if (!stage || stage.id !== id) return false;
+    try {
+      if (!temporaryReady() || !stage.real.isConnected || find('composer') !== stage.composer || document.querySelector(`[data-qchat-file-input="${stage.real.getAttribute('data-qchat-file-input')}"]`) !== stage.real) return false;
+      const transfer = new DataTransfer();
+      for (const file of stage.detached.files) transfer.items.add(file);
+      stage.real.files = transfer.files;
+      stage.real.dispatchEvent(new Event('input', { bubbles: true }));
+      stage.real.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    } finally { clearTemporaryStage(id); }
+  }
   async function attachmentInput() {
     if (cancelledAttachments) {
       if (cancelledAttachments.hadControls && uploads === 0 && attachmentRemovers(cancelledAttachments.names).length === 0) cancelledAttachments = null;
@@ -1131,7 +1179,7 @@
     }
     const probe = loginProbe;
     if (probe) { await probe; if (loginProbe === probe) loginProbe = null; }
-    emit({ type: 'status', ready: !!find('composer'), loggedIn: !!loginCache, authPending: loginUnknown, url: location.href });
+    emit({ type: 'status', setupId: (/^#qchat-setup=([a-zA-Z0-9-]+)$/.exec(location.hash || '') || [])[1] || null, temporary: temporaryReady(), ready: !!find('composer'), loggedIn: !!loginCache, authPending: loginUnknown, url: location.href });
   }
   // Select only explicitly labelled thinking controls, never model entries.
   let reasoningSelection = false;
@@ -1248,14 +1296,15 @@
     }
   }
   window.__qchat = {
-    attachmentInput,
+    attachmentInput, temporaryReady, stageTemporaryFiles, commitTemporaryFiles, clearTemporaryStage,
     cancelAttachmentSelection,
     mediaInfo,
     activateMedia,
     mediaDownloadAction,
     resolveMedia,
-    async send({ id, prompt = '', attachmentCount = 0, reasoningEffort }) {
+    async send({ id, prompt = '', attachmentCount = 0, reasoningEffort, temporary = false }) {
       if (reasoningEffort != null && !['low', 'medium', 'high'].includes(reasoningEffort)) { error(id, 'invalid_reasoning_effort', 'Choose low, medium or high reasoning.'); return; }
+      if (temporary && !temporaryReady()) { error(id, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
       if (active || reasoningSelection) { error(id, 'busy', 'A request is already in progress.'); return; }
       if (cancelledAttachments) {
         const cleared = cancelledAttachments.hadControls && uploads === 0 && attachmentRemovers(cancelledAttachments.names).length === 0;
@@ -1285,6 +1334,7 @@
         if (active !== job || job.cancelled) return;
         composer = find('composer');
         if (!composer) { fail(job, 'not_ready', 'ChatGPT composer changed. Please try again.'); return; }
+        if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
         composer.focus();
         if (composer.tagName === 'TEXTAREA') {
           Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(composer, prompt);
@@ -1308,6 +1358,7 @@
             if (pending) uploadQuietAt = Date.now();
             if (pending || Date.now() - uploadQuietAt < 800) { await sleep(100); continue; }
           }
+        if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           const button = find('send');
           if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
             job.startTimer = setTimeout(() => fail(job, 'send_failed', 'No conversation request started within 20 seconds.'), 20000);
@@ -1318,12 +1369,14 @@
         }
         if (active === job && !job.started && !job.cancelled) {
           if (attachmentCount > 0) { fail(job, 'attachment_failed', 'Attachments did not become ready within two minutes. Check them in ChatGPT.'); return; }
+        if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           job.startTimer = setTimeout(() => fail(job, 'send_failed', 'No conversation request started within 20 seconds.'), 20000);
           job.submitted = true; composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
         }
       } catch (e) { fail(job, 'send_failed', e.message); }
     },
     stop() {
+      clearTemporaryStage();
       const job = active; if (!job) return Promise.resolve();
       job.cancelled = true;
       completeActivity(job);
@@ -1431,7 +1484,8 @@
     },
     async chooseModel(id) { return window.__qchat.listModels(id); },
     async newChat(options = {}) {
-      if (options.temporary) { await window.__qchat.stop(); media.clear(); location.assign('https://chatgpt.com/?temporary-chat=true'); return; }
+      clearTemporaryStage();
+      if (options.temporary) { await window.__qchat.stop(); media.clear(); location.assign('https://chatgpt.com/?temporary-chat=true' + (options.setupId ? '#qchat-setup=' + encodeURIComponent(options.setupId) : '')); return; }
       await window.__qchat.stop();
       media.clear(); cancelledAttachments = null; downloadActivation = null;
       const button = find('fresh');
@@ -1441,12 +1495,15 @@
     },
     status
   };
-  let lastURL = location.href, hadComposer = false, lastBlock = '';
+  let lastURL = location.href, hadComposer = false, lastTemporary = false, lastBlock = '';
   setInterval(() => {
     const ready = !!find('composer');
+    const currentTemporary = temporaryReady();
+    const changedTemporary = currentTemporary !== lastTemporary;
+    lastTemporary = currentTemporary;
     const changedURL = lastURL !== location.href;
     if (changedURL) { loginStale = true; lastURL = location.href; }
-    if (hadComposer !== ready || changedURL || (!loginProbe && loginDue())) status();
+    if (hadComposer !== ready || changedURL || changedTemporary || (!loginProbe && loginDue())) status();
     hadComposer = ready;
     const block = blocking();
     if (block && block[1] !== lastBlock) { lastBlock = block[1]; if (active) fail(active, ...block); else error(undefined, ...block); status(); }

@@ -347,6 +347,7 @@
     stream_failed: "The response was interrupted.",
     timeout: "ChatGPT took too long to respond.",
     open_timeout: "That chat is taking too long to open. Try sending again.",
+    temporary_unavailable: "Temporary chat could not be confirmed. Your draft is safe; try again or check the provider.",
     invalid_id: "That chat can't be reopened. Start a new one with /new.",
     offline: "Can't reach ChatGPT. Check your connection, then try again."
   };
@@ -1165,6 +1166,7 @@
       // Each site keeps its own page, so returning must remember which chat that page still holds.
       pageByProvider[activeProvider] = page;
       activeProvider = provider;
+      pageSync = Promise.resolve();
       setModelLabel("");
       cancelModelRequest();
       page = pageByProvider[provider] || {key:null, conv:null, pristine:true};
@@ -1295,14 +1297,15 @@
   let pageSync = Promise.resolve();
   const readyWaiters = new Set();
 
-  function waitForReady(conversationId, timeoutMs) {
-    const waiter = { conversationId };
+  function waitForReady(conversationId, timeoutMs, temporary = false, setupId = null) {
+    const waiter = { conversationId, temporary, setupId, provider: activeProvider, generation: chatGeneration };
     const promise = new Promise((resolve, reject) => {
       waiter.resolve = () => { clearTimeout(waiter.timer); clearTimeout(waiter.grace); readyWaiters.delete(waiter); resolve(); };
+      waiter.reject = () => { clearTimeout(waiter.timer); clearTimeout(waiter.grace); readyWaiters.delete(waiter); reject({code: "temporary_unavailable"}); };
       waiter.timer = setTimeout(() => {
         readyWaiters.delete(waiter);
         clearTimeout(waiter.grace);
-        reject({ code: "open_timeout" });
+        reject({ code: temporary ? "temporary_unavailable" : "open_timeout" });
       }, timeoutMs);
     });
     promise.catch(() => {});
@@ -1314,6 +1317,7 @@
   function settleReadyWaiters(evt) {
     if (!evt.ready) return;
     for (const waiter of [...readyWaiters]) {
+      if (waiter.provider !== activeProvider || waiter.generation !== chatGeneration || (waiter.temporary && (evt.temporary !== true || evt.setupId !== waiter.setupId))) continue;
       const id = waiter.conversationId;
       if (!id || typeof evt.url !== "string" || evt.url.includes(`${activeProvider === "gemini" ? "/app/" : "/c/"}${id}`)) waiter.resolve();
       // A guest page falls back to a fresh chat instead of /c/<id>; give it a moment to get there.
@@ -1337,20 +1341,25 @@
 
   async function freshInPage(chat) {
     page = { key: null, conv: null, pristine: false };
-    const ready = waitForReady(null, FRESH_TIMEOUT);
-    await invoke("chat_new", { preserveUploads: true, temporary: Boolean(chat.temporary) });
-    // The page normally confirms quickly; a slow confirmation is not a reason to fail the send.
-    await ready.catch(() => {});
-    page = { key: chat.key, conv: null, pristine: false };
+    const temporary = Boolean(chat.temporary);
+    const provider = activeProvider, generation = chatGeneration;
+    const setupId = temporary ? crypto.randomUUID() : null;
+    const ready = waitForReady(null, FRESH_TIMEOUT, temporary, setupId);
+    try {
+      await invoke("chat_new", { preserveUploads: true, temporary, setupId });
+      if (temporary) await ready;
+      else await ready.catch(() => {});
+      if (provider === activeProvider && generation === chatGeneration) page = { key: chat.key, conv: null, pristine: false };
+    } catch (err) { ready.cancel(); throw temporary ? { code: "temporary_unavailable" } : err; }
   }
 
   // Never send into the wrong conversation: this throws rather than falling through.
   async function ensurePage(chat) {
-    await pageSync.catch(() => {});
+    try { await pageSync; } catch (err) { pageSync = Promise.resolve(); if (chat.temporary) throw err; }
     if (chat.conversationId) {
       if (page.conv !== chat.conversationId) await openInPage(chat);
     } else if (page.key !== chat.key) {
-      if (page.pristine && !chat.lastResponse) page = { key: chat.key, conv: null, pristine: false };
+      if (page.pristine && !chat.lastResponse && !chat.temporary) page = { key: chat.key, conv: null, pristine: false };
       else await freshInPage(chat);
     }
   }
@@ -2020,10 +2029,11 @@
     return row;
   }
 
-  const attachmentRetryCodes = new Set(["send_failed", "stream_failed", "timeout", "not_ready"]);
+  const attachmentRetryCodes = new Set(["send_failed", "stream_failed", "timeout", "not_ready", "temporary_unavailable"]);
   function retainTurnFiles(turn) {
     clearTimeout(turn.retryTimer);
     if (!turn.retryFiles?.length) return;
+    if (turn.code === "temporary_unavailable" && turn.retryFiles.every(file => pendingFiles.includes(file))) return;
     turn.retryTimer = setTimeout(() => {
       releaseTurnFiles(turn);
       if (turn.status === "error" && turns.includes(turn)) {
@@ -2558,10 +2568,11 @@
     sentReasoning = reasoningEffort;
     const generation = chatGeneration;
     const draft = el.promptInput.value;
+    const selectionStart = el.promptInput.selectionStart, selectionEnd = el.promptInput.selectionEnd, selectionDirection = el.promptInput.selectionDirection;
     const revision = draftEditRevision;
     const restoreDraft = () => {
       if (consumeDraft && revision === draftEditRevision && generation === chatGeneration && chats.current === chat && !el.promptInput.value) {
-        el.promptInput.value = draft; autoResizePrompt(); updateDraft(); cancelDraftSave(); saveChats();
+        el.promptInput.value = draft; el.promptInput.setSelectionRange(selectionStart, selectionEnd, selectionDirection); autoResizePrompt(); updateDraft(); cancelDraftSave(); saveChats();
       }
     };
 
@@ -2580,6 +2591,7 @@
     const assistantTurn = { id: crypto.randomUUID(), role: "assistant", text: "", status: "streaming", prompt, selectionTexts, hadAttachments: files.length > 0, chatKey: chat.key };
     assistantTurn.restoreDraft = restoreDraft;
     assistantTurn.retryFiles = files.length ? files : null;
+    assistantTurn.temporaryFiles = chat.temporary ? files : null;
     assistantTurn.undoEmptyExchange = () => {
       chat.transcript = chat.transcript.filter(item => item.id !== userTurn.id && item.id !== assistantTurn.id);
       Object.assign(chat, previousMeta);
@@ -2617,14 +2629,14 @@
       await ensurePage(chat);
       if (generation !== chatGeneration) return;
       if (assistantTurn.status !== "streaming") throw { code: "stopped" };
-      await invoke("chat_send", { id: assistantTurn.id, prompt: wirePrompt(prompt, selectionTexts), attachmentIds: files.map((f) => f.id), provider: activeProvider, ...(activeProvider === "chatgpt" ? {reasoningEffort} : {}) });
+      await invoke("chat_send", { id: assistantTurn.id, prompt: wirePrompt(prompt, selectionTexts), attachmentIds: files.map((f) => f.id), provider: activeProvider, temporary: Boolean(chat.temporary), ...(activeProvider === "chatgpt" ? {reasoningEffort} : {}) });
       if (consumeSelections && assistantTurn.status !== "error" && !(assistantTurn.status === "done" && !assistantTurn.text && !assistantTurn.media?.length)) {
         chat.selectionTexts.splice(0, selectionTexts.length);
         assistantTurn.selectionConsumed = true;
         saveChats();
       }
       page = { ...page, key: chat.key, pristine: false };
-      for (const file of files) {
+      for (const file of chat.temporary ? [] : files) {
         const index = pendingFiles.indexOf(file);
         if (index >= 0) { pendingFiles.splice(index, 1); releasePreview(file.previewURL); }
       }
@@ -2927,7 +2939,7 @@
       } catch (_) { showGlobalError(null,"Couldn't read open at startup."); }
     }},
     { name: "model", icon: GLYPH.settings, desc: () => "Model", run: requestModels },
-    { name: "temp", icon: GLYPH.newChat, desc: () => "Temporary chat", run: async () => { await startNewChat(false); chats.current.temporary = true; setModeLabel("Temporary"); pageSync = freshInPage(chats.current); } },
+    { name: "temp", icon: GLYPH.newChat, desc: () => "Temporary chat", run: async () => { await startNewChat(false); chats.current.temporary = true; setModeLabel("Temporary"); pageSync = freshInPage(chats.current); pageSync.catch(() => {}); } },
     { name: "chats", icon: GLYPH.clock, desc: () => "Chats", run: showChatList },
     { name: "keys", icon: GLYPH.settings, desc: () => "Keyboard shortcuts", run: async () => {
       let hotkey = "Alt+Q"; try { hotkey = await invoke("get_hotkey") || hotkey; } catch (_) {}
@@ -4109,7 +4121,7 @@
     if (provider !== activeProvider) return;
     switch (evt.type) {
       case "status":
-        updateStatusHeader({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
+        if (![...readyWaiters].some(w => w.temporary && w.provider === activeProvider && w.generation === chatGeneration && (evt.temporary !== true || evt.setupId !== w.setupId))) updateStatusHeader({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
         settleReadyWaiters(evt);
         break;
       case "transcript":
@@ -4125,6 +4137,12 @@
         // A late "start" must not reopen a turn that already finished or was stopped.
         const turn = turns.find((t) => t.id === evt.id);
         if (turn?.status === "streaming") {
+          for (const file of turn.temporaryFiles || []) {
+            const index = pendingFiles.indexOf(file);
+            if (index >= 0) { pendingFiles.splice(index, 1); releasePreview(file.previewURL); }
+          }
+          turn.temporaryFiles = null;
+          renderAttachments();
           scheduleTurnRender(turn.id, true);
           updateComposerMode();
         }
@@ -4219,10 +4237,20 @@
         break;
       }
       case "error": {
+        if (!evt.id && evt.code === "temporary_unavailable") {
+          for (const waiter of [...readyWaiters]) if (waiter.temporary && waiter.provider === provider && waiter.generation === chatGeneration && evt.setupId && waiter.setupId === evt.setupId) waiter.reject();
+          break;
+        }
         const turn = evt.id ? turns.find((t) => t.id === evt.id) : null;
         if (turn?.status === "streaming" && !turn.backendDone) {
           flushReveal(turn);
           if (!turn.text && !turn.media?.length && !turn.cachedMedia) turn.restoreDraft?.();
+          if (evt.code === "temporary_unavailable" && turn.selectionConsumed) {
+            chats.current.selectionTexts.unshift(...turn.selectionTexts);
+            turn.selectionConsumed = false;
+            renderAttachments();
+            saveChats();
+          }
           turn.status = "error";
           turn.code = evt.code;
           if (attachmentRetryCodes.has(evt.code)) retainTurnFiles(turn);

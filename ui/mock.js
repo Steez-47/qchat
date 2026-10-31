@@ -92,7 +92,7 @@
   };
 
   const emitStatus = (delay, url = "https://chatgpt.com/") => setTimeout(() => {
-    emitMock("bridge", { type: "status", ready: true, loggedIn: mock.loggedIn, model:mock.provider === "gemini" ? mock.model : undefined, url });
+    emitMock("bridge", { type: "status", setupId: mock.setupId || null, temporary: Boolean(mock.temporary), ready: true, loggedIn: mock.loggedIn, model:mock.provider === "gemini" ? mock.model : undefined, url });
   }, delay);
 
   const runStream = (id, targetText) => {
@@ -221,6 +221,8 @@
             clearMockStream();
             return null;
           case "chat_new":
+            mock.temporary = Boolean(args.temporary);
+            mock.setupId = args.setupId || null;
             clearMockStream();
             mock.pageConv = null;
             emitStatus(20);
