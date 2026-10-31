@@ -2736,6 +2736,7 @@
       let selectionKey = "Ctrl+Alt+Q"; try { selectionKey = await invoke("get_selection_hotkey"); } catch (_) {}
       const shortcuts = [[selectionKey || "Disabled", "Ask about selection"], [hotkey, "Show QChat"], [QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter", "Send"], ["Shift+Enter", "New line"], ["Esc", "Close"], ["Ctrl+N", "New chat"], ["Ctrl+K", "Menu"], ["Ctrl+P", "Chats"], ["Ctrl+.", "Stop"], ["ArrowUp / ArrowDown", "Recall prompts"], ["Paste / drop", "Attach files"]];
       shortcuts.splice(8, 0, ["Ctrl+F", "Find in conversation"], ["F3 / Shift+F3", "Next / previous match"]);
+      shortcuts.push(["Ctrl+Shift+C", "Copy reply"], ["Ctrl+Shift+X", "Copy last code block"]);
       showFeatureList("Keyboard shortcuts", shortcuts.map(([key, action]) => ({ keys: key, title: action })));
     } }
   );
@@ -3460,7 +3461,7 @@
       if (codeEl) copyWithFeedback(codeEl.textContent, actionBtn);
     } else if (action === "copy-turn") {
       const turn = turns.find((t) => t.id === actionBtn.dataset.id);
-      if (turn) copyWithFeedback(turn.text, actionBtn);
+      if (turn) copyWithFeedback(replyMarkdown(turn.text, turn.sources), actionBtn);
     } else if (action === "dismiss-turn") {
       dismissExchange();
       el.promptInput.focus();
@@ -3521,6 +3522,43 @@
   el.orb.addEventListener("pointercancel", () => { orbDown = null; });
   document.addEventListener("pointerdown", e => { if (!el.slashMenu.contains(e.target) && e.target !== el.promptInput) closeSlashMenu(); });
   window.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCommandMenu(); } });
+  window.addEventListener("keydown", e => {
+    if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey || e.isComposing || e.keyCode === 229) return;
+    const key = e.key.toLowerCase();
+    if (key !== "c" && key !== "x") return;
+    const focused = document.activeElement;
+    if (focused !== el.promptInput && focused?.matches("input, textarea, [contenteditable=true]")) return;
+    let selected = "";
+    if (key === "c" && focused === el.promptInput) selected = focused.value.slice(focused.selectionStart, focused.selectionEnd);
+    if (key === "c" && !selected) {
+      const selection = window.getSelection();
+      if (selection?.rangeCount && selection.anchorNode?.parentElement?.closest('[data-role="assistant"]') && selection.focusNode?.parentElement?.closest('[data-role="assistant"]')) selected = selection.toString();
+    }
+    e.preventDefault();
+    const reply = historyItems(true).filter(item => item.role === "assistant" && item.text).at(-1);
+    let text = selected || (reply && key === "c" ? replyMarkdown(reply.text, reply.sources) : "");
+    if (!selected && key === "x" && reply) {
+      const entry = turnNodes.get(reply.id);
+      let codes = entry?.contentEl?.querySelectorAll(".code-block pre code");
+      if (!codes?.length) {
+        const template = document.createElement("template");
+        template.innerHTML = renderMarkdownSafe(reply.text, reply.sources);
+        codes = template.content.querySelectorAll(".code-block pre code");
+      }
+      text = codes.length ? codes[codes.length - 1].textContent : "";
+    }
+    if (!text) { showCommandFeedback(key === "c" ? "No reply to copy yet" : "No code in this reply"); return; }
+    const chatKey = chats.current.key;
+    void writeClipboardText(text).then(copied => {
+      if (chats.current.key !== chatKey) return;
+      if (copied) showCommandFeedback(selected ? "Selection copied" : key === "c" ? "Reply copied" : "Code copied");
+      else {
+        if (pendingChatUndo.length) paintChatUndo();
+        else hideCommandFeedback();
+        showGlobalError(null, "Couldn't copy. Try again.");
+      }
+    });
+  });
   let filePickerOpen = false;
   el.btnAttach.addEventListener("click", () => { filePickerOpen = true; el.attachmentInput.click(); });
   el.btnSnapshot.addEventListener("click", () => { void captureSnapshot(); });
