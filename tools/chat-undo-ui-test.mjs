@@ -156,6 +156,10 @@ try {
   check('composer text keeps native undo',!prevented && await visible()); await type(''); await key('z',{ctrlKey:true}); await sleep(80); s=await state(); check('Ctrl+Z with empty composer undoes',s.recent.some(x=>x.key==='b'));
   await remove('b'); const hides=await count('hide_main'); await key('Escape'); check('Escape dismisses undo before window',!await visible() && await count('hide_main')===hides);
   await setup(); await list(); await remove('b'); await evalJS(`document.querySelector('.feature-search').blur();document.querySelector('#prompt-input').focus()`); await type('/copy'); await key('Enter'); await sleep(100); check('plain feedback preserves undo button',await evalJS(`!!document.querySelector('#command-feedback button')`)); await sleep(2300); check('undo returns after plain feedback',await evalJS(`document.querySelector('#command-feedback').textContent.includes('Chat removed') && !!document.querySelector('#command-feedback button')`));
+  await setup(); await list(); await remove('b');
+  if (process.env.QCHAT_SHOT) await writeFile(process.env.QCHAT_SHOT, Buffer.from((await cdp('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  const searchPrevented = await evalJS(`(()=>{const f=document.querySelector('.feature-search');f.focus();f.value='abc';const e=new KeyboardEvent('keydown',{key:'z',ctrlKey:true,bubbles:true,cancelable:true});f.dispatchEvent(e);return e.defaultPrevented})()`);
+  check('list search text keeps native undo',!searchPrevented && await visible());
   check('no runtime errors',problems.length===0,problems.slice(0,4).join(' | '));
 } catch (e) {
   console.error(e);

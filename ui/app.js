@@ -2860,7 +2860,7 @@
   });
   window.addEventListener("keydown", e => {
     if (!e.isComposing && e.keyCode !== 229 && e.key === "Escape" && pendingChatUndo.length) { e.stopImmediatePropagation(); e.preventDefault(); dismissChatUndo(); return; }
-    if (!e.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "z" && pendingChatUndo.length && !(document.activeElement === el.promptInput && el.promptInput.value)) { e.preventDefault(); e.stopImmediatePropagation(); void undoChatChange(); return; }
+    if (!e.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "z" && pendingChatUndo.length && !(document.activeElement?.matches("input, textarea") && document.activeElement.value)) { e.preventDefault(); e.stopImmediatePropagation(); void undoChatChange(); return; }
     if (e.key === "Escape" && !featureList.hidden) { e.stopImmediatePropagation(); e.preventDefault(); closeFeatureList(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); showChatList(); }
   }, true);
