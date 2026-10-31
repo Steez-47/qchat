@@ -108,6 +108,7 @@ try {
   };
   await setup();
   await evalJS(`document.getElementById('btn-send').click()`);await waitFor('sent.length===1');
+  check('progress heartbeat leaves reply and activity presentation unchanged',await evalJS(`(()=>{const before=document.getElementById('bubble-zone').innerHTML;__mock.emit('bridge',{type:'progress',id:sent[0].id});return document.getElementById('bubble-zone').innerHTML===before})()`));
   await evalJS(`__mock.emit('bridge',{type:'error',id:sent[0].id,code:'send_failed'})`);await sleep(150);
   check('attachment-only failure offers Retry',await evalJS(`!!document.querySelector('[data-action="retry-turn"]')`));
   await evalJS(`window.beforeNarrowSettings={...QSettings.settings};__mock.emit('qchat://settings-changed',QSettings.save({...QSettings.settings,barWidth:340,replyWidth:340}))`);
@@ -173,11 +174,11 @@ try {
   check('retry during a snapshot keeps ownership and recovered text with feedback',await evalJS(`sent.length===1&&removed.length===0&&document.getElementById('prompt-input').value==='snapshot retry'&&document.getElementById('command-feedback').textContent.includes('snapshot to finish')`));
   await evalJS('rejectSnapshot()');await sleep(60);
 
-  for(const terminalType of ['done','error']){
+  for(const terminalType of ['done','error','attachment_pending']){
     await setup();await type('old draft');
     await evalJS(`window.baseInvoke=__TAURI__.core.invoke;__TAURI__.core.invoke=(command,args)=>command==='chat_send'?(sent.push(args),new Promise((resolve,reject)=>window.rejectSend=()=>reject(Error('native rejection')))):baseInvoke(command,args);document.getElementById('btn-send').click()`);
     await waitFor('typeof rejectSend==="function"');await type('newer draft 🌏');
-    await evalJS(`__mock.emit('bridge',{type:${JSON.stringify(terminalType)},id:sent[0].id,text:'finished',code:'auth'});rejectSend()`);await sleep(100);
+    await evalJS(`__mock.emit('bridge',{type:${JSON.stringify(terminalType==='done'?'done':'error')},id:sent[0].id,text:'finished',code:${JSON.stringify(terminalType==='attachment_pending'?'attachment_pending':'auth')}});rejectSend()`);await sleep(100);
     check(terminalType+' before rejected invoke cannot leave deleted-file chips or erase newer draft',await evalJS(`!document.querySelector('#attachments .attachment-chip')&&removed.includes('retry-file')&&document.getElementById('prompt-input').value==='newer draft 🌏'&&!document.querySelector('[data-action="retry-turn"]')`));
   }
 

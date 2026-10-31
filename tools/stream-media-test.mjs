@@ -105,6 +105,10 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
     send: (args = {}) => window.__qchat.send({ id: 'job', prompt: 'hello', ...args }),
     get clicks() { return clicks; }, get cancels() { return cancels; }, get pickerClicks() { return pickerClicks; },
     get newChats() { return newChats; },
+    get now() { return now; },
+    get attachmentCount() { return removeButtons.length; },
+    title(value) { document.title = value; },
+    later(callback, delay) { return schedule(callback, delay); },
     stop(value) { stop = value; }, pending(value) { pending = value; },
     input(accept = '') { const input = element('input', { accept }); input.accept = accept; input.click = () => { pickerClicks++; }; inputs.push(input); return input; },
     openAttachments() { attachmentButton = element('button', { 'aria-label': 'Attach files' }); attachmentButton.click = () => this.input(); },
@@ -837,6 +841,53 @@ test('progressive image sources update one opaque card and increment its cache r
   assert.doesNotMatch(JSON.stringify(b.events),/blob:https/);
   b.stop(false); await b.tick(1200);
 });
+test('unsent failed upload blocks reuse when cleanup is unknown', async () => {
+  const b = browser(); b.pending(true);
+  const sent = b.send({ attachmentCount: 1 }); await b.tick(121000); await sent;
+  assert.equal(terminal(b)[0]?.code, 'attachment_pending');
+  await b.send({ id: 'retry' });
+  assert.equal(terminal(b).at(-1)?.code, 'attachment_pending');
+});
+test('quiet stream emits throttled progress from incoming chunks', async () => {
+  const stamps=[];
+  const packets=[...Array(22).fill(': quiet\n\n'),sse(message(['final reply']), '[DONE]')];
+  const b = browser({ chunks:packets.map(packet=>encoder.encode(packet)),chunkDelays:packets.map(()=>30000),emitHook:event=>{if(event.type==='progress')stamps.push({id:event.id,at:b.now})} });
+  await b.send(); await b.tick(661000);
+  assert.ok(stamps.length>=11&&stamps.length<=12);
+  for(let i=1;i<stamps.length;i++){assert.ok(stamps[i].at-stamps[i-1].at>=60000);assert.ok(stamps[i].at-stamps[i-1].at<600000,'native liveness deadline cannot expire between genuine progress events')}
+  assert.ok(b.now-stamps.at(-1).at<600000);
+  assert.equal(terminal(b).length, 0);
+  assert.equal(b.events.filter(event=>event.type==='delta').length,0);
+  await b.tick(30000);assert.equal(done(b)?.text,'final reply');
+  const count=stamps.length;await b.tick(600000);assert.equal(stamps.length,count);
+  const silent=browser({hold:true});silent.stop(true);await silent.send();await silent.tick(301000);assert.equal(terminal(silent)[0]?.code,'timeout');
+});
+test('failed unsent uploads are removed before Retry, including delayed controls', async () => {
+  for(const delay of [0,100]){
+    const b=browser({data:sse(message(['once']), '[DONE]')});const input=b.input();input.files=[{name:'once.txt'}];
+    const control=b.pendingAttachment('once.txt'),remove=control.click;control.click=()=>delay?b.later(remove,delay):remove();
+    b.title('Just a moment');await b.send({attachmentCount:1});await b.tick(200);
+    assert.equal(terminal(b)[0]?.code,'not_ready');assert.equal(b.attachmentCount,0);
+    b.title('ChatGPT');assert.match(await b.api.attachmentInput(),/qchat-file-input/);
+    b.pendingAttachment('once.txt');b.pending(false);const retry=b.send({id:'retry',attachmentCount:1});await b.tick(1200);await retry;
+    assert.equal(b.attachmentCount,1);assert.equal(b.clicks,1);assert.equal(done(b)?.text,'once');
+  }
+});
+test('partial or throwing cleanup refuses another upload without a retry promise', async () => {
+  for(const partial of [true,false]){
+    const b=browser();b.input().files=[{name:'one.txt'},{name:'two.txt'}];const control=b.pendingAttachment('one.txt');
+    if(!partial)control.click=()=>{throw Error('blocked')};
+    b.title('Just a moment');await b.send({attachmentCount:partial?2:1});await b.tick(200);
+    assert.equal(terminal(b)[0]?.code,'attachment_pending');await assert.rejects(b.api.attachmentInput(),/attachment_pending:/);
+    b.title('ChatGPT');await b.send({id:'retry'});assert.equal(b.clicks,0);assert.equal(terminal(b).at(-1)?.code,'attachment_pending');
+  }
+});
+test('failure after request start does not remove submitted attachments',async()=>{
+  const b=browser({httpError:500});b.input().files=[{name:'sent.txt'}];b.pendingAttachment('sent.txt');b.pending(false);
+  const sent=b.send({attachmentCount:1});await b.tick(1200);await sent;
+  assert.equal(b.clicks,1);assert.equal(b.attachmentCount,1);assert.equal(terminal(b)[0]?.type,'error');
+});
+
 test('attachment-only Send waits for processing and a quiet upload window', async () => {
   const b = browser({ data: sse(message(['uploaded']), '[DONE]') });
   b.pending(true); const sent = b.send({ prompt: '', attachmentCount: 1 });
@@ -897,7 +948,7 @@ test('New chat during pending upload prevents submission and clears blocked atta
 test('unavailable attachment input rejects in a bounded wait and pending uploads time out', async () => {
   const b = browser(); const selection = assert.rejects(b.api.attachmentInput(), /unavailable/); await b.tick(3200); await selection;
   b.pending(true); const sent = b.send({ attachmentCount: 1 }); await b.tick(121000); await sent;
-  assert.equal(b.clicks, 0); assert.equal(terminal(b)[0]?.code, 'attachment_failed');
+  assert.equal(b.clicks, 0); assert.equal(terminal(b)[0]?.code, 'attachment_pending');
 });
 
 const activities = b => b.events.filter(event => event.type === 'activity');

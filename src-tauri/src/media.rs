@@ -541,6 +541,9 @@ pub async fn evaluate(app: &tauri::AppHandle, expression: String) -> Result<Valu
     )
     .await?;
     if value.get("exceptionDetails").is_some() {
+        if value["exceptionDetails"]["exception"]["description"].as_str().is_some_and(|message| message.contains("attachment_pending:")) {
+            return Err("attachment_pending: Clear pending attachments in the provider or start a new chat.".into());
+        }
         return Err(
             "Provider could not complete this media operation. Use View in provider for details."
                 .into(),

@@ -84,8 +84,17 @@
     // which can remain pending until the site's primary branch also finishes.
     try { Promise.resolve(job.reader.cancel()).catch(() => {}); } catch (_) {}
   }
-  function fail(job, code, message) {
-    if (active !== job || job.finished) return;
+  async function fail(job, code, message) {
+    if (active !== job || job.finished || job.failing) return;
+    job.failing = true;
+    if (!job.started && job.attachmentCount > 0 && !job.cancelled) {
+      job.cancelled = true;
+      if (!await clearFailedAttachments(job)) {
+        code = 'attachment_pending';
+        message = 'Pending attachments could not be cleared. Remove them in ChatGPT or start a new chat before sending again.';
+      }
+      if (active !== job || job.finished) return;
+    }
     job.text = citationText(job, job.text);
     if (job.text !== job.sentText) { emit({ type: 'delta', id: job.id, text: job.text }); job.sentText = job.text; }
     completeActivity(job);
@@ -94,6 +103,12 @@
     error(job.id, code, message);
   }
   function progress(job) {
+    if (active !== job || job.finished || job.failing) return;
+    const now = Date.now();
+    if (job.lastHeartbeat == null || now - job.lastHeartbeat >= 60000) {
+      job.lastHeartbeat = now;
+      emit({ type: 'progress', id: job.id });
+    }
     clearTimeout(job.watchdog);
     job.watchdog = setTimeout(() => fail(job, 'timeout', 'No stream progress for five minutes.'), 300000);
   }
@@ -864,10 +879,24 @@
         names.some(name => label.toLowerCase() === `remove ${name}`.toLowerCase());
     });
   }
+  async function clearFailedAttachments(job) {
+    const controls = attachmentRemovers(job.attachmentNames);
+    cancelledAttachments = { names: job.attachmentNames, hadControls: controls.length >= job.attachmentCount };
+    let clicked = true;
+    controls.forEach(node => { try { node.click(); } catch (_) { clicked = false; } });
+    if (!cancelledAttachments.hadControls || !clicked) return false;
+    // React may remove the chips after the click task has ended. Never upload
+    // another copy until both the controls and the in-flight upload are gone.
+    for (let i = 0; i < 20 && active === job && !job.finished; i++) {
+      if (uploads === 0 && attachmentRemovers(job.attachmentNames).length === 0) { cancelledAttachments = null; return true; }
+      await sleep(50);
+    }
+    return false;
+  }
   async function attachmentInput() {
     if (cancelledAttachments) {
       if (cancelledAttachments.hadControls && uploads === 0 && attachmentRemovers(cancelledAttachments.names).length === 0) cancelledAttachments = null;
-      else throw new Error('Start a new chat to clear cancelled attachments before uploading again.');
+      else throw new Error('attachment_pending: Start a new chat to clear cancelled attachments before uploading again.');
     }
     attachmentSelectionAt = Date.now();
     const choose = () => {

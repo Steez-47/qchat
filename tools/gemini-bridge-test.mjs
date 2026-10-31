@@ -1,9 +1,12 @@
 // Synthetic DOM and bridge tests for src-tauri/bridge/gemini-bridge.js. No app, browser profile, credentials, or network.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import vm from 'node:vm';
 
-const source = readFileSync(new URL('../src-tauri/bridge/gemini-bridge.js', import.meta.url), 'utf8');
+const source = process.argv.includes('--baseline')
+  ? execFileSync('git',['show','HEAD:src-tauri/bridge/gemini-bridge.js'],{encoding:'utf8'})
+  : readFileSync(new URL('../src-tauri/bridge/gemini-bridge.js', import.meta.url), 'utf8');
 const drain = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 
 // Sanitized live reply fixture captured from gemini.google.com/app
@@ -404,6 +407,7 @@ function createBrowser({ hostname = 'gemini.google.com', pathname = '/app', read
     location,
     events,
     navigations,
+    later: schedule,
     composer,
     sendButton,
     get api() { return window.__qchat; },
@@ -477,6 +481,54 @@ function createBrowser({ hostname = 'gemini.google.com', pathname = '/app', read
 
 const tests = [];
 const test = (name, run) => tests.push({ name, run });
+
+function uploadFixture(browser, count=1, {controls=count,delay=0,throws=false}={}) {
+  const input=makeEl('input',{type:'file'});input.files=Array.from({length:count},(_,i)=>({name:'retry-'+i+'.txt'}));browser.body.append(input);
+  for(let i=0;i<controls;i++){
+    const button=makeEl('button',{'aria-label':'Remove file retry-'+i+'.txt'});
+    button.onClick=()=>{if(throws)throw Error('fixture blocked');delay?browser.later(()=>button.remove(),delay):button.remove()};browser.body.append(button);
+  }
+  return ()=>browser.body.querySelectorAll('button').filter(button=>/^Remove file retry-/.test(button.getAttribute('aria-label')||'')).length;
+}
+test('unsent upload failure clears one copy before retry, including delayed removal',async()=>{
+  for(const delay of [0,100]){
+    const b=createBrowser({loggedIn:true});const copies=uploadFixture(b,1,{delay});
+    const sent=b.api.send({id:'first-upload',prompt:'hello',attachmentCount:1});await b.tick(1000);await sent;await b.tick(20200);
+    assert.equal(b.events.find(event=>event.id==='first-upload'&&event.type==='error')?.code,'send_failed');assert.equal(copies(),0);
+    assert.match(await b.api.attachmentInput(),/qchat-file-input/);
+    uploadFixture(b);b.sendButton.onClick=()=>{b.addTurn({userText:'hello',replyHtml:'<p>one copy</p>'})};
+    const retried=b.api.send({id:'retry-upload',prompt:'hello',attachmentCount:1});await b.tick(1500);await retried;await b.tick(1000);
+    assert.equal(copies(),1);assert.equal(b.events.filter(event=>event.id==='retry-upload'&&event.type==='done').length,1);
+  }
+});
+test('missing, partial and throwing upload removal block another selection honestly',async()=>{
+  for(const options of [{controls:0},{controls:1},{controls:2,throws:true}]){
+    const b=createBrowser({loggedIn:true});uploadFixture(b,2,options);
+    const sent=b.api.send({id:'blocked-upload',prompt:'hello',attachmentCount:2});await b.tick(1000);await sent;await b.tick(20200);
+    assert.equal(b.events.find(event=>event.id==='blocked-upload'&&event.type==='error')?.code,'attachment_pending');
+    await assert.rejects(b.api.attachmentInput(),/attachment_pending:/);
+    await b.api.send({id:'blocked-retry',prompt:'hello',attachmentCount:2});
+    assert.equal(b.events.find(event=>event.id==='blocked-retry'&&event.type==='error')?.code,'attachment_pending');
+  }
+});
+test('started upload failure keeps submitted attachments',async()=>{
+  const b=createBrowser({loggedIn:true});const copies=uploadFixture(b);
+  b.sendButton.onClick=()=>{b.setStop(true);b.addTurn({userText:'hello',replyHtml:'<p>partial</p>',streaming:true})};
+  const sent=b.api.send({id:'started-upload',prompt:'hello',attachmentCount:1});await b.tick(1000);await sent;
+  b.body.append(makeEl('div',{role:'alert'},[makeText('Quota reached, try again later')]));b.notifyMutations();await b.tick(200);
+  assert.equal(copies(),1);assert.equal(b.events.find(event=>event.type==='error'&&event.id==='started-upload')?.code,'rate_limited');
+});
+test('real DOM progress heartbeats are throttled and stop after completion',async()=>{
+  const b=createBrowser();let response;
+  b.sendButton.onClick=()=>{b.setStop(true);response=b.addTurn({userText:'hello',replyHtml:'<p>start</p>',streaming:true})};
+  await b.api.send({id:'heartbeat-dom',prompt:'hello'});await b.tick(200);
+  for(let i=0;i<23;i++){await b.tick(30000);response.querySelector('.markdown').append(makeEl('p',{},[makeText('next '+i)]));b.notifyMutations()}
+  const beats=b.events.filter(event=>event.type==='progress'&&event.id==='heartbeat-dom');assert.ok(beats.length>=11&&beats.length<=12);
+  assert.equal(b.events.filter(event=>event.type==='error'&&event.id==='heartbeat-dom').length,0);
+  response.querySelector('.markdown').classList.remove('animate');b.setStop(false);await b.tick(1600);
+  assert.equal(b.events.filter(event=>event.type==='done'&&event.id==='heartbeat-dom').length,1);
+  const count=b.events.filter(event=>event.type==='progress').length;await b.tick(600000);assert.equal(b.events.filter(event=>event.type==='progress').length,count);
+});
 
 test('hostname guard only installs on gemini.google.com and is idempotent', async () => {
   const other = createBrowser({ hostname: 'chatgpt.com' });

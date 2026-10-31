@@ -103,6 +103,10 @@ try {
   // ownership. Old terminal events cannot affect the new native flight.
   const retryFile=await ui.evaluate(`window.__TAURI__.core.invoke('attachment_begin',{name:'retry.txt',mime:'text/plain',size:0,uploadGeneration:${uploadGeneration}})`);
   await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(retryFile.id)}})`);
+  await site.evaluate("window.__qchat.attachmentInput=async()=>{throw Error('attachment_pending: fixture pending files')}");
+  const pendingError=await ui.evaluate(`window.__TAURI__.core.invoke('chat_send',{id:'blocked-selection',prompt:'fixture',attachmentIds:[${JSON.stringify(retryFile.id)}]}).then(()=>'',error=>String(error))`);
+  check('native pending-selection error keeps its nonretryable code without leaking page details',pendingError.startsWith('attachment_pending:')&&!pendingError.includes('fixture pending files'));
+  await site.evaluate("window.__qchat.attachmentInput=async()=> '#qchat-fixture-upload'");
   await site.evaluate("(()=>{const input=document.createElement('input');input.type='file';input.id='qchat-fixture-upload';input.hidden=true;document.body.append(input);window.__qchat.send=()=>{window.__dispatchThrew=true;throw Error('fixture dispatch failed')}})()");
   check('dispatch exception rejects send',await safeError(ui.evaluate(`window.__TAURI__.core.invoke('chat_send',{id:'dispatch-failed',prompt:'fixture',attachmentIds:[${JSON.stringify(retryFile.id)}]})`))&&await site.evaluate('window.__dispatchThrew===true'));
   check('failed dispatch retains its staged bytes',!!await ui.evaluate(`window.__TAURI__.core.invoke('attachment_finish',{id:${JSON.stringify(retryFile.id)}})`));
