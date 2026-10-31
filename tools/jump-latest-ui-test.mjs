@@ -141,6 +141,18 @@ try {
   await evalJS(`document.getElementById('find-close').click();document.getElementById('btn-history').click()`);
   await type('/keys'); await key('Enter'); await sleep(100);
   check('/keys lists shortcut', await evalJS(`document.querySelector('.feature-list').textContent.includes('Ctrl+End')&&document.querySelector('.feature-list').textContent.includes('Jump to latest')`));
+  const fire = (extra) => evalJS(`(()=>{const e=new KeyboardEvent('keydown',${JSON.stringify({ key: 'End', ctrlKey: true, bubbles: true, cancelable: true, ...extra })});document.activeElement.dispatchEvent(e);return e.defaultPrevented})()`);
+  await setup(); await type('composing'); await evalJS(`document.getElementById('prompt-input').focus();document.getElementById('prompt-input').setSelectionRange(9,9)`);
+  check('IME composition leaves the shortcut alone', !await fire({ isComposing: true }) && !await fire({ keyCode: 229 }));
+  check('Ctrl+Shift+End keeps native selection in the composer', !await fire({ shiftKey: true }) && await evalJS(`document.getElementById('prompt-input').value==='composing'`));
+  await setup(); await type('/rename'); await key('Enter'); await until(`!document.getElementById('rename-chat').hidden`, 'rename open');
+  const renameBefore = await evalJS(`document.activeElement.value`);
+  check('rename input keeps native shortcut and stays open', await evalJS(`document.activeElement.tagName==='INPUT'`) && !await shortcut() && await evalJS(`!document.getElementById('rename-chat').hidden&&document.activeElement.value===${JSON.stringify(renameBefore)}`));
+  await setup(); await evalJS(`document.querySelector('#tabs [data-key="b"]').focus()`);
+  const tabSends = await evalJS(`__mock.count('chat_send')`);
+  const currentKey = await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).current.key`);
+  await shortcut(); await sleep(80);
+  check('shortcut on a focused tab does not activate it, send, or move focus', await evalJS(`document.activeElement.dataset.key==='b'&&__mock.count('chat_send')===${tabSends}&&JSON.parse(localStorage.getItem('qchat.chats')).current.key===${JSON.stringify(currentKey)}`));
   check('no runtime errors', problems.length===0, problems.join(' | '));
   if (failed) process.exitCode = 1;
 } finally {
