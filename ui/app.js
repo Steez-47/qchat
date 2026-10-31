@@ -814,6 +814,7 @@
   function setHistoryOpen(open) {
     if (!open) finder.close({ focus: false });
     if (open === historyOpen) return;
+    closeRenameChat(false);
     const panel = el.historyPanel;
     el.historyButton.setAttribute("aria-expanded", String(open));
     el.historyLabel.textContent = open ? "Latest" : "History";
@@ -1013,6 +1014,10 @@
     return text.length > MAX_STORED_TEXT ? `${text.slice(0, MAX_STORED_TEXT - 1)}…` : text;
   };
 
+  function normalizeChatTitle(value) {
+    return typeof value === "string" ? Array.from(value.replace(/\s+/gu, " ").replace(/[\u0000-\u001f\u007f]/g, "").trim()).slice(0, 40).join("").trimEnd() : "";
+  }
+
   function cleanChat(raw) {
     if (!raw || typeof raw !== "object" || typeof raw.key !== "string" || !raw.key) return null;
     const text = (value, max) => (typeof value === "string" ? value.slice(0, max) : "");
@@ -1023,7 +1028,7 @@
       key: raw.key,
       provider: raw.provider === "gemini" ? "gemini" : "chatgpt",
       conversationId: typeof raw.conversationId === "string" && raw.conversationId ? raw.conversationId : null,
-      title: text(raw.title, 40),
+      title: normalizeChatTitle(raw.title),
       lastActive: time(raw.lastActive),
       lastPrompt: text(raw.lastPrompt, Infinity),
       lastHadAttachments: raw.lastHadAttachments === true,
@@ -1107,6 +1112,7 @@
   async function setProvider(provider) {
     if (provider === activeProvider) return true;
     if (isBusy() || switchingProvider) return false;
+    closeRenameChat(false);
     switchingProvider = true;
     syncReasoningButton();
     try {
@@ -2297,6 +2303,7 @@
   }
 
   function dismissExchange(immediate = false) {
+    closeRenameChat(false);
     finder.close({ focus: false, reset: true });
     hideCommandFeedback();
     clearTimeout(autoDismissTimer);
@@ -2491,7 +2498,7 @@
     }
 
     const label = prompt || (selectionTexts.length ? "Selected text" : files[0]?.file.name) || "Attachment";
-    chat.title = chat.title || label.slice(0, 40);
+    chat.title = chat.title || normalizeChatTitle(label);
     chat.lastPrompt = prompt;
     chat.lastHadAttachments = files.length > 0;
     rememberTurn(userTurn);
@@ -2762,6 +2769,7 @@
     { name: "hide", icon: GLYPH.hide, desc: () => "Hide QChat", run: () => invoke("hide_main").catch(() => {}) }
   ];
   COMMANDS.push(
+    { name: "rename", icon: "", desc: () => "Rename in QChat", run: openRenameChat },
     { name: "find", icon: GLYPH.clock, desc: () => "Find in conversation", run: openFind },
     { name: "copy", icon: GLYPH.copy, desc: () => "Copy conversation", run: copyConversation },
     {name:"chatgpt", icon:GLYPH.account, desc:()=>"Switch to ChatGPT", run:()=>chooseProvider("chatgpt")},
@@ -2790,6 +2798,81 @@
   );
   const featureList = make("section", "feature-list glass");
   featureList.hidden = true; featureList.tabIndex = -1; el.attachments.before(featureList);
+  const renameForm = make("form", "rename-bar glass glass-tiny");
+  renameForm.id = "rename-chat";
+  renameForm.setAttribute("aria-label", "Rename local chat");
+  renameForm.hidden = true;
+  const renameInput = make("input", "rename-input");
+  renameInput.id = "rename-chat-input";
+  renameInput.type = "text";
+  renameInput.maxLength = 80;
+  renameInput.autocomplete = "off";
+  renameInput.setAttribute("aria-label", "Chat name");
+  renameInput.setAttribute("aria-describedby", "rename-chat-error");
+  const renameSave = make("button", "btn btn-compact", "Save");
+  renameSave.type = "submit";
+  renameSave.setAttribute("aria-label", "Save chat name");
+  const renameCancel = make("button", "icon-btn");
+  renameCancel.type = "button";
+  renameCancel.setAttribute("aria-label", "Cancel rename");
+  renameCancel.append(makeIcon(GLYPH.close));
+  const renameError = make("span", "rename-error");
+  renameError.id = "rename-chat-error";
+  renameError.setAttribute("role", "status");
+  renameError.hidden = true;
+  renameForm.append(renameInput, renameSave, renameCancel, renameError);
+  el.attachments.before(renameForm);
+  let renameTarget = null;
+  function closeRenameChat(focus = true) {
+    if (renameForm.hidden) return;
+    renameForm.hidden = true;
+    renameTarget = null;
+    renameInput.value = "";
+    renameInput.removeAttribute("aria-invalid");
+    renameError.hidden = true;
+    renameError.textContent = "";
+    syncMenuFlag(); queueSizes();
+    if (focus) el.promptInput.focus({ preventScroll: true });
+  }
+  function openRenameChat() {
+    const chat = chats.current;
+    if (!(chat.conversationId || chat.lastPrompt || chat.lastResponse || chat.transcript.length)) {
+      showCommandFeedback("Start a conversation first.");
+      return;
+    }
+    finder.close({ focus: false });
+    closeSlashMenu(); hideClearConfirm();
+    if (!featureList.hidden) closeFeatureList();
+    renameTarget = chat;
+    renameInput.value = normalizeChatTitle(chat.title) || "Untitled chat";
+    renameInput.removeAttribute("aria-invalid");
+    renameError.hidden = true;
+    renameError.textContent = "";
+    renameForm.hidden = false;
+    syncMenuFlag(); queueSizes();
+    renameInput.focus({ preventScroll: true }); renameInput.select();
+  }
+  function saveChatName() {
+    if (renameForm.hidden || renameTarget !== chats.current) { closeRenameChat(false); return; }
+    const title = normalizeChatTitle(renameInput.value);
+    if (!title) {
+      renameInput.setAttribute("aria-invalid", "true");
+      renameError.textContent = "Enter a chat name.";
+      renameError.hidden = false;
+      renameInput.focus(); queueSizes(); return;
+    }
+    renameTarget.title = title;
+    saveChats(); renderTabs();
+    closeRenameChat();
+    showCommandFeedback("Renamed in QChat");
+  }
+  renameForm.addEventListener("submit", event => { event.preventDefault(); event.stopPropagation(); saveChatName(); });
+  renameForm.addEventListener("keydown", event => {
+    if (event.isComposing || event.keyCode === 229) { event.stopPropagation(); return; }
+    if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); saveChatName(); }
+  });
+  renameInput.addEventListener("input", () => { renameInput.removeAttribute("aria-invalid"); renameError.hidden = true; renameError.textContent = ""; queueSizes(); });
+  renameCancel.addEventListener("click", () => closeRenameChat());
   // The control that opened the list. A pointer-down on it must not close the
   // list, or its click would reopen it and the panel would flash.
   let featureListAnchor = null;
@@ -2832,6 +2915,7 @@
     el.promptInput.focus();
   }
   function showFeatureList(title, rows, searchable = false, anchor = null) {
+    closeRenameChat(false);
     finder.close({ focus: false });
     cancelModelRequest();
     closeSlashMenu();
@@ -2939,7 +3023,7 @@
 
   async function openAccountChat(item) {
     if (isBusy()) return;
-    const chat = { ...freshChat(), conversationId: item.id, title: (item.title || "Untitled chat").slice(0, 40), lastActive: item.updated || Date.now() };
+    const chat = { ...freshChat(), conversationId: item.id, title: normalizeChatTitle(item.title || "Untitled chat"), lastActive: item.updated || Date.now() };
     chats.recent.unshift(chat);
     await switchToChat(chat.key);
     setHistoryOpen(true);
@@ -2964,16 +3048,18 @@
   });
   window.addEventListener("keydown", e => {
     if (e.isComposing || e.keyCode === 229) return;
+    if (!renameForm.hidden && e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeRenameChat(); return; }
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") { e.preventDefault(); e.stopImmediatePropagation(); openFind(); return; }
     if (finder.isOpen && e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); finder.close(); return; }
     if (finder.isOpen && e.key === "F3") { e.preventDefault(); e.stopImmediatePropagation(); finder.move(e.shiftKey ? -1 : 1); return; }
     if (!e.isComposing && e.keyCode !== 229 && e.key === "Escape" && pendingChatUndo.length) { e.stopImmediatePropagation(); e.preventDefault(); dismissChatUndo(); return; }
-    if (!e.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "z" && pendingChatUndo.length && document.activeElement !== finder.input && !(document.activeElement?.matches("input, textarea") && document.activeElement.value)) { e.preventDefault(); e.stopImmediatePropagation(); void undoChatChange(); return; }
+    if (!e.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "z" && pendingChatUndo.length && document.activeElement !== finder.input && document.activeElement !== renameInput && !(document.activeElement?.matches("input, textarea") && document.activeElement.value)) { e.preventDefault(); e.stopImmediatePropagation(); void undoChatChange(); return; }
     if (e.key === "Escape" && !featureList.hidden) { e.stopImmediatePropagation(); e.preventDefault(); closeFeatureList(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); showChatList(); }
   }, true);
   let slashMatches = [];
   function openFind() {
+    closeRenameChat(false);
     if (!historyItems().some(item => String(item.text || "").trim())) { showCommandFeedback("No messages to search yet."); return; }
     closeSlashMenu(); hideClearConfirm();
     if (!featureList.hidden) closeFeatureList();
@@ -2984,7 +3070,7 @@
   const slashOpen = () => !el.slashMenu.hidden;
 
   function syncMenuFlag() {
-    const away = slashOpen() || !el.clearConfirm.hidden || !!document.querySelector("#command-feedback:not([hidden])");
+    const away = slashOpen() || !el.clearConfirm.hidden || !renameForm.hidden || !!document.querySelector("#command-feedback:not([hidden])");
     if (away) el.stack.dataset.menu = ""; else delete el.stack.dataset.menu;
     el.stack.toggleAttribute("data-slash-menu", slashOpen());
   }
@@ -3014,6 +3100,7 @@
     let matches = query === null ? [] : COMMANDS.filter((c) => c.name !== activeProvider && c.name.startsWith(query));
     if (commandMenu) matches = COMMANDS.filter(c => c.name !== activeProvider);
     if (!matches.length) { if (slashOpen()) closeSlashMenu(); return; }
+    closeRenameChat(false);
     finder.close({ focus: false });
     const wasOpen = slashOpen();
     const previous = slashMatches.map((c) => c.name).join(",");

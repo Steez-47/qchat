@@ -241,7 +241,7 @@ try {
   check('slash entrance stays inside the resized native viewport', entranceBounds.length > 2 && entranceBounds.every(r => r.top >= 0 && r.bottom <= r.height), JSON.stringify(entranceBounds));
   await settle();
   const slashBounds = await evalJS(`(()=>{const menu=document.getElementById('slash-menu').getBoundingClientRect();return {top:menu.top,bottom:menu.bottom,height:innerHeight,items:[...document.querySelectorAll('#slash-menu [role=option]')].map(n=>{const r=n.getBoundingClientRect();return {command:n.dataset.command,top:r.top,bottom:r.bottom};})};})()`);
-  const expectedCommands = ['settings','new','signin','clear','hide','find','copy','gemini','startup','model','temp','chats','keys'];
+  const expectedCommands = ['settings','new','signin','clear','hide','rename','find','copy','gemini','startup','model','temp','chats','keys'];
   check('all slash commands fit inside the native fitted viewport', slashBounds.items.length === expectedCommands.length && expectedCommands.every(name=>slashBounds.items.some(item=>item.command===name)) && slashBounds.top >= 27 && slashBounds.bottom <= slashBounds.height - 27 && slashBounds.items.every(r => r.top >= slashBounds.top && r.bottom <= slashBounds.bottom), JSON.stringify(slashBounds));
   await type('/se');
   const filtered = await evalJS(`[...document.querySelectorAll('#slash-menu [role=option]')].map(n=>n.dataset.command)`);

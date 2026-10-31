@@ -11,6 +11,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - **Ctrl+Shift+C** copies the latest reply or selected composer/reply text. **Ctrl+Shift+X** copies its last code block.
 - **Ctrl+F** or `/find` searches the whole open conversation. Enter or F3 moves to the next match; add Shift to move back. Escape closes search and keeps the conversation open.
 - Unsent drafts recover after a reload or restart when local history is enabled. Temporary chats keep their drafts out of saved history.
+- `/rename` changes the current chat's name in QChat. Enter saves, Escape cancels, and your draft stays intact.
 - A connection error retries when the network returns or QChat regains focus, keeping the draft, staged files and current conversation. Try again is available for manual recovery.
 - `/model` picks a ChatGPT model on a signed-in account. `/temp` starts a temporary chat that isn't saved.
 - Hover a reply to copy it, retry it or open it in ChatGPT. Up arrow recalls earlier prompts.
@@ -66,6 +67,7 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/selection-native-test.mjs`: selection hotkey and clipboard preference. Requires a debug build.
 - `node tools/media-ui-test.mjs`: uploads, paste/drop, previews, safe rendering and draft retention.
 - `node tools/attachment-retry-ui-test.mjs`: attachment retry, matching draft consumption, blocked retries, expiry and early terminal races.
+- `node tools/rename-chat-ui-test.mjs`: local titles, Unicode, persistence, privacy, keyboard undo and editor lifecycle.
 - `node tools/native-media-e2e.mjs`: real WebView2 attachment bytes, local media serving, downloads, audio and video. Requires a debug build; video checks use ffmpeg from PATH.
 - `node tools/app-e2e.mjs`: off-screen chat checks against ChatGPT as a guest.
 - `node tools/gemini-bridge-test.mjs`: Gemini sending, streaming and Markdown conversion on synthetic pages.

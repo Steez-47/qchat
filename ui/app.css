@@ -949,3 +949,10 @@ select.qinteractive-control option { background: #252b35; color: #eee; }
 
 .feature-divider { border-top: 1px solid var(--stroke-1); margin: 5px 8px; }
 .feature-disabled { opacity: .5; }
+
+.rename-bar { display: flex; flex-wrap: wrap; align-self: center; align-items: center; gap: 6px; box-sizing: border-box; width: var(--bar-w); max-width: 100%; padding: 6px 8px; border-radius: var(--r-chip); pointer-events: auto; }
+.rename-input { flex: 1 1 90px; min-width: 0; width: 0; height: 30px; padding: 0 6px; border: 1px solid transparent; border-radius: var(--r-control); background: var(--fill-1); color: var(--text-1); font: inherit; font-size: 12px; outline: none; }
+.rename-input:focus-visible { border-color: var(--accent-text); }
+.rename-input[aria-invalid=true] { border-color: var(--critical-text); }
+.rename-bar > button { flex: none; }
+.rename-error { flex-basis: 100%; padding: 0 6px; color: var(--critical-text); font-size: 12px; }

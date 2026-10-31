@@ -96,6 +96,23 @@ try {
   await command('Input.dispatchKeyEvent',{type:'keyUp',key:'X',code:'KeyX',windowsVirtualKeyCode:88,modifiers:10});
   await until('nativeCopies.length===2');
   check('native keyboard code copy selects only code',await evaluate("nativeCopies[1].trim()==='const value = 42;'&&document.getElementById('prompt-input').value==='Preserve this draft 🌏'"));
+  await key('k',{ctrlKey:true});
+  await evaluate("document.querySelector('#slash-menu [data-command=rename]').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))");
+  await until("!document.getElementById('rename-chat').hidden&&document.activeElement.id==='rename-chat-input'");
+  await until("(()=>{const rect=document.getElementById('rename-chat').getBoundingClientRect();return rect.left>=0&&rect.right<=innerWidth&&rect.top>=0&&rect.bottom<=innerHeight})()");
+  const renameShots=path.join(root,'.tmp','rename-shots');await mkdir(renameShots,{recursive:true});
+  await writeFile(path.join(renameShots,'native-rename.png'),Buffer.from((await command('Page.captureScreenshot',{format:'png'})).data,'base64'));
+  check('native rename fits the viewport and selects the existing name',await evaluate("(()=>{const input=document.getElementById('rename-chat-input');return input.value==='Native search fixture'&&input.selectionStart===0&&input.selectionEnd===input.value.length})()"));
+  await command('Input.insertText',{text:'Native renamed 🌏'});
+  await command('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+  await command('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+  await until("document.getElementById('rename-chat').hidden");
+  check('native Enter saves a Unicode title and keeps the exact draft/transcript',await evaluate("(()=>{const chat=JSON.parse(localStorage.getItem('qchat.chats')).current;return chat.title==='Native renamed 🌏'&&chat.draft==='Preserve this draft 🌏'&&chat.transcript.length===2&&document.getElementById('prompt-input').value==='Preserve this draft 🌏'&&document.activeElement.id==='prompt-input'})()"));
+  await key('k',{ctrlKey:true});
+  await evaluate("document.querySelector('#slash-menu [data-command=rename]').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))");
+  await command('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await command('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  check('native Escape cancels the title editor and keeps history open',await evaluate("document.getElementById('rename-chat').hidden&&!document.getElementById('history-panel').hidden&&JSON.parse(localStorage.getItem('qchat.chats')).current.title==='Native renamed 🌏'&&document.getElementById('prompt-input').value==='Preserve this draft 🌏'"));
   check('native search has no runtime exceptions',problems.length===0,problems.join(' | '));
 } catch(error) {console.error('FAIL harness ::',error.message);failed++;}
 finally {
