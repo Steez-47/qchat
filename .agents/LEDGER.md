@@ -55,3 +55,7 @@
 2026-10-31 | Selection shortcut repair | native worker gpt-6.1-sol medium + parent | in progress | UI selection20 PASS; Rust20 PASS; original rich-clipboard native fixture exposed an unavailable clipboard format, worker investigating
 
 2026-10-31 | Independent chat panel material | native worker Sol medium + parent | integration | per-surface native blur, dedicated controls and migration; focused settings/browser and Rust checks PASS; glass160 and release build PASS; executable hash verified; restart required
+
+2026-10-31 | Selection capture review and verification | native reviewer gpt-6.1-sol medium + parent | verified, final release compiling | fixed large-selection storage quota finding; selection27, native contract9, Rust21, related UI suites PASS; desktop Ctrl+C fixture safely skipped to preserve live virtual-file clipboard; original QChat PID3616 preserved
+
+2026-10-31 | Selection shortcut final release | parent | done | npm build PASS; dist SHA256 DBDEFC4A... matches compiled release; original PID3616 preserved, restart required; actual cross-app hotkey remains unverified

@@ -333,8 +333,8 @@ Release compilation PASS. Build staging hit EPERM because dist/QChat.exe was run
 
 Goal: capture highlighted text from the foreground Windows app with Ctrl+Alt+Q and show a compact removable Selection chip, preserving the typed question.
 
-- Native Sol medium worker: bounded UIA and Ctrl+C capture, modifier release, clipboard preservation, foreground guards and explicit failures (implementation complete, native fixture under investigation).
-- Parent: per-chat hidden selection context, send/retry/history/draft handling, focused browser/native validation and release build (in progress).
+- Native Sol medium worker: bounded UIA and Ctrl+C capture, modifier release, best-effort rich clipboard preservation, foreground guards and explicit failures (done). Unsupported virtual-file clipboard data no longer prevents capture.
+- Parent: per-chat hidden selection context, send/retry/Stop/history/draft handling, storage quota fallback and focused browser/native validation (done; final release build PASS).
 - Preserve existing QChat process/profile and concurrent unrelated settings/layout work. Referenced ORCHESTRATOR.md remains absent.
 
 ## Independent chat panel material (2026-10-31)
@@ -342,3 +342,7 @@ Goal: capture highlighted text from the foreground Windows app with Ctrl+Alt+Q a
 Added Settings > Chat panel: background opacity (0-100%), readability guard, independent native desktop blur toggle/strength, corners, border, width, padding, spacing and height limit. Shared settings version 5 migrates saved glass choices to preserve existing chat appearance. Native surfaces carry optional per-rectangle strength; hit-testing and existing default clients are preserved.
 
 Native worker owned surfaces.rs; parent owns UI/settings and integration. Focused settings/browser21 and Rust20 PASS (one interactive desktop fixture ignored); settings screenshot inspected. Glass UI160 and final npm run build PASS; dist/QChat.exe SHA256 matches compiled release. Concurrent selection and slash-menu changes preserved. Existing running session stays open; restart required for updated executable. Desktop blur appearance has not been visually measured on the actual desktop.
+
+Selection verification: focused browser27, native IPC/settings9, Rust21 (one desktop fixture ignored), media, Snapshot, animation, history, feature, glass, presets and UX suites PASS. Selection screenshot inspected. Fresh reviewer found uncapped selection arrays in storage recovery; capped them and preserved original account-message matching with regression coverage. UX migration checks now compare with QSettings.VERSION after concurrent schema-v5 change. Explicit Ctrl+C fixture safely SKIPPED because the current clipboard has unmaterializable OLE virtual-file data; no input/clipboard writes were performed. Global cross-app hotkey/elevated-app capture remains unverified. Existing process PID3616/profile preserved.
+
+Selection release: npm run build PASS; dist/QChat.exe SHA256 DBDEFC4A6A6A9FF581DAA51155008E14858BAD2B5B1EB059DA9F3C46B8FD5A7D matches compiled release. PID3616 remains running with its original session; quit from tray and reopen dist/QChat.exe to load the update. No account messages sent.

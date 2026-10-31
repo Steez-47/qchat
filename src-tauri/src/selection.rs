@@ -492,7 +492,8 @@ unsafe fn copy_selection(foreground: HWND) -> Result<String, String> {
         )
     };
     if let Some(snapshot) = snapshot {
-        snapshot.restore(owner.0, copied_sequence)?;
+        // A busy clipboard during restoration must not discard text already captured.
+        let _ = snapshot.restore(owner.0, copied_sequence);
     }
     result
 }
