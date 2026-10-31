@@ -157,7 +157,9 @@ try {
   await evalJS("__mock.emit('qchat://selection','temporary selection secret')"); await sleep(350);
   check('temporary selected text also stays private', !(await evalJS("localStorage.getItem('qchat.chats')||''")).includes('temporary selection secret'));
   await open(); await type('only a draft'); await key('n',{ctrlKey:true}); await sleep(350);
-  check('draft-only new chat does not create recent tabs',await evalJS("JSON.parse(localStorage.getItem('qchat.chats')).recent.length===0"));
+  check('draft-only new chat keeps one recoverable recent entry',await evalJS("(()=>{const recent=JSON.parse(localStorage.getItem('qchat.chats')).recent;return recent.length===1&&recent[0].draft==='only a draft';})()"));
+  await evalJS("document.querySelector('#tabs .tab').click()"); await sleep(100);
+  check('draft-only recent entry restores its exact text',await inputValue()==='only a draft');
   await open(); await evalJS("__mock.hold=true"); await send('recall this'); await waitFor("__mock.last('chat_send')");
   await key('ArrowUp'); await sleep(350); check('recall persists',await stored()==='recall this');
   await open(); await evalJS("__mock.hold=true"); await send('bridge failure'); await waitFor("__mock.last('chat_send')");

@@ -140,6 +140,33 @@ try {
   rows=await recent(); check('repeated transitions keep one key',new Set(rows.map(x=>x.key)).size===rows.length && rows.length===1);
   await open('/',{settings:{keepHistory:false}}); await type('disabled secret'); await key('n',{ctrlKey:true}); await sleep(100);
   check('disabled history stores nothing',await evalJS("localStorage.getItem('qchat.chats')===null"));
+  const until=async expression=>{if(!await waitFor(expression))throw Error('Timed out: '+expression)};
+  const pickCommand=async name=>{await key('k',{ctrlKey:true});await until('!!document.getElementById("slash-'+name+'")');await evalJS('document.getElementById("slash-'+name+'").dispatchEvent(new MouseEvent("mousedown",{bubbles:true,cancelable:true}))');};
+  for(const command of ['new','temp']) {
+    await open();await type('Keep menu draft '+command);await pickCommand(command);await until('__mock.count("chat_new")>0');
+    check(command+' menu command preserves an ordinary pristine draft',(await recent()).some(chat=>chat.draft==='Keep menu draft '+command)&&await inputValue()===''&&await count('chat_send')===0);
+  }
+  await open();await evalJS('__mock.emit("qchat://selection","Quote-only context stays recoverable")');await key('n',{ctrlKey:true});await sleep(100);
+  check('quote-only chats are already preserved by content handling',(await recent()).some(chat=>chat.selectionTexts?.includes('Quote-only context stays recoverable')));
+  await open();await type('Draft to delete');await key('n',{ctrlKey:true});await sleep(100);const clearedKey=(await recent())[0].key;await evalJS('document.querySelector("#tabs .tab").click()');await type('');await key('n',{ctrlKey:true});await sleep(100);
+  check('clearing a restored pristine draft drops the abandoned empty tab',!(await recent()).some(chat=>chat.key===clearedKey));
+  await open();await type('/unknown-command useful text');await key('n',{ctrlKey:true});await sleep(100);
+  check('unknown slash text is still a recoverable ordinary draft',(await recent()).some(chat=>chat.draft==='/unknown-command useful text'));
+  const empty={key:'empty-current',provider:'chatgpt',conversationId:null,title:'',lastActive:Date.now(),lastPrompt:'',lastResponse:'',draft:'',selectionTexts:[],transcript:[],createdAt:Date.now()};
+  const capped=Array.from({length:49},(_,index)=>chatSeed('older-'+index,{ago:(index+1)*MIN}));
+  await open('/',{chats:{v:1,current:empty,recent:capped}});await type('Newest recoverable draft');await key('n',{ctrlKey:true});await sleep(100);rows=await recent();
+  check('draft-only entries respect the existing 49-chat history cap',rows.length===49&&rows.some(chat=>chat.draft==='Newest recoverable draft')&&!rows.some(chat=>chat.key==='older-48'));
+  await open();await type('Preview must not become a permanent title');await key('n',{ctrlKey:true});await sleep(100);
+  check('draft preview leaves the stored conversation title unset',(await recent())[0]?.title==='');
+  await evalJS('document.querySelector("#tabs .tab").click()');await evalJS('__mock.hold=true');await send('Actual first sent prompt');await until('__mock.count("chat_send")===1');
+  check('the first send replaces the display-only draft preview',await evalJS('JSON.parse(localStorage.getItem("qchat.chats")).current.title==="Actual first sent prompt"'));
+  await open('/',{chats:{v:1,current:{...chatSeed('named'),title:'My custom name'},recent:[]}});await type('A different draft preview');await key('n',{ctrlKey:true});await sleep(100);
+  check('an explicit conversation name takes priority over draft previews',await evalJS('document.querySelector(".tab-title").textContent==="My custom name"'));
+  await open('/',{chats:{v:1,current:{...chatSeed('old-provider-chat'),provider:'chatgpt'},recent:[]}});await type('Move this composed text exactly once');await evalJS('__mock.emit("qchat://selection","Move this pending quote exactly once")');await pickCommand('gemini');await until('__mock.provider==="gemini"&&!document.getElementById("btn-reasoning").disabled');
+  check('a provider change keeps the current draft and pending quote',await inputValue()==='Move this composed text exactly once'&&await evalJS('document.querySelectorAll("#attachments .selection-chip").length===1'));
+  check('a provider move clears draft and pending quote from the archived transcript',(await recent()).some(chat=>chat.key==='old-provider-chat'&&!chat.draft&&!chat.selectionTexts?.length));
+  await evalJS('document.querySelector(\'#tabs .tab[data-key="old-provider-chat"]\').click()');await until('__mock.provider==="chatgpt"&&!document.getElementById("btn-reasoning").disabled');
+  check('returning to the old provider tab does not duplicate the moved composer',await inputValue()===''&&await evalJS('!document.querySelector("#attachments .selection-chip")')&&(await recent()).filter(chat=>chat.draft==='Move this composed text exactly once'&&chat.selectionTexts?.includes('Move this pending quote exactly once')).length===1);
   check('no provider sends',await count('chat_send')===0);
   check('no runtime errors',problems.length===0,problems.slice(0,3).join(' | '));
 } catch (e) {

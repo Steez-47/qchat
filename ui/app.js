@@ -2757,6 +2757,7 @@
     hideClearConfirm();
     dismissExchange();
 
+    if (movingDraft) { chats.current.draft = ""; chats.current.selectionTexts = []; }
     if (hasContent(chats.current) || (!movingDraft && chats.current.draft.trim())) { chats.current.lastActive = Date.now(); pushRecent(chats.current); }
     chats.current = freshChat();
     renderAttachments();

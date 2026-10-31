@@ -115,7 +115,7 @@ try {
 
 
   const settings = { animations: 'off', autoDismiss: 0, keepHistory: true, showTabs: true };
-  const seed = () => ({v:1, current:chatSeed('current',{draft:'current draft'}), recent:[chatSeed('a',{draft:'draft a'}),chatSeed('b',{draft:'draft b'}),chatSeed('c')]});
+  const seed = () => ({v:1, current:chatSeed('current',{draft:'current draft'}), recent:[chatSeed('a',{draft:'draft a',ago:MIN}),chatSeed('b',{draft:'draft b',ago:2*MIN}),chatSeed('c',{ago:3*MIN})]});
   const state = () => evalJS(`JSON.parse(localStorage.getItem('qchat.chats'))`);
   const setup = async (data=seed(), opts=settings) => { await open('/?mock=signedin', {chats:data,settings:opts}); await sleep(150); };
   const list = async () => { await key('p',{ctrlKey:true}); await waitFor(`!document.querySelector('.feature-list').hidden`); };

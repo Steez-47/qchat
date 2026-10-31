@@ -178,7 +178,7 @@ try {
   check('every menu command runs without console errors', problems.length===0);
   check('attachment chips use quiet 28px height', (await readFile(path.join(root,'ui/app.css'),'utf8')).includes('height: 28px; min-height: 28px'));
   check('README documents feature checks', (await readFile(path.join(root,'README.md'),'utf8')).includes('feature-ui-test.mjs'));
-  await open('/', { chats: { v:1,current:chatSeed('current'),recent:[chatSeed('a'),chatSeed('b'),chatSeed('c')] }, settings:{animations:'off',autoDismiss:0} });
+  await open('/', { chats: { v:1,current:chatSeed('current'),recent:[chatSeed('a',{ago:MIN}),chatSeed('b',{ago:2*MIN}),chatSeed('c',{ago:3*MIN})] }, settings:{animations:'off',autoDismiss:0} });
   await key('p', { ctrlKey: true });
   await waitFor(`!document.querySelector('.feature-list').hidden && document.querySelectorAll('.feature-list .feature-row').length===3`);
   check('chat rows are title span plus tabular meta span', await evalJS(`(()=>{const rows=[...document.querySelectorAll('.feature-list .feature-row')];return rows.length===3&&rows.every(r=>{const t=r.querySelector('.feature-title'),m=r.querySelector('.feature-meta');return !!t&&t.textContent.length>0&&!!m&&m.textContent.trim().length>0&&getComputedStyle(m).fontVariantNumeric.includes('tabular-nums');});})()`));
@@ -189,7 +189,8 @@ try {
   await key('ArrowDown');
   check('arrow moves the data-selected highlight with focus in the field', await evalJS(`(()=>{const rows=[...document.querySelectorAll('.feature-list .feature-row')];return rows[1].hasAttribute('data-selected')&&!rows[0].hasAttribute('data-selected')&&document.activeElement===document.querySelector('.feature-search');})()`));
   await key('Enter');
-  check('Enter opens the highlighted chat into the composer', await evalJS(`document.querySelector('.feature-list').hidden&&document.activeElement===document.getElementById('prompt-input')&&JSON.parse(localStorage.getItem('qchat.chats')).current.key==='b'`));
+  const openedChat=await evalJS(`({hidden:document.querySelector('.feature-list').hidden,composerFocused:document.activeElement===document.getElementById('prompt-input'),key:JSON.parse(localStorage.getItem('qchat.chats')).current.key})`);
+  check('Enter opens the highlighted chat into the composer',openedChat.hidden&&openedChat.composerFocused&&openedChat.key==='b',JSON.stringify(openedChat));
   await type('/keys'); await key('Enter'); await sleep(80);
   check('shortcuts card rows are quiet kbd chips, not buttons', await evalJS(`(()=>{const list=document.querySelector('.feature-list');return !list.hidden&&list.querySelectorAll('.feature-row button').length===0&&list.querySelectorAll('.key').length>=8&&[...list.querySelectorAll('.feature-row')].every(r=>r.firstElementChild.classList.contains('key')&&r.children[1].classList.contains('feature-title'));})()`));
   check('combo chips are single 22px kbds', await evalJS(`(()=>{const k=document.querySelector('.feature-keys .key');const s=getComputedStyle(k);return !!k&&s.height==='22px'&&s.fontSize==='11.5px'&&!k.textContent.includes('\\n')&&k.textContent.length>1;})()`));
