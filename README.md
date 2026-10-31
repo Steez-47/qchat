@@ -2,7 +2,7 @@
 
 # QChat
 
-A tiny Windows popup for chatting with ChatGPT through your own chatgpt.com session.
+A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed-in sessions.
 
 - **Alt+Q** toggles the popup. The tray icon has New chat, Sign in and Quit.
 - Type `/` for commands, or press **Ctrl+K** for the menu. Drag the orb to move QChat.
@@ -12,7 +12,9 @@ A tiny Windows popup for chatting with ChatGPT through your own chatgpt.com sess
 - **Ctrl+Alt+Q** opens QChat with the text selected in the current app quoted in the box.
 - The desktop is really blurred behind the glass, and clicks pass through the empty space around it. Desktop blur can be turned off in Settings.
 - Code is highlighted and maths is rendered.
-- `/keys` lists the shortcuts. Settings has the global shortcut and Launch at login.
+- `/keys` lists the shortcuts. Settings has the global shortcut.
+- **Open at startup:** turn it on in Settings, the tray or with `/startup`. QChat then starts quietly in the tray at login, ready for your shortcut. Turn on *Show the bar at startup* to see it straight away. Opening QChat yourself always shows the bar.
+- **Gemini:** the button beside the prompt, or `/gemini` and `/chatgpt`, switches provider. Each chat stays with the provider it started on, and Settings has a default provider and a sign-in for each. Gemini loads only once you first use it.
 - **Sign in:** Settings or the tray -> Sign in. Log in once in the window that opens, and you stay signed in.
 - Without signing in it chats as a ChatGPT guest.
 - Attach files with the paperclip, paste from the clipboard, or drop them onto the chat. Attachments can be sent with or without text.
@@ -50,6 +52,10 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/media-ui-test.mjs`: uploads, paste/drop, previews, safe rendering and draft retention.
 - `node tools/native-media-e2e.mjs`: real WebView2 attachment bytes, local media serving, downloads, audio and video. Requires a debug build; video checks use ffmpeg from PATH.
 - `node tools/app-e2e.mjs`: off-screen chat checks against ChatGPT as a guest.
+- `node tools/gemini-bridge-test.mjs`: Gemini sending, streaming and Markdown conversion on synthetic pages.
+- `node tools/provider-ui-test.mjs`: provider picker, switching, per-chat providers and startup settings.
+- `node tools/provider-native-test.mjs`: Gemini window creation, provider routing and the startup flag, without writing the real startup entry. Requires a debug build.
+- `node tools/live/gemini-guest-check.mjs`: off-screen chat checks against Gemini as a guest. Requires a debug build.
 - `node tools/persist-e2e.mjs`: checks that the app's profile survives Quit and a restart.
 
 The runtime harnesses use an isolated profile, terminate only their own process tree, and leave any running QChat alone.
@@ -58,7 +64,7 @@ An optional `node tools/live-media-smoke.mjs --run-with-saved-profile` checks th
 
 `node tools/image-live-e2e.mjs --run-with-saved-profile` generates a test image, verifies its preview/progress and native copying, then uploads it to check the sent-image preview. It writes test screenshots under `dist/qa` and copies the test image to the clipboard. Quit QChat first.
 
-Chat tools: click the orb or press Ctrl+K for commands. Ctrl+P opens searchable recent chats; up to 50 chats are kept locally, with full transcripts for the newest eight. Tabs show three recent chats. ArrowUp in an empty composer recalls session prompts; ArrowDown moves forward. Finished replies offer Copy, Retry and Open in ChatGPT. Fenced code is highlighted locally. /model reads the ChatGPT model menu; /temp starts a temporary chat. /keys lists shortcuts. Model selectors still need verification against a signed-in ChatGPT page.
+Chat tools: type `/` or press Ctrl+K for commands. Ctrl+P opens searchable recent chats; up to 50 chats are kept locally, with full transcripts for the newest eight. Tabs show three recent chats. ArrowUp in an empty composer recalls session prompts; ArrowDown moves forward. Finished replies offer Copy, Retry and Open in ChatGPT. Fenced code is highlighted locally. /model reads the ChatGPT model menu; /temp starts a temporary chat. /keys lists shortcuts. Model selectors still need verification against a signed-in ChatGPT page.
 
 Feature checks: `node tools/feature-ui-test.mjs`.
 

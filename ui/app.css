@@ -43,8 +43,10 @@
 .reasoning-btn .reasoning-label { pointer-events: none; }
 
 @container (max-width: 360px) {
-  .bar > .bar-btn:not(.reasoning-btn) { width: 26px; }
-  .bar > .reasoning-btn { padding-inline: 4px; }
+  .bar > .bar-btn:not(.reasoning-btn) { width: 20px; }
+  .bar > .bar-btn .icon { font-size: 14px; }
+  .bar > .bar-input { padding-inline: 0; }
+  .bar > .reasoning-btn { padding-inline: 2px; font-size: 10.5px; }
 }
 
 /* ---------------------------------------------------------------------------
@@ -924,3 +926,5 @@ input.qinteractive-control[type=range] { padding: 4px 0; accent-color: var(--acc
 input.qinteractive-control[type=checkbox], input.qinteractive-control[type=radio] { accent-color: var(--accent, #78aaff); }
 textarea.qinteractive-control { display: block; min-height: 70px; width: 100%; resize: vertical; }
 select.qinteractive-control option { background: #252b35; color: #eee; }
+
+.bar > .reasoning-btn:active:not(:disabled) { transform: none; }

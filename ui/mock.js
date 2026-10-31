@@ -15,12 +15,16 @@
   let mockTimer = null;
 
   const emitMock = (event, payload) => {
+    if (event === "bridge") payload = {provider: mock.provider, ...payload};
     for (const cb of (listeners.get(event) || []).slice()) {
       try { cb({ event, payload }); } catch (e) { console.error(e); }
     }
   };
 
   const mock = (window.__mock = {
+    provider: "chatgpt",
+    autostart: params.has("autostart"),
+    failProvider: false,
     calls: [],
     fit: null,
     fits: [],
@@ -109,6 +113,10 @@
       invoke: async (cmd, args = {}) => {
         mock.calls.push({ cmd, args });
         switch (cmd) {
+          case "provider_get": return mock.provider;
+          case "provider_set": if (mock.failProvider) throw new Error("unavailable"); mock.provider = args.provider; if (!mock.statusHold) emitStatus(0); return;
+          case "launch_info": return {autostart:mock.autostart};
+          case "show_main": return;
           case "snapshot_capture": {
             if (mock.snapshotError) throw new Error(mock.snapshotError);
             return { name: "Snapshot.png", mime: "image/png", data: MOCK_SNAPSHOT_PNG };

@@ -217,7 +217,7 @@ try {
   check('finding 10 surface limit and stale fail-open guard',nativeSource.includes('rects.len() > 2048') && nativeSource.includes('!rs.is_empty()') && nativeSource.includes('reported.elapsed()'));
   check('finding 11 surface geometry intersects viewport and clipping ancestors',surfacesSource.includes('Math.min(innerWidth,b.right)') && surfacesSource.includes('parent=parent.parentElement'));
   check('finding 12 surfaces use Set membership and finite animation loops',surfacesSource.includes('new Set(nodes)') && surfacesSource.includes('iterations !== Infinity') && nativeSource.includes('Result<(), String>'));
-  check('finding 13 autostart compares stored executable path',nativeSource.includes("trim_end_matches('\\0') == expected"));
+  check('finding 13 autostart compares stored executable path',nativeSource.includes("parse_autostart(") && nativeSource.includes("eq_ignore_ascii_case("));
   check('finding 14 reconnect navigates signed-in unready page',appSource.includes('bridge.loggedIn && !bridge.ready ? "chat_new" : "chat_status"'));
   check('finding 15 quota trims oldest entries without erasing all recents',appSource.includes('while (recent.length > 1)') && !appSource.includes('current.transcript.slice(-2) }, recent: []'));
   check('no runtime errors', problems.length === 0, problems.slice(0, 3).join(' | '));

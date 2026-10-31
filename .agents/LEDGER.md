@@ -59,3 +59,8 @@
 2026-10-31 | Selection capture review and verification | native reviewer gpt-6.1-sol medium + parent | verified, final release compiling | fixed large-selection storage quota finding; selection27, native contract9, Rust21, related UI suites PASS; desktop Ctrl+C fixture safely skipped to preserve live virtual-file clipboard; original QChat PID3616 preserved
 
 2026-10-31 | Selection shortcut final release | parent | done | npm build PASS; dist SHA256 DBDEFC4A... matches compiled release; original PID3616 preserved, restart required; actual cross-app hotkey remains unverified
+
+2026-10-31 | V1.1 native autostart + provider routing | codex/gpt-6.1-sol medium | running | contract .tmp/v1.1-contract.md
+2026-10-31 | V1.1 Gemini bridge | opencode/deepseek-v4.1-flash-free max | running | guest live probe available
+2026-10-31 | V1.1 provider and startup UI | codex/gpt-6.1-sol medium | running | picker, settings v6, launch behaviour
+2026-10-31 | V1.1 Gemini bridge and polish audit | opencode/deepseek-v4.1-flash-free | failed: free usage limit reached, exhausted until about 10 minutes or more | rerouted to Argon and Luna

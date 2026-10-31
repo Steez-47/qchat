@@ -230,7 +230,7 @@ pub fn attachment_begin(
     }
     if size > LIMIT {
         return Err(
-            "Files must be 512 MiB or smaller. ChatGPT may have lower limits for this format."
+            "Files must be 512 MiB or smaller. Provider may have lower limits for this format."
                 .into(),
         );
     }
@@ -395,8 +395,8 @@ async fn cdp_scoped(
     let params = HSTRING::from(params.to_string());
     let error_sender = sender.clone();
     let scope_app = app.clone();
-    app.get_webview_window("chatgpt")
-        .ok_or("ChatGPT window unavailable")?
+    app.get_webview_window(&crate::active_provider(app))
+        .ok_or("Provider window unavailable")?
         .with_webview(move |w| unsafe {
             let allowed = match &scope {
                 Some(Scope::Turn(id)) => {
@@ -428,10 +428,10 @@ async fn cdp_scoped(
             let callback = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
                 move |result, json| {
                     let value = result
-                        .map_err(|_| "ChatGPT operation failed".to_string())
+                        .map_err(|_| "Provider operation failed".to_string())
                         .and_then(|_| {
                             serde_json::from_str(&json)
-                                .map_err(|_| "Invalid ChatGPT reply".to_string())
+                                .map_err(|_| "Invalid Provider reply".to_string())
                         });
                     if let Some(tx) = callback_sender.lock().unwrap().take() {
                         let _ = tx.send(value);
@@ -445,15 +445,15 @@ async fn cdp_scoped(
                 .and_then(|core| core.CallDevToolsProtocolMethod(&method, &params, &callback));
             if result.is_err() {
                 if let Some(tx) = error_sender.lock().unwrap().take() {
-                    let _ = tx.send(Err("ChatGPT operation unavailable".into()));
+                    let _ = tx.send(Err("Provider operation unavailable".into()));
                 }
             }
         })
-        .map_err(|_| "ChatGPT operation unavailable")?;
+        .map_err(|_| "Provider operation unavailable")?;
     tokio::time::timeout(Duration::from_secs(90), rx)
         .await
-        .map_err(|_| "ChatGPT operation timed out")?
-        .map_err(|_| "ChatGPT operation ended")?
+        .map_err(|_| "Provider operation timed out")?
+        .map_err(|_| "Provider operation ended")?
 }
 pub async fn evaluate(app: &tauri::AppHandle, expression: String) -> Result<Value, String> {
     let value = cdp(
@@ -464,7 +464,7 @@ pub async fn evaluate(app: &tauri::AppHandle, expression: String) -> Result<Valu
     .await?;
     if value.get("exceptionDetails").is_some() {
         return Err(
-            "ChatGPT could not complete this media operation. Use View in ChatGPT for details."
+            "Provider could not complete this media operation. Use View in provider for details."
                 .into(),
         );
     }
@@ -495,7 +495,7 @@ pub async fn attach(app: &tauri::AppHandle, ids: &[String], turn_id: &str) -> Re
     let selector = evaluate(app, "window.__qchat.attachmentInput()".into())
         .await?
         .as_str()
-        .ok_or("ChatGPT attachment input unavailable")?
+        .ok_or("Provider attachment input unavailable")?
         .to_owned();
     let document = cdp(app, "DOM.getDocument", json!({})).await?;
     let node = cdp(
@@ -505,7 +505,7 @@ pub async fn attach(app: &tauri::AppHandle, ids: &[String], turn_id: &str) -> Re
     )
     .await?;
     if node["nodeId"].as_u64().unwrap_or(0) == 0 {
-        return Err("ChatGPT attachment input unavailable".into());
+        return Err("Provider attachment input unavailable".into());
     }
     cdp_scoped(
         app,
@@ -517,7 +517,7 @@ pub async fn attach(app: &tauri::AppHandle, ids: &[String], turn_id: &str) -> Re
     Ok(())
 }
 fn allowed_media_url(raw: &str) -> bool {
-    if raw.starts_with("blob:https://chatgpt.com/") {
+    if raw.starts_with("blob:https://chatgpt.com/") || raw.starts_with("blob:https://gemini.google.com/") {
         return true;
     }
     if raw.starts_with("data:image/") {
@@ -547,7 +547,7 @@ fn allowed_media_url(raw: &str) -> bool {
             && url.username().is_empty()
             && url.password().is_none()
             && url.port_or_known_default() == Some(443)
-            && host.ends_with(".blob.core.windows.net"))
+            && (host.ends_with(".blob.core.windows.net") || host=="gemini.google.com" || host.ends_with(".googleusercontent.com")))
 }
 async fn load(app: &tauri::AppHandle, media_id: &str, revision: u64) -> Result<Cached, String> {
     let state = app.state::<MediaState>();
@@ -573,9 +573,9 @@ async fn load(app: &tauri::AppHandle, media_id: &str, revision: u64) -> Result<C
     };
     let url = source["url"]
         .as_str()
-        .ok_or("This item must be opened in ChatGPT")?;
+        .ok_or("This item must be opened in Provider")?;
     if !allowed_media_url(url) {
-        return Err("This media source must be opened in ChatGPT".into());
+        return Err("This media source must be opened in Provider".into());
     }
     let name = safe_name(source["name"].as_str().unwrap_or("download"));
     let mut mime = clean_mime(source["mime"].as_str().unwrap_or(""), &name);
@@ -609,7 +609,7 @@ async fn load(app: &tauri::AppHandle, media_id: &str, revision: u64) -> Result<C
             let resource=&resource["resource"];
             if resource["success"]!=true || resource["httpStatusCode"].as_u64().is_some_and(|status|!(200..300).contains(&status)) {
                 if let Some(handle)=resource["stream"].as_str(){let _=cdp(app,"IO.close",json!({"handle":handle})).await;}
-                return Err("Could not load this media. Use View in ChatGPT.".into());
+                return Err("Could not load this media. Use View in provider.".into());
             }
             if let Some(headers)=resource["headers"].as_object() { if let Some(actual)=headers.iter().find(|(key,_)|key.eq_ignore_ascii_case("content-type")).and_then(|(_,value)|value.as_str()) {mime=clean_mime(actual,&name);} }
             (resource["stream"].as_str().ok_or("This media has no downloadable content")?.to_owned(),None)
@@ -785,7 +785,7 @@ async fn site_download(
         })
     {
         state.pending.lock().unwrap().take();
-        return Err("ChatGPT could not start this download. Use View in ChatGPT.".into());
+        return Err("Provider could not start this download. Use View in provider.".into());
     }
     if let Ok(value) = &started {
         click_point(app, &value["result"]["value"], generation).await?;
@@ -794,7 +794,7 @@ async fn site_download(
         match receiver.try_recv() {
             Ok(result) => return result,
             Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
-                return Err("ChatGPT download ended".into())
+                return Err("Provider download ended".into())
             }
             Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
         }
@@ -818,7 +818,7 @@ async fn site_download(
         Ok(Ok(result)) => result,
         _ => {
             state.pending.lock().unwrap().take();
-            Err("ChatGPT download timed out. Use View in ChatGPT.".into())
+            Err("Provider download timed out. Use View in provider.".into())
         }
     }
 }
@@ -829,7 +829,7 @@ async fn click_point(app: &tauri::AppHandle, value: &Value, generation: u64) -> 
     let x = point["x"].as_f64().ok_or("Invalid media control")?;
     let y = point["y"].as_f64().ok_or("Invalid media control")?;
     if !x.is_finite() || !y.is_finite() || x < 0. || y < 0. || x > 10000. || y > 10000. {
-        return Err("ChatGPT download control is unavailable".into());
+        return Err("Provider download control is unavailable".into());
     }
     cdp_scoped(
         app,
@@ -880,7 +880,7 @@ pub fn on_download(app: &tauri::AppHandle, event: tauri::webview::DownloadEvent<
                         remove_cached_file(&item.item.path);
                         let _ = item
                             .sender
-                            .send(Err("This download must be opened in ChatGPT".into()));
+                            .send(Err("This download must be opened in Provider".into()));
                     }
                     false
                 }
@@ -897,7 +897,7 @@ pub fn on_download(app: &tauri::AppHandle, event: tauri::webview::DownloadEvent<
                     let result = (|| -> Result<Cached, String> {
                         if !success || pending.generation != state.generation.load(Ordering::SeqCst)
                         {
-                            return Err("ChatGPT download did not complete".into());
+                            return Err("Provider download did not complete".into());
                         }
                         pending.item.size = std::fs::metadata(&pending.item.path)
                             .map_err(|_| "Downloaded file is unavailable")?
@@ -1092,6 +1092,8 @@ mod tests {
             "file:///C:/x",
             "https://localhost/x",
             "https://chatgpt.com.evil.test/x",
+            "https://gemini.google.com.evil.test/x",
+            "https://user:pass@gemini.google.com/x",
             "javascript:alert(1)",
             "data:image/svg+xml;base64,xxx",
             "https://user:pass@chatgpt.com/x",

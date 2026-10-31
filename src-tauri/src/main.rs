@@ -66,23 +66,35 @@ fn tool_window(w: &tauri::WebviewWindow, tool: bool) {
         }
     }
 }
+#[derive(Clone)]
+struct ProviderActivity {
+    background: bool, suspend_pending: bool, resume_generation: u64, suspended: bool,
+    logged_in: bool, signin_was_logged_in: bool,
+    loaded: Instant, heard: bool, retries: u32,
+}
+impl Default for ProviderActivity {
+    fn default() -> Self { Self { background:true, suspend_pending:false, resume_generation:0, suspended:false, logged_in:false, signin_was_logged_in:false, loaded:Instant::now(), heard:false, retries:0 } }
+}
 struct Activity {
+    active: String,
+    providers: std::collections::HashMap<String, ProviderActivity>,
     content: Option<f64>,
     hidden: Instant,
-    background: bool,
     flight_id: Option<String>,
     last_progress: Instant,
-    suspend_pending: bool,
-    resume_generation: u64,
-    suspended: bool,
-    logged_in: bool,
-    signin_was_logged_in: bool,
     anchor: Option<Anchor>,
     remember_position: bool,
     always_on_top: bool,
     positioned: Instant,
     save_due: Option<Instant>,
     save_generation: u64,
+}
+impl std::ops::Deref for Activity { type Target=ProviderActivity; fn deref(&self)->&ProviderActivity { &self.providers[&self.active] } }
+impl std::ops::DerefMut for Activity { fn deref_mut(&mut self)->&mut ProviderActivity { self.providers.get_mut(&self.active).unwrap() } }
+pub(crate) fn active_provider(app: &tauri::AppHandle) -> String { app.state::<Host>().0.lock().unwrap().active.clone() }
+fn home(provider: &str) -> &'static str { if provider=="gemini" { "https://gemini.google.com/app" } else { "https://chatgpt.com/" } }
+fn provider_chat_url(provider: &str, url: &tauri::Url) -> bool {
+    url.host_str()==Some(if provider=="gemini" { "gemini.google.com" } else { "chatgpt.com" }) && !["/auth","/login","/signin"].iter().any(|r|url.path()==*r || url.path().starts_with(&format!("{r}/")))
 }
 fn should_auto_return(
     foreground: bool,
@@ -93,6 +105,7 @@ fn should_auto_return(
 ) -> bool {
     foreground && !was_logged_in && logged_in && ready && chat_route
 }
+#[cfg(test)]
 fn is_chat_url(url: &tauri::Url) -> bool {
     url.host_str() == Some("chatgpt.com")
         && !["/auth", "/login", "/signin"]
@@ -100,8 +113,11 @@ fn is_chat_url(url: &tauri::Url) -> bool {
             .any(|route| url.path() == *route || url.path().starts_with(&format!("{route}/")))
 }
 struct Host(Mutex<Activity>);
-fn resume(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("chatgpt") {
+pub struct StartupMenu(Mutex<Option<tauri::menu::CheckMenuItem<tauri::Wry>>>);
+pub fn sync_startup_menu(app: &tauri::AppHandle, enabled: bool) { if let Some(item)=app.state::<StartupMenu>().0.lock().unwrap().as_ref(){let _=item.set_checked(enabled);} }
+fn resume(app: &tauri::AppHandle) { resume_provider(app, &active_provider(app)); }
+fn resume_provider(app: &tauri::AppHandle, provider: &str) {
+    if let Some(w) = app.get_webview_window(provider) {
         let _ = w.with_webview(|w| unsafe {
             if let Ok(core) = w.controller().CoreWebView2() {
                 if let Ok(v) = core.cast::<ICoreWebView2_3>() {
@@ -119,20 +135,21 @@ fn resume(app: &tauri::AppHandle) {
     }
     let state = app.state::<Host>();
     let mut a = state.0.lock().unwrap();
+    let a=a.providers.get_mut(provider).unwrap();
     a.suspended = false;
     a.resume_generation = a.resume_generation.wrapping_add(1);
 }
 fn chat_page(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
     let w = app
-        .get_webview_window("chatgpt")
-        .ok_or("ChatGPT window unavailable")?;
-    if !is_chat_url(&w.url().map_err(|e| e.to_string())?) {
+        .get_webview_window(&active_provider(app))
+        .ok_or("Provider window unavailable")?;
+    if !provider_chat_url(&active_provider(app), &w.url().map_err(|e| e.to_string())?) {
         if !app.state::<Host>().0.lock().unwrap().background {
             return Err("not_ready: Finish signing in first".into());
         }
-        w.navigate(tauri::Url::parse("https://chatgpt.com/").map_err(|e| e.to_string())?)
+        w.navigate(tauri::Url::parse(home(&active_provider(app))).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
-        return Err("not_ready: ChatGPT page is reloading".into());
+        return Err("not_ready: Provider page is reloading".into());
     }
     Ok(w)
 }
@@ -149,7 +166,7 @@ fn show(app: &tauri::AppHandle) {
                 let _ = w.set_position(tauri::PhysicalPosition::new(-20000, -20000));
                 let _ = w.show();
             }
-            if let Some(w) = app.get_webview_window("chatgpt") {
+            if let Some(w) = app.get_webview_window(&active_provider(app)) {
                 let _ = w.set_position(tauri::PhysicalPosition::new(-32000, -32000));
                 let _ = w.show();
             }
@@ -313,11 +330,12 @@ fn toggle(app: &tauri::AppHandle) {
         show(app);
     }
 }
-fn background(app: &tauri::AppHandle) {
+fn background(app: &tauri::AppHandle) { background_provider(app, &active_provider(app)); }
+fn background_provider(app: &tauri::AppHandle, provider: &str) {
     if test_profile().is_some() {
         return;
     }
-    let Some(w) = app.get_webview_window("chatgpt") else {
+    let Some(w) = app.get_webview_window(provider) else {
         return;
     };
     let _ = w.set_skip_taskbar(true);
@@ -325,32 +343,33 @@ fn background(app: &tauri::AppHandle) {
     tool_window(&w, true);
     let _ = w.set_position(tauri::PhysicalPosition::new(-32000, -32000));
     let _ = w.show();
-    if w.url().map(|u| !is_chat_url(&u)).unwrap_or(true) {
-        if let Ok(url) = tauri::Url::parse("https://chatgpt.com/") {
+    if w.url().map(|u| !provider_chat_url(provider, &u)).unwrap_or(true) {
+        if let Ok(url) = tauri::Url::parse(home(provider)) {
             let _ = w.navigate(url);
         }
     }
-    app.state::<Host>().0.lock().unwrap().background = true;
+    app.state::<Host>().0.lock().unwrap().providers.get_mut(provider).unwrap().background = true;
 }
 #[tauri::command]
-fn show_signin(app: tauri::AppHandle) {
+fn signin_window(app: tauri::AppHandle, provider: String) {
     if test_profile().is_some() {
         return;
     }
-    resume(&app);
+    resume_provider(&app, &provider);
     hide_main(app.clone());
-    let Some(w) = app.get_webview_window("chatgpt") else {
+    let Some(w) = app.get_webview_window(&provider) else {
         return;
     };
     let logged_in = {
         let state = app.state::<Host>();
         let mut a = state.0.lock().unwrap();
+        let a = a.providers.get_mut(&provider).unwrap();
         a.background = false;
         a.signin_was_logged_in = a.logged_in;
         a.logged_in
     };
     if !logged_in {
-        if let Ok(url) = tauri::Url::parse("https://chatgpt.com/auth/login") {
+        if let Ok(url) = tauri::Url::parse(if provider=="gemini" { "https://accounts.google.com/ServiceLogin?continue=https://gemini.google.com/app" } else { "https://chatgpt.com/auth/login" }) {
             let _ = w.navigate(url);
         }
     }
@@ -374,7 +393,10 @@ fn show_signin(app: tauri::AppHandle) {
     let _ = w.set_focus();
 }
 #[tauri::command]
-fn bridge_event(app: tauri::AppHandle, event: serde_json::Value) -> Result<(), String> {
+fn bridge_event(app: tauri::AppHandle, window: tauri::WebviewWindow, mut event: serde_json::Value) -> Result<(), String> {
+    let provider=window.label();
+    if !matches!(provider,"chatgpt"|"gemini") { return Err("not_allowed".into()) }
+    event["provider"]=provider.into();
     if matches!(event["type"].as_str(), Some("done" | "error")) {
         if let Some(id) = event["id"].as_str() {
             media::finish_turn(&app, id);
@@ -395,13 +417,15 @@ fn bridge_event(app: tauri::AppHandle, event: serde_json::Value) -> Result<(), S
                 _ => (),
             }
         }
+        let a=a.providers.get_mut(provider).unwrap();
+        a.heard=true;
         if event["type"].as_str() == Some("status") {
             let logged_in = event["loggedIn"].as_bool() == Some(true);
             let ready = event["ready"].as_bool() == Some(true);
             let chat_route = event["url"]
                 .as_str()
                 .and_then(|u| tauri::Url::parse(u).ok())
-                .is_some_and(|u| is_chat_url(&u));
+                .is_some_and(|u| provider_chat_url(provider, &u));
             let back = should_auto_return(
                 !a.background,
                 a.signin_was_logged_in,
@@ -416,7 +440,7 @@ fn bridge_event(app: tauri::AppHandle, event: serde_json::Value) -> Result<(), S
         }
     };
     if auto_return {
-        background(&app);
+        background_provider(&app, provider);
         show(&app);
     }
     for label in ["main", "settings"] {
@@ -456,7 +480,9 @@ async fn chat_send(
     prompt: String,
     attachment_ids: Option<Vec<String>>,
     reasoning_effort: Option<String>,
+    provider: Option<String>,
 ) -> Result<(), String> {
+    if provider.as_ref().is_some_and(|p|p!=&active_provider(&app)) { return Err("provider_mismatch: Active provider changed".into()) }
     validate_reasoning_effort(reasoning_effort.as_deref())?;
     chat_page(&app)?;
     resume(&app);
@@ -496,7 +522,7 @@ async fn chat_send(
     )
     .map_err(|e| e.to_string())?;
     media::track_turn(&app, &id, &attachment_ids);
-    let result = eval(&app,&format!("(()=>{{const p={data}; if(window.__qchat) window.__qchat.send(p); else window.__QCHAT_EMIT__({{type:'error',id:p.id,code:'not_ready',message:'ChatGPT page not loaded yet'}});}})()"));
+    let result = eval(&app,&format!("(()=>{{const p={data}; if(window.__qchat) window.__qchat.send(p); else window.__QCHAT_EMIT__({{type:'error',id:p.id,code:'not_ready',message:'Provider page not loaded yet'}});}})()"));
     if result.is_err() {
         let state = app.state::<Host>();
         let mut a = state.0.lock().unwrap();
@@ -582,6 +608,74 @@ fn test_profile() -> Option<std::path::PathBuf> {
         None
     }
 }
+#[tauri::command]
+fn provider_get(app: tauri::AppHandle) -> String { active_provider(&app) }
+#[tauri::command]
+fn launch_info() -> serde_json::Value { serde_json::json!({"autostart":std::env::args().any(|a|a=="--autostart")}) }
+#[tauri::command]
+fn show_main(app: tauri::AppHandle) { show(&app); }
+fn ensure_provider(app: &tauri::AppHandle, provider: &str) -> Result<(),String> {
+    if !matches!(provider,"chatgpt"|"gemini") { return Err("invalid_provider".into()) }
+    static CREATE: Mutex<()> = Mutex::new(());
+    let _guard=CREATE.lock().map_err(|e|e.to_string())?;
+    if app.get_webview_window(provider).is_none() {
+        let b=WebviewWindowBuilder::new(app,"gemini",WebviewUrl::External(home("gemini").parse().unwrap()));
+        let b=if let Some(p)=test_profile(){b.data_directory(p)}else{b};
+        b.title("QChat - Gemini sign-in").inner_size(1000.,760.).skip_taskbar(true).decorations(false).visible(false)
+        .initialization_script("if(location.hostname === 'gemini.google.com') window.__QCHAT_EMIT__ = evt => window.__TAURI_INTERNALS__.invoke('bridge_event',{event:evt});")
+        .initialization_script(include_str!("../bridge/gemini-bridge.js"))
+        .on_download(|w,e|media::on_download(w.app_handle(),e)).build().map_err(|e|e.to_string())?;
+        background_provider(app,provider);
+    }
+    Ok(())
+}
+#[tauri::command]
+async fn provider_set(app: tauri::AppHandle, provider: String) -> Result<(),String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !matches!(provider.as_str(),"chatgpt"|"gemini") { return Err("invalid_provider".into()) }
+        if app.state::<Host>().0.lock().unwrap().flight_id.is_some() {return Err("busy: A request is already in progress".into())}
+        ensure_provider(&app,&provider)?;
+        {
+            let state=app.state::<Host>();let mut a=state.0.lock().unwrap();
+            if a.flight_id.is_some() {return Err("busy: A request is already in progress".into())}
+            a.active=provider.clone();
+        }
+        resume(&app);
+        let _=eval(&app,"window.__qchat && window.__qchat.status()");
+        for label in ["main","settings"] {let _=app.emit_to(label,"qchat://provider-changed",serde_json::json!({"provider":provider}));}
+        Ok(())
+    }).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+async fn show_signin(app: tauri::AppHandle, provider: Option<String>) -> Result<(),String> {
+    let provider=provider.unwrap_or_else(||active_provider(&app));
+    tauri::async_runtime::spawn_blocking(move || {ensure_provider(&app,&provider)?; signin_window(app,provider); Ok(())}).await.map_err(|e|e.to_string())?
+}
+fn retry_due(background: bool, heard: bool, elapsed: u64, retries: u32) -> bool {
+    background && !heard && elapsed >= if retries==0 {20} else {15u64.saturating_mul(1u64 << retries.saturating_sub(1).min(2))}
+}
+fn start_retry(app: tauri::AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(1));
+        for provider in ["chatgpt","gemini"] {
+            let Some(w)=app.get_webview_window(provider) else {continue};
+            let due={let state=app.state::<Host>();let mut a=state.0.lock().unwrap();let p=a.providers.get_mut(provider).unwrap();
+                let due=retry_due(p.background,p.heard,p.loaded.elapsed().as_secs(),p.retries);
+                if due {p.loaded=Instant::now();p.retries=p.retries.saturating_add(1)} due};
+            if due {let _=w.navigate(home(provider).parse().unwrap());}
+        }
+    });
+}
+#[cfg(test)] mod retry_tests {
+    #[test] fn backoff() {
+        assert!(!super::retry_due(true,false,19,0));
+        assert!(super::retry_due(true,false,20,0));
+        for (n,t) in [(1,15),(2,30),(3,60),(20,60)] {
+            assert!(!super::retry_due(true,false,t-1,n));assert!(super::retry_due(true,false,t,n));
+        }
+        assert!(!super::retry_due(false,false,100,0));assert!(!super::retry_due(true,true,100,0));
+    }
+}
 fn main() {
     surfaces::remember_launch_foreground();
     #[cfg(debug_assertions)]
@@ -594,7 +688,7 @@ fn main() {
         }
     }
     let builder = tauri::Builder::default()
-        .manage(selection::State::default()).manage(media::MediaState::default()).manage(surfaces::State::default())
+        .manage(StartupMenu(Mutex::new(None))).manage(selection::State::default()).manage(media::MediaState::default()).manage(surfaces::State::default())
         .register_asynchronous_uri_scheme_protocol("qchat-media", |context, request, responder| {
             let app = context.app_handle().clone();
             let label = context.webview_label().to_owned();
@@ -606,11 +700,12 @@ fn main() {
         builder
     };
     builder
- .manage(Host(Mutex::new(Activity { content: None, hidden:Instant::now(),background:true,flight_id:None,last_progress:Instant::now(),suspended:false,suspend_pending:false,resume_generation:0,logged_in:false,signin_was_logged_in:false,anchor:None,remember_position:true,always_on_top:true,positioned:Instant::now(),save_due:None,save_generation:0})))
+ .manage(Host(Mutex::new(Activity { active:"chatgpt".into(), providers:[("chatgpt".into(),ProviderActivity::default()),("gemini".into(),ProviderActivity::default())].into(), content: None, hidden:Instant::now(),flight_id:None,last_progress:Instant::now(),anchor:None,remember_position:true,always_on_top:true,positioned:Instant::now(),save_due:None,save_generation:0})))
 
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,shortcut,event|{if event.state()==ShortcutState::Pressed{if selection::matches(app,shortcut) { selection::activate(app); } else { toggle(app); }}}).build())
- .invoke_handler(tauri::generate_handler![surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,chat_list_conversations,surfaces::get_hotkey, surfaces::get_hotkey_available, selection::get_selection_hotkey_available,surfaces::set_hotkey,selection::get_selection_hotkey,selection::set_selection_hotkey,selection::set_selection_clipboard,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_models,chat_model_choose,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy,snapshot::snapshot_capture])
+ .invoke_handler(tauri::generate_handler![provider_set,provider_get,launch_info,show_main,surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,chat_list_conversations,surfaces::get_hotkey, surfaces::get_hotkey_available, selection::get_selection_hotkey_available,surfaces::set_hotkey,selection::get_selection_hotkey,selection::set_selection_hotkey,selection::set_selection_clipboard,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_models,chat_model_choose,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,clipboard::image_copy,snapshot::snapshot_capture])
  .setup(|app|{
+ surfaces::repair_autostart();
  app.add_capability(r#"{"identifier":"selection-settings","windows":["settings"],"permissions":["allow-get-selection-hotkey","allow-set-selection-hotkey","allow-get-hotkey","allow-set-hotkey","allow-get-autostart","allow-set-autostart"]}"#)?;
  if let Ok(dir)=app.path().app_data_dir() {
    if let Ok(data)=std::fs::read(dir.join("window-state.json")) { app.state::<Host>().0.lock().unwrap().anchor=serde_json::from_slice(&data).ok(); }
@@ -640,19 +735,27 @@ fn main() {
  .initialization_script(include_str!("../bridge/chatgpt-bridge.js"))
  .on_download(|webview,event|media::on_download(webview.app_handle(),event)).build()?;
  background(app.handle());
+ start_retry(app.handle().clone());
  surfaces::start(app.handle());
  selection::start(app.handle());
- use tauri::{menu::{Menu,MenuItem},tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState}};
+ use tauri::{menu::{Menu,MenuItem,CheckMenuItem},tray::{TrayIconBuilder,TrayIconEvent,MouseButton,MouseButtonState}};
  let items=[MenuItem::with_id(app,"show","Show QChat",true,None::<&str>)?,MenuItem::with_id(app,"new","New chat",true,None::<&str>)?,MenuItem::with_id(app,"settings","Settings\u{2026}",true,None::<&str>)?,MenuItem::with_id(app,"signin","Sign in to ChatGPT\u{2026}",true,None::<&str>)?,MenuItem::with_id(app,"quit","Quit",true,None::<&str>)?];
- let menu=Menu::with_items(app,&items.iter().map(|x|x as &dyn tauri::menu::IsMenuItem<_>).collect::<Vec<_>>())?;
- TrayIconBuilder::new().icon(app.default_window_icon().ok_or("Window icon unavailable")?.clone()).tooltip("QChat").menu(&menu).show_menu_on_left_click(false).on_tray_icon_event(|tray,e|{if matches!(e,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){toggle(tray.app_handle());}}).on_menu_event(|app,e|match e.id().as_ref(){"show"=>show(app),"new"=>{let _=app.emit_to("main","qchat://new-chat",());show(app)},"settings"=>{let app=app.clone();tauri::async_runtime::spawn(async move {if let Err(e)=open_settings(app).await {eprintln!("Open settings: {e}");}});},"signin"=>show_signin(app.clone()),"quit"=>quit_app(app.clone()),_=>()}).build(app)?;
+ let startup=CheckMenuItem::with_id(app,"startup","Open at startup",true,surfaces::get_autostart(app.handle().clone(),app.state()),None::<&str>)?;
+ *app.state::<StartupMenu>().0.lock().unwrap()=Some(startup.clone());
+ let gemini=MenuItem::with_id(app,"signin-gemini","Sign in to Gemini\u{2026}",true,None::<&str>)?;
+ let mut menu_items:Vec<&dyn tauri::menu::IsMenuItem<_>>=items.iter().map(|x|x as &dyn tauri::menu::IsMenuItem<_>).collect();
+ menu_items.insert(3,&startup);menu_items.insert(5,&gemini);
+ let menu=Menu::with_items(app,&menu_items)?;
+ TrayIconBuilder::new().icon(app.default_window_icon().ok_or("Window icon unavailable")?.clone()).tooltip("QChat").menu(&menu).show_menu_on_left_click(false).on_tray_icon_event(|tray,e|{if matches!(e,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){toggle(tray.app_handle());}}).on_menu_event(|app,e|match e.id().as_ref(){"startup"=>{let enabled=!surfaces::get_autostart(app.clone(),app.state());let _=surfaces::set_autostart(app.clone(),app.state(),enabled);},"signin-gemini"=>{let app=app.clone();tauri::async_runtime::spawn(async move {let _=show_signin(app,Some("gemini".into())).await;});},"show"=>show(app),"new"=>{let _=app.emit_to("main","qchat://new-chat",());show(app)},"settings"=>{let app=app.clone();tauri::async_runtime::spawn(async move {if let Err(e)=open_settings(app).await {eprintln!("Open settings: {e}");}});},"signin"=>{let app=app.clone();tauri::async_runtime::spawn(async move {let _=show_signin(app,Some("chatgpt".into())).await;});},"quit"=>quit_app(app.clone()),_=>()}).build(app)?;
  if test_profile().is_some() { show(app.handle()); }
  let handle=app.handle().clone();std::thread::spawn(move||loop{
  std::thread::sleep(Duration::from_secs(10));
  let hidden=handle.get_webview_window("main").and_then(|w| w.is_visible().ok()).map(|v| !v).unwrap_or(false);
- let (suspend,generation)={let s=handle.state::<Host>();let mut a=s.0.lock().unwrap();if a.flight_id.is_some()&&a.last_progress.elapsed()>=Duration::from_secs(600){a.flight_id=None;} let yes=hidden&&a.hidden.elapsed()>=Duration::from_secs(180)&&a.background&&a.flight_id.is_none()&&!a.suspended&&!a.suspend_pending;if yes{a.suspend_pending=true;}(yes,a.resume_generation)};
+ for provider in ["chatgpt","gemini"] {
+ if handle.get_webview_window(provider).is_none() {continue}
+ let (suspend,generation)={let s=handle.state::<Host>();let mut a=s.0.lock().unwrap();if a.flight_id.is_some()&&a.last_progress.elapsed()>=Duration::from_secs(600){a.flight_id=None;} let idle=hidden&&a.hidden.elapsed()>=Duration::from_secs(180)&&a.flight_id.is_none(); let a=a.providers.get_mut(provider).unwrap(); let yes=idle&&a.background&&!a.suspended&&!a.suspend_pending;if yes{a.suspend_pending=true;}(yes,a.resume_generation)};
  if suspend {
-   if let Some(w)=handle.get_webview_window("chatgpt") {
+   if let Some(w)=handle.get_webview_window(provider) {
      let callback_handle=handle.clone();
      let result=w.with_webview(move |w| unsafe {
        let result=(|| -> windows::core::Result<()> {
@@ -669,6 +772,7 @@ fn main() {
          let callback=webview2_com::TrySuspendCompletedHandler::create(Box::new(move |result,success| {
            let state=callback_handle.state::<Host>();
            let mut a=state.0.lock().unwrap();
+           let a=a.providers.get_mut(provider).unwrap();
            a.suspend_pending=false;
            a.suspended=result.is_ok() && success;
            if a.resume_generation != generation {
@@ -686,12 +790,13 @@ fn main() {
          Ok(())
        })();
        if let Err(e)=result {
-         callback_handle.state::<Host>().0.lock().unwrap().suspend_pending=false;
+         callback_handle.state::<Host>().0.lock().unwrap().providers.get_mut(provider).unwrap().suspend_pending=false;
          eprintln!("TrySuspend: {e}");
        }
      });
-     if result.is_err() { handle.state::<Host>().0.lock().unwrap().suspend_pending=false; }
-   } else { handle.state::<Host>().0.lock().unwrap().suspend_pending=false; }
+     if result.is_err() { handle.state::<Host>().0.lock().unwrap().providers.get_mut(provider).unwrap().suspend_pending=false; }
+   } else { handle.state::<Host>().0.lock().unwrap().providers.get_mut(provider).unwrap().suspend_pending=false; }
+ }
  }
  });Ok(())
  })
@@ -706,7 +811,7 @@ fn main() {
      // the system's default spot its home.
      if !own && w.is_visible().unwrap_or(false) { capture_anchor(w.app_handle()); }
    }
-   if let tauri::WindowEvent::CloseRequested{api,..}=e { api.prevent_close(); if w.label()=="main" { hide_main(w.app_handle().clone()); } else { background(w.app_handle()); let _=chat_status(w.app_handle().clone()); } }
+   if let tauri::WindowEvent::CloseRequested{api,..}=e { api.prevent_close(); if w.label()=="main" { hide_main(w.app_handle().clone()); } else { background_provider(w.app_handle(),w.label()); let _=chat_status(w.app_handle().clone()); } }
  })
  .run(tauri::generate_context!()).expect("QChat runtime failed");
 }
@@ -762,6 +867,10 @@ mod tests {
         assert!(!should_auto_return(true, false, false, true, true));
         assert!(!should_auto_return(true, false, true, false, true));
         assert!(!should_auto_return(true, false, true, true, false));
+    }
+    #[test] fn gemini_routes_exclude_auth_and_lookalikes() {
+        for url in ["https://accounts.google.com/ServiceLogin", "https://gemini.google.com/signin", "https://gemini.google.com.evil.test/app"] { assert!(!super::provider_chat_url("gemini",&url.parse().unwrap())); }
+        assert!(super::provider_chat_url("gemini",&"https://gemini.google.com/app".parse().unwrap()));
     }
     #[test]
     fn auth_routes_are_not_chat_pages() {

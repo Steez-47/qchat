@@ -220,26 +220,48 @@ pub fn set_hotkey(
     Ok(accelerator)
 }
 #[tauri::command]
-pub fn get_autostart(state: tauri::State<State>) -> bool {
+pub fn get_autostart(app: tauri::AppHandle, state: tauri::State<State>) -> bool {
     if crate::test_profile().is_some() {
         return state.0.lock().unwrap().autostart;
     }
-    registry(None).unwrap_or(false)
+    let enabled=registry(None).unwrap_or(false);
+    crate::sync_startup_menu(&app, enabled);
+    enabled
 }
 #[tauri::command]
-pub fn set_autostart(state: tauri::State<State>, enabled: bool) -> Result<(), String> {
+pub fn set_autostart(app: tauri::AppHandle, state: tauri::State<State>, enabled: bool) -> Result<(), String> {
     if crate::test_profile().is_some() {
         state.0.lock().unwrap().autostart = enabled;
         return Ok(());
     }
-    registry(Some(enabled)).map(|_| ())
+    registry(Some(enabled))?;
+    crate::sync_startup_menu(&app,enabled);
+    Ok(())
+}
+pub fn repair_autostart() {
+    if crate::test_profile().is_some() {return}
+    unsafe {
+        let mut key=0isize;
+        let path=wide("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+        if RegOpenKeyExW(0x80000001u32 as i32 as isize,path.as_ptr(),0,1,&mut key)!=0 {return}
+        let name=wide("QChat");let mut size=32768u32;let mut value=vec![0u16;16384];
+        let c=RegQueryValueExW(key,name.as_ptr(),std::ptr::null_mut(),std::ptr::null_mut(),value.as_mut_ptr() as _,&mut size);
+        RegCloseKey(key);
+        if c==0 {
+            let value=String::from_utf16_lossy(&value[..(size as usize/2).min(value.len())]);
+            let value=value.trim_end_matches('\0');
+            let current=std::env::current_exe().map(|e|e.to_string_lossy().into_owned()).unwrap_or_default();
+            // A missing target is repaired, and an entry from before v1.1 gains the quiet-start flag.
+            if parse_autostart(value).is_some_and(|p|autostart_needs_repair(value,p,&current,std::path::Path::new(p).exists())) {let _=registry(Some(true));}
+        }
+    }
 }
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
 fn registry(set: Option<bool>) -> Result<bool, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let expected = format!("\"{}\"", exe.display());
+    let expected = format_autostart(&exe.to_string_lossy());
     unsafe {
         let mut key = 0isize;
         let path = wide("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
@@ -279,7 +301,7 @@ fn registry(set: Option<bool>) -> Result<bool, String> {
                 let mut value = vec![0u16; 16384];
                 let c = RegQueryValueExW(key,name.as_ptr(),std::ptr::null_mut(),std::ptr::null_mut(),value.as_mut_ptr() as _,&mut size);
                 RegCloseKey(key);
-                return Ok(c == 0 && String::from_utf16_lossy(&value[..(size as usize / 2).min(value.len())]).trim_end_matches('\0') == expected);
+                return Ok(c == 0 && parse_autostart(String::from_utf16_lossy(&value[..(size as usize / 2).min(value.len())]).trim_end_matches('\0')).is_some_and(|p| p.eq_ignore_ascii_case(&exe.to_string_lossy())));
 
             }
         };
@@ -845,5 +867,56 @@ mod tests {
     fn shortcuts() {
         assert!(parse("Alt+Q").is_ok());
         assert!(parse("this is invalid").is_err());
+    }
+}
+
+fn autostart_needs_repair(value: &str, target: &str, current: &str, target_exists: bool) -> bool {
+    !target_exists || (target.eq_ignore_ascii_case(current) && value.trim()!=format_autostart(target))
+}
+fn format_autostart(path: &str) -> String { format!("\"{path}\" --autostart") }
+fn parse_autostart(value: &str) -> Option<&str> {
+    let rest=value.trim().strip_prefix('"')?;
+    let (path, flags)=rest.split_once('"')?;
+    if path.is_empty() || !matches!(flags.trim(), "" | "--autostart") { return None }
+    Some(path)
+}
+#[cfg(test)]
+mod autostart_tests {
+    use super::*;
+    #[test] fn registry_roundtrip_uses_throwaway_subkey() {
+        #[link(name="advapi32")]
+        extern "system" {
+            fn RegCreateKeyExW(root:isize,path:*const u16,reserved:u32,class:*mut u16,options:u32,access:u32,security:*const std::ffi::c_void,key:*mut isize,disposition:*mut u32)->i32;
+            fn RegDeleteKeyW(root:isize,path:*const u16)->i32;
+        }
+        unsafe {
+            let root=0x80000001u32 as i32 as isize;
+            let path=wide(&format!("Software\\QChatTest\\Autostart-{}",std::process::id()));
+            let mut key=0;assert_eq!(RegCreateKeyExW(root,path.as_ptr(),0,std::ptr::null_mut(),0,3,std::ptr::null(),&mut key,std::ptr::null_mut()),0);
+            let name=wide("QChat");let value=wide(&format_autostart(r"C:\Program Files\QChat.exe"));
+            let written=RegSetValueExW(key,name.as_ptr(),0,1,value.as_ptr() as _,(value.len()*2) as u32);
+            let mut buffer=vec![0u16;512];let mut size=(buffer.len()*2) as u32;
+            let read=RegQueryValueExW(key,name.as_ptr(),std::ptr::null_mut(),std::ptr::null_mut(),buffer.as_mut_ptr() as _,&mut size);
+            RegCloseKey(key);
+            let removed=RegDeleteKeyW(root,path.as_ptr());
+            assert_eq!((written,read,removed),(0,0,0));
+            let text=String::from_utf16_lossy(&buffer[..size as usize/2]);
+            assert_eq!(parse_autostart(text.trim_end_matches('\0')),Some(r"C:\Program Files\QChat.exe"));
+        }
+    }
+    #[test] fn repair_rules() {
+        let exe=r"C:/Apps/QChat.exe";
+        assert!(autostart_needs_repair(r#""C:/Gone/QChat.exe""#,r"C:/Gone/QChat.exe",exe,false));
+        assert!(autostart_needs_repair(&format!("\"{exe}\""),exe,exe,true));
+        assert!(!autostart_needs_repair(&format_autostart(exe),exe,exe,true));
+        assert!(!autostart_needs_repair(r#""C:/Other/QChat.exe""#,r"C:/Other/QChat.exe",exe,true));
+    }
+    #[test] fn values() {
+        let path=r"C:\Program Files\QChat.exe";
+        assert_eq!(parse_autostart(&format_autostart(path)),Some(path));
+        assert_eq!(parse_autostart(&format!("\"{path}\"")),Some(path));
+        assert!(parse_autostart("garbage").is_none());
+        assert!(parse_autostart("\"x\" --bad").is_none());
+        assert!(parse_autostart("\"C:\\QChat.exe\" --autostart").unwrap().eq_ignore_ascii_case(r"c:\qchat.exe"));
     }
 }

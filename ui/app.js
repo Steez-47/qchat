@@ -94,7 +94,7 @@
       const rawTitle = typeof title === "string" ? title : (href?.title ?? "");
       const labelHtml = typeof text === "string" ? text : (href?.text ?? "");
       const safeUrl = sanitizeHref(rawHref);
-      if (!safeUrl) return /^(sandbox:|attachment:|qchat-media:)/i.test(rawHref) ? `<button type="button" class="hyperlink-btn" data-action="view-media">${labelHtml || "View file in ChatGPT"}</button>` : labelHtml;
+      if (!safeUrl) return /^(sandbox:|attachment:|qchat-media:)/i.test(rawHref) ? `<button type="button" class="hyperlink-btn" data-action="view-media">${labelHtml || `View file in ${providerName()}`}</button>` : labelHtml;
       const titleAttr = ` title="${escapeHtml(rawTitle || safeUrl)}"`;
       return `<a href="${escapeHtml(safeUrl)}"${titleAttr} rel="noopener noreferrer">${labelHtml}</a>`;
     };
@@ -341,7 +341,7 @@
   };
 
   const formatErrorCopy = (code, fallback) =>
-    (code && ERROR_MESSAGES[code]) || fallback || "Something went wrong.";
+    ((code && ERROR_MESSAGES[code]) || fallback || "Something went wrong.").replaceAll("ChatGPT", providerName());
 
   // Native errors look like "busy: details".
   const errorCode = (err) => {
@@ -414,7 +414,7 @@
   let connectErrorShown = false;
 
   const isStreaming = () => turns.some((t) => t.status === "streaming");
-  const isBusy = () => sending || isStreaming();
+  const isBusy = () => sending || isStreaming() || switchingProvider;
   const stopBackend = () => invoke("chat_stop").catch(() => {});
 
   function make(tag, className, text) {
@@ -448,8 +448,13 @@
   // ---------------------------------------------------------------------------
   // 4. Chat history (local only)
   // ---------------------------------------------------------------------------
+  let activeProvider = QSettings.settings.defaultProvider || "chatgpt";
+  const providerName = (chat) => (chat?.provider || activeProvider) === "gemini" ? "Gemini" : "ChatGPT";
+  const providerStates = {};
+  let switchingProvider = false;
   const freshChat = () => ({
     key: crypto.randomUUID(),
+    provider: activeProvider,
     conversationId: null,
     title: "",
     lastActive: Date.now(),
@@ -588,7 +593,7 @@
     const row = make("article", "turn-row history-row");
     row.dataset.id = item.id;
     row.dataset.role = item.role;
-    row.setAttribute("aria-label", item.role === "user" ? "You said" : "ChatGPT replied");
+    row.setAttribute("aria-label", item.role === "user" ? "You said" : `${providerName()} replied`);
     const content = make("div", "turn-content");
     const media = make("div", "turn-media");
     if (item.role === "user") {
@@ -666,7 +671,7 @@
       if (item.media?.length && chats.current.conversationId) {
         media.replaceChildren(...item.media.map(file => storedMediaCard(file, chats.current.conversationId)));
       } else if (item.hasMedia && !media.childElementCount) {
-        const view = make("button", "hyperlink-btn", "View attachments in ChatGPT");
+        const view = make("button", "hyperlink-btn", `View attachments in ${providerName()}`);
         view.type = "button";
         view.dataset.action = "history-media";
         media.append(view);
@@ -701,7 +706,7 @@
     save.addEventListener("click", async () => {
       save.disabled = true;
       try { await invoke("media_save", { mediaId, revision: 0 }); status.textContent = "Saved to Downloads"; }
-      catch (_) { status.textContent = "Could not save. View in ChatGPT to download."; }
+      catch (_) { status.textContent = `Could not save. View in ${providerName()} to download.`; }
       finally { save.disabled = false; }
     });
     actions.append(save);
@@ -964,6 +969,7 @@
     const reasoningEffort = validReasoning(raw.reasoningEffort);
     return {
       key: raw.key,
+      provider: raw.provider === "gemini" ? "gemini" : "chatgpt",
       conversationId: typeof raw.conversationId === "string" && raw.conversationId ? raw.conversationId : null,
       title: text(raw.title, 40),
       lastActive: time(raw.lastActive),
@@ -994,7 +1000,7 @@
       const recent = (Array.isArray(parsed.recent) ? parsed.recent : [])
         .map(cleanChat)
         .filter((chat) => chat && !seen.has(chat.key) && seen.add(chat.key))
-        .filter((chat, i, all) => !chat.conversationId || (chat.conversationId !== current.conversationId && all.findIndex((c) => c.conversationId === chat.conversationId) === i))
+        .filter((chat, i, all) => !chat.conversationId || ((chat.provider !== current.provider || chat.conversationId !== current.conversationId) && all.findIndex((c) => c.provider === chat.provider && c.conversationId === chat.conversationId) === i))
         .sort((a, b) => b.lastActive - a.lastActive)
         .slice(0, MAX_RECENT);
       return { current, recent };
@@ -1004,6 +1010,7 @@
   }
 
   const chats = loadChats();
+  activeProvider = chats.current.provider;
 
   // Saved default for new chats; a chat's own pick overrides it until a new chat.
   const savedReasoning = () => validReasoning(QSettings.settings.defaultReasoning) || "medium";
@@ -1011,6 +1018,13 @@
   let sentReasoning = null;
 
   function syncReasoningButton() {
+    el.btnReasoning.hidden = activeProvider === "gemini";
+    el.zone.setAttribute("aria-label", `${providerName()} response`);
+    const button = document.getElementById("btn-provider");
+    button.querySelector("span").textContent = activeProvider === "gemini" ? "Gemini" : "GPT";
+    button.setAttribute("aria-label", `Provider: ${providerName()}`);
+    button.disabled = isBusy() || switchingProvider;
+    button.title = isBusy() ? "Available after the reply" : "Choose provider";
     const busy = isBusy();
     if (!busy) sentReasoning = null;
     const value = busy && sentReasoning ? sentReasoning : effectiveReasoning();
@@ -1039,6 +1053,49 @@
       selected: value === selected,
       run: () => chooseReasoning(value)
     })), false, el.btnReasoning);
+  }
+
+  async function setProvider(provider) {
+    if (provider === activeProvider) return true;
+    if (isBusy() || switchingProvider) return false;
+    switchingProvider = true;
+    syncReasoningButton();
+    try {
+      await invoke("provider_set", {provider});
+      // Each site keeps its own page, so returning must remember which chat that page still holds.
+      pageByProvider[activeProvider] = page;
+      activeProvider = provider;
+      page = pageByProvider[provider] || {key:null, conv:null, pristine:true};
+      Object.assign(accountChats, {items:[], loading:false, loaded:false, at:0});
+      updateStatusHeader(providerStates[provider] || {ready:false, loggedIn:false});
+      return true;
+    } catch (_) { showGlobalError(null, "Couldn't switch providers. Try again in a moment."); return false; }
+    finally { switchingProvider = false; syncReasoningButton(); }
+  }
+  async function chooseProvider(provider) {
+    if (provider === activeProvider) return;
+    const draft = el.promptInput.value;
+    if (!await setProvider(provider)) return;
+    // Staged files live on this PC until a send, so they can follow the draft to the new provider.
+    const files = [...pendingFiles];
+    pendingFiles.length = 0;
+    await startNewChat(false);
+    pendingFiles.push(...files);
+    renderAttachments();
+    chats.current.provider = provider;
+    chats.current.draft = draft;
+    el.promptInput.value = draft;
+    saveChats(); autoResizePrompt(); updateComposerMode();
+  }
+  function showProviderPicker() {
+    if (isBusy() || switchingProvider) return;
+    const button = document.getElementById("btn-provider");
+    if (featureListAnchor === button) { closeFeatureList(); return; }
+    showFeatureList("Provider", ["chatgpt", "gemini"].map(provider => ({
+      title: provider === "gemini" ? "Gemini" : "ChatGPT",
+      meta: providerStates[provider]?.loggedIn ? "Signed in" : providerStates[provider]?.ready ? "Guest" : "Not connected yet",
+      selected: provider === activeProvider, run: () => chooseProvider(provider)
+    })), false, button);
   }
 
   function storedChat(chat, capped = false) {
@@ -1088,7 +1145,7 @@
 
   function pushRecent(chat) {
     if (!QSettings.settings.keepHistory || chat.temporary) return;
-    chats.recent = [chat, ...chats.recent.filter((c) => c.key !== chat.key && !(chat.conversationId && c.conversationId === chat.conversationId))].slice(0, MAX_RECENT);
+    chats.recent = [chat, ...chats.recent.filter((c) => c.key !== chat.key && !(chat.conversationId && c.provider === chat.provider && c.conversationId === chat.conversationId))].slice(0, MAX_RECENT);
   }
 
   function recordPartial(turn) {
@@ -1121,6 +1178,7 @@
   // ---------------------------------------------------------------------------
   // `pristine`: the page has not been touched since launch, so an empty chat can use it as is.
   let page = { key: null, conv: null, pristine: true };
+  const pageByProvider = {};
   let pageSync = Promise.resolve();
   const readyWaiters = new Set();
 
@@ -1144,7 +1202,7 @@
     if (!evt.ready) return;
     for (const waiter of [...readyWaiters]) {
       const id = waiter.conversationId;
-      if (!id || typeof evt.url !== "string" || evt.url.includes(`/c/${id}`)) waiter.resolve();
+      if (!id || typeof evt.url !== "string" || evt.url.includes(`${activeProvider === "gemini" ? "/app/" : "/c/"}${id}`)) waiter.resolve();
       // A guest page falls back to a fresh chat instead of /c/<id>; give it a moment to get there.
       else if (!evt.loggedIn && !waiter.grace) waiter.grace = setTimeout(() => waiter.resolve(), 500);
     }
@@ -1442,7 +1500,7 @@
       const status = make("span", "media-status");
       const preview = make("div", "media-preview");
       const actions = make("div", "media-actions");
-      const view = make("button", "hyperlink-btn", "View in ChatGPT");
+      const view = make("button", "hyperlink-btn", `View in ${providerName()}`);
       view.type = "button";
       view.addEventListener("click", openSignin);
       const save = make("button", "btn btn-compact", "Save to Downloads");
@@ -1450,7 +1508,7 @@
       save.addEventListener("click", async () => {
         save.disabled = true;
         try { await invoke("media_save", { mediaId: item.id, revision: item.revision || 0 }); status.textContent = "Saved to Downloads"; }
-        catch (_) { status.textContent = "Could not save. View in ChatGPT to download."; }
+        catch (_) { status.textContent = `Could not save. View in ${providerName()} to download.`; }
         finally { save.disabled = false; }
       });
       actions.append(save, view);
@@ -1484,7 +1542,7 @@
           loaded = true; loadedRevision = revision;
           load.hidden = true;
           status.textContent = "";
-        } catch (_) { status.textContent = "Preview unavailable. View in ChatGPT."; }
+        } catch (_) { status.textContent = `Preview unavailable. View in ${providerName()}.`; }
         finally {
           load.disabled = false;
           if (kind === "image" && (item.revision || 0) !== loadingRevision) void loadMedia(true);
@@ -1696,7 +1754,7 @@
 
     const thinking = make("div", "thinking");
     thinking.setAttribute("role", "status");
-    thinking.setAttribute("aria-label", "ChatGPT is thinking");
+    thinking.setAttribute("aria-label", `${providerName()} is thinking`);
     thinking.append(make("span"), make("span"), make("span"));
 
     row.append(bubble, thinking);
@@ -1709,7 +1767,7 @@
     row.dataset.id = turn.id;
     row.dataset.role = "assistant";
     row.dataset.status = turn.status;
-    row.setAttribute("aria-label", "ChatGPT replied");
+    row.setAttribute("aria-label", `${providerName()} replied`);
     row.hidden = true;
 
     const bubble = make("div", "bubble bubble-response glass");
@@ -1751,8 +1809,8 @@
     retryBtn.title = "Retry"; retryBtn.setAttribute("aria-label", "Retry");
     const openBtn = make("button", "tool-btn");
     openBtn.append(makeIcon("\uE8A7"));
-    openBtn.type = "button"; openBtn.title = "Open in ChatGPT"; openBtn.setAttribute("aria-label", openBtn.title);
-    openBtn.addEventListener("click", () => { if (chats.current.conversationId) invoke("open_external", { url: `https://chatgpt.com/c/${chats.current.conversationId}` }).catch(() => {}); });
+    openBtn.type = "button"; openBtn.title = `Open in ${providerName()}`; openBtn.setAttribute("aria-label", openBtn.title);
+    openBtn.addEventListener("click", () => { if (chats.current.conversationId) invoke("open_external", { url: `${activeProvider === "gemini" ? "https://gemini.google.com/app/" : "https://chatgpt.com/c/"}${chats.current.conversationId}` }).catch(() => {}); });
     tools.append(copyBtn, retryBtn, openBtn, closeBtn);
 
     const jump = make("button", "jump-chip glass glass-tiny");
@@ -1820,7 +1878,7 @@
       actions.appendChild(retry);
     }
     if (turn.hadAttachments) {
-      const view = make("button", "btn btn-compact", "View in ChatGPT");
+      const view = make("button", "btn btn-compact", `View in ${providerName()}`);
       view.type = "button";
       view.dataset.action = "signin";
       actions.appendChild(view);
@@ -1844,7 +1902,7 @@
     entry.row.dataset.status = turn.status;
     const retryTool = entry.row.querySelector('[data-action="retry-reply"]');
     if (retryTool) retryTool.hidden = turn.status !== "done" || (!turn.prompt && !turn.selectionTexts?.length) || turn.hadAttachments;
-    const openTool = entry.row.querySelector('[aria-label="Open in ChatGPT"]');
+    const openTool = entry.row.querySelector(`[aria-label="Open in ${providerName()}"]`);
     if (openTool) openTool.hidden = !chats.current.conversationId;
     const activity = entry.activity;
     activity.hidden = turn.status !== "streaming" || turn.backendDone || turn.activity?.state !== "running";
@@ -1950,7 +2008,7 @@
   function finishReveal(turn, entry) {
     if (!turn.backendDone || turn.status !== "streaming") return;
     turn.status = "done";
-    el.statusLabel.textContent = "ChatGPT replied";
+    el.statusLabel.textContent = `${providerName()} replied`;
     // Multiline answers keep their wrapping width when the streaming class ends.
     entry.row.toggleAttribute("data-wide", /\n/.test(turn.text) || entry.inner.offsetHeight > 72);
     renderTurnNow(turn.id);
@@ -2204,7 +2262,7 @@
       entry.row.toggleAttribute("data-wide", true);
     }
     if (fallback) {
-      const view = make("button", "hyperlink-btn", "View in ChatGPT");
+      const view = make("button", "hyperlink-btn", `View in ${providerName()}`);
       view.type = "button";
       view.dataset.action = "view-media";
       entry.mediaEl.append(view);
@@ -2324,7 +2382,7 @@
       await ensurePage(chat);
       if (generation !== chatGeneration) return;
       if (assistantTurn.status !== "streaming") throw { code: "stopped" };
-      await invoke("chat_send", { id: assistantTurn.id, prompt: wirePrompt(prompt, selectionTexts), attachmentIds: files.map((f) => f.id), reasoningEffort });
+      await invoke("chat_send", { id: assistantTurn.id, prompt: wirePrompt(prompt, selectionTexts), attachmentIds: files.map((f) => f.id), provider: activeProvider, ...(activeProvider === "chatgpt" ? {reasoningEffort} : {}) });
       if (consumeSelections && assistantTurn.status !== "error" && !(assistantTurn.status === "done" && !assistantTurn.text && !assistantTurn.media?.length)) {
         chat.selectionTexts.splice(0, selectionTexts.length);
         assistantTurn.selectionConsumed = true;
@@ -2479,13 +2537,13 @@
         tab.addEventListener("click", () => switchToChat(tab.dataset.key));
       }
       const label = elapsedLabel(chat.lastActive);
-      tab.querySelector(".tab-label").textContent = label;
+      tab.querySelector(".tab-label").textContent = chat.provider !== activeProvider && (chat.title || "").length < 16 ? `${chat.provider === "gemini" ? "G" : "GPT"} · ${label}` : label;
       const title = chat.title || "Untitled chat";
       const characters = Array.from(title);
       tab.querySelector(".tab-title").textContent = characters.length > 24
         ? `${characters.slice(0, 23).join("")}…` : title;
       const when = label === "now" ? "just now" : `${label} ago`;
-      tab.title = `${title}\nLast active ${when}`;
+      tab.title = `${title}\nLast active ${when}${chat.provider !== activeProvider ? " · " + providerName(chat) : ""}`;
       tab.setAttribute("aria-label", `Switch to chat: ${title}, last active ${when}`);
       return tab;
     });
@@ -2494,10 +2552,11 @@
     queueSizes();
   }
 
-  function switchToChat(key) {
+  async function switchToChat(key) {
     if (isBusy()) return;
     const index = chats.recent.findIndex((c) => c.key === key);
     if (index < 0) return;
+    if (!await setProvider(chats.recent[index].provider || "chatgpt")) return;
     chatGeneration++;
     discardPendingFiles();
     hideGlobalError();
@@ -2548,11 +2607,23 @@
   const COMMANDS = [
     { name: "settings", icon: GLYPH.settings, desc: () => "Open settings", run: () => invoke("open_settings").catch(() => showGlobalError(null, "Couldn't open settings. Try again.")) },
     { name: "new", icon: GLYPH.newChat, desc: () => "Start a new chat", run: () => startNewChat(true) },
-    { name: "signin", icon: GLYPH.account, desc: () => (bridge.loggedIn ? "Manage account" : "Sign in to ChatGPT"), run: () => openSignin() },
+    { name: "signin", icon: GLYPH.account, desc: () => (bridge.loggedIn ? "Manage account" : `Sign in to ${providerName()}`), run: () => openSignin() },
     { name: "clear", icon: GLYPH.trash, desc: () => "Clear recent chats", run: () => showClearConfirm() },
     { name: "hide", icon: GLYPH.hide, desc: () => "Hide QChat", run: () => invoke("hide_main").catch(() => {}) }
   ];
   COMMANDS.push(
+    {name:"chatgpt", icon:GLYPH.account, desc:()=>"Switch to ChatGPT", run:()=>chooseProvider("chatgpt")},
+    {name:"gemini", icon:GLYPH.account, desc:()=>"Switch to Gemini", run:()=>chooseProvider("gemini")},
+    {name:"startup", icon:GLYPH.settings, desc:()=>"Open at startup", run:async()=>{
+      try {
+        const on = await invoke("get_autostart");
+        const choose = (enabled) => () => invoke("set_autostart", {enabled}).catch(() => showGlobalError(null,"Couldn't change open at startup."));
+        showFeatureList("Open at startup", [
+          {title:"On", meta:"Starts quietly in the tray", selected:on, run:choose(true)},
+          {title:"Off", meta:"Open QChat yourself", selected:!on, run:choose(false)}
+        ]);
+      } catch (_) { showGlobalError(null,"Couldn't read open at startup."); }
+    }},
     { name: "model", icon: GLYPH.settings, desc: () => "Model", run: () => { showFeatureList("Loading models…", []); invoke("chat_models").catch(() => showModels({ error: "unavailable" })); } },
     { name: "temp", icon: GLYPH.newChat, desc: () => "Temporary chat", run: async () => { await startNewChat(false); chats.current.temporary = true; setModeLabel("Temporary"); pageSync = freshInPage(chats.current); } },
     { name: "chats", icon: GLYPH.clock, desc: () => "Chats", run: showChatList },
@@ -2643,9 +2714,9 @@
   }
   function showModels(event) {
     const models = event.models || [];
-    showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? models.map(model => ({ title: model.label, selected: Boolean(model.selected), run: () => invoke("chat_model_choose", { id: model.id }).catch(() => {}) })) : [{ title: event.error ? "Open ChatGPT" : "Sign in", run: openSignin }]);
+    showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? models.map(model => ({ title: model.label, selected: Boolean(model.selected), run: () => invoke("chat_model_choose", { id: model.id }).catch(() => {}) })) : [{ title: event.error ? `Open ${providerName()}` : "Sign in", run: openSignin }]);
   }
-  listen("bridge", ({ payload }) => { if (payload.type === "models") showModels(payload); else if (payload.type === "model-chosen") setModelLabel(payload.model.label); });
+  listen("bridge", ({ payload }) => { if ((payload.provider || "chatgpt") !== activeProvider) return; if (payload.type === "models") showModels(payload); else if (payload.type === "model-chosen") setModelLabel(payload.model.label); });
   // Every chat on the account, read through the signed-in page, with this PC's chats first.
   const accountChats = { items: [], loading: false, loaded: false, at: 0 };
 
@@ -2662,22 +2733,22 @@
     const seen = new Set(accountChats.items.map(item => item.id));
     for (const item of Array.isArray(event.items) ? event.items : []) if (!seen.has(item.id)) accountChats.items.push(item);
     const more = !event.error && event.items?.length && accountChats.items.length < Math.min(event.total || 0, 600);
-    if (more) setTimeout(() => invoke("chat_list_conversations", { offset: accountChats.items.length }).catch(() => { accountChats.loading = false; }), 500);
+    if (more) { const provider = activeProvider; setTimeout(() => { if (provider === activeProvider) invoke("chat_list_conversations", { offset: accountChats.items.length }).catch(() => { accountChats.loading = false; }); }, 500); }
     else { accountChats.loading = false; accountChats.loaded = !event.error; accountChats.at = Date.now(); }
     if (!featureList.hidden) featureList._repaint?.();
   }
 
-  function openAccountChat(item) {
+  async function openAccountChat(item) {
     if (isBusy()) return;
     const chat = { ...freshChat(), conversationId: item.id, title: (item.title || "Untitled chat").slice(0, 40), lastActive: item.updated || Date.now() };
     chats.recent.unshift(chat);
-    switchToChat(chat.key);
+    await switchToChat(chat.key);
     setHistoryOpen(true);
   }
 
   function chatRows() {
     const local = chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { chats.recent = chats.recent.filter(c => c.key !== chat.key); saveChats(); renderTabs(); featureList._repaint?.(); } }));
-    const known = new Set([chats.current.conversationId, ...chats.recent.map(chat => chat.conversationId)]);
+    const known = new Set([chats.current.conversationId, ...chats.recent.filter(chat => chat.provider === activeProvider).map(chat => chat.conversationId)]);
     const account = accountChats.items.filter(item => !known.has(item.id)).map(item => ({ title: item.title || "Untitled chat", meta: item.updated ? elapsedLabel(item.updated) : "", run: () => openAccountChat(item) }));
     return [...local, ...account];
   }
@@ -2873,7 +2944,7 @@
     queueSizes();
   }
 
-  const openSignin = () => invoke("show_signin").catch(() => {});
+  const openSignin = () => invoke("show_signin", {provider: activeProvider}).catch(() => {});
 
   // ---------------------------------------------------------------------------
   // 13. Clipboard
@@ -3111,6 +3182,7 @@
     else submitFromInput();
     el.promptInput.focus();
   });
+  document.getElementById("btn-provider").addEventListener("click", showProviderPicker);
   el.btnReasoning.addEventListener("click", showReasoningPicker);
 
   el.btnGuestSignin.addEventListener("click", openSignin);
@@ -3197,6 +3269,9 @@
 
   listen("bridge", ({ payload: evt }) => {
     if (!evt || typeof evt !== "object") return;
+    const provider = evt.provider || "chatgpt";
+    if (evt.type === "status") providerStates[provider] = evt;
+    if (provider !== activeProvider) return;
     switch (evt.type) {
       case "status":
         updateStatusHeader({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
@@ -3378,6 +3453,10 @@
   fitNow();
   el.promptInput.focus();
   refreshTheme();
-  invoke("chat_status").catch(() => {});
+  (async () => {
+    try { await invoke("provider_set", {provider:activeProvider}); } catch (_) {}
+    await invoke("chat_status").catch(() => {});
+    try { const info = await invoke("launch_info"); if (info && (!info.autostart || QSettings.settings.showBarAtStartup)) await invoke("show_main"); } catch (_) {}
+  })();
   armConnectDeadline();
 })();

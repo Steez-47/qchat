@@ -1,3 +1,17 @@
+## v1.1: open at startup + Gemini (2026-10-31, branch feat/v1.1)
+
+Owner away for hours, no questions. Publishing not authorized: build and verify locally, no push or release.
+
+Startup: the Run-key toggle existed but was buried, and a manual launch showed nothing. Adds `--autostart` launch flag (quiet by default, optional show), normal launch shows the bar, tray check item, stale-path repair, retry when the network is down at boot.
+Gemini: hidden second webview on gemini.google.com, created lazily, same bridge API and events as ChatGPT. Live probes (isolated hidden profile): guest chat, streaming, stop lifecycle work in WebView2; Google identifier step answered normally rather than refusing the embedded browser (real sign-in unproven).
+
+| id | task | model | owns | status |
+|---|---|---|---|---|
+| V1 | Native startup and provider routing | Sol medium | src-tauri/src, capabilities, native test | running |
+| V2 | Gemini bridge, synthetic and live guest checks | DeepSeek max | src-tauri/bridge/gemini-bridge.js, tools | running |
+| V3 | Provider picker, settings v6, launch behaviour | Sol medium | ui, provider UI test | running |
+| V4 | Integration, cross-family review, full suites, version 1.1.0, local build | parent + reviewer | integration | todo |
+
 ## v1.0.0 public Windows installer (2026-10-31)
 
 User authorized promoting the current application to v1.0.0 and explicitly chose immediate public publication. Versions updated in npm, Tauri and Cargo. Added npm run build:installer: NSIS current-user installer, offline Microsoft WebView2 dependency, Start menu shortcut and Windows uninstall support. The standard Tauri uninstaller preserves app data unless removal is selected, cleans the Run entry on uninstall, and preserves it during installer updates. No custom hooks are required. Install notes and generated third-party notices are included both in setup and the release assets; source-pinned license fallbacks are stored in packaging/licenses.

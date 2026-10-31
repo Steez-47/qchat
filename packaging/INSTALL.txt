@@ -9,16 +9,18 @@ WebView2 is installed only if missing; Microsoft may request permission.
 
 REQUIREMENTS
 Windows 11 x64 (recommended), or Windows 10 22H2 x64.
-Internet access is required to use ChatGPT. This build is for x64 Windows;
+Internet access is required to use ChatGPT or Gemini. This build is for x64 Windows;
 ARM devices and older Windows versions have not been tested.
 
 FIRST USE
-Alt+Q opens or hides QChat. Sign in through QChat to use your ChatGPT
-account. Type / for commands. Ctrl+Alt+Q captures selected text.
+Alt+Q opens or hides QChat. Sign in through QChat to use your ChatGPT or
+Gemini account. The button beside the prompt, or /gemini and /chatgpt,
+switches provider. Type / for commands. Ctrl+Alt+Q captures selected text.
 Drag the circle to move the window. Quit through the tray menu.
-Launch at login is optional and off by default.
-QChat is an independent app and is not affiliated with OpenAI.
-ChatGPT account features, subscription requirements and limits apply.
+Open at startup is optional and off by default: use Settings, the tray
+or /startup. It starts quietly in the tray unless you choose to show the bar.
+QChat is an independent app and is not affiliated with OpenAI or Google.
+ChatGPT and Gemini account features, subscriptions and limits apply.
 
 SECURITY PROMPT
 This release is unsigned. Windows may show an unknown publisher or
@@ -30,12 +32,12 @@ Quit the old copy from its tray menu before installing or launching.
 The app identifier is unchanged, so existing local settings, chats and
 sign-in can be reused on the same Windows account. Other devices start
 with their own local data and require their own sign-in.
-If Launch at login was enabled in a portable copy, disable it there
+If Open at startup was enabled in a portable copy, disable it there
 first, then enable it in the installed version if wanted.
 
 UNINSTALL
 Quit QChat, then uninstall through Windows Settings > Apps.
-The uninstaller removes this installation's launch-at-login entry.
+The uninstaller removes this installation's open-at-startup entry.
 Keep the default data-preserving option to retain settings and sign-in;
 choose removal of application data only if you want to clear them.
 
@@ -44,7 +46,9 @@ EXTERNAL DEVICE CHECK
 2. Check Alt+Q, sign-in, sending a message and the / command menu.
 3. Check selected-text capture, attachments, Snapshot and chat history.
 4. Quit and reopen; verify sign-in, settings and saved chats persist.
-5. If enabled, check Launch at login after signing out and back in.
+5. Turn on Open at startup, sign out and back in, and check that QChat
+   is in the tray and Alt+Q opens it. Try it once with no network at login.
+   Sign in to Gemini and send a message.
 6. Quit and uninstall; check that the Start menu shortcut is removed.
 
 PORTABLE OPTION
