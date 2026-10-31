@@ -328,6 +328,17 @@ try {
   check('temporary chat draft restored in composer', (await inputValue()) === 'temporary chat draft content');
   check('temporary chat draft stays out of storage after Undo', await evalJS(`!localStorage.getItem('qchat.chats')?.includes('temporary chat draft content')`));
 
+  // A send in flight still owns its files: discarding must not delete them mid-upload.
+  await setup();
+  await evalJS(`window.removedIds=[];window.realInvoke=__TAURI__.core.invoke;__TAURI__.core.invoke=(c,a)=>{if(c==='attachment_begin')return Promise.resolve({...a,id:'in-flight'});if(c==='attachment_chunk'||c==='attachment_finish')return Promise.resolve({});if(c==='attachment_remove'){removedIds.push(a.id);return Promise.resolve()}if(c==='chat_send')return new Promise(()=>{});return realInvoke(c,a)}`);
+  await stage('uploading.txt');
+  await waitFor(`document.querySelector('#attachments [data-state=ready]')`);
+  await evalJS(`(()=>{const i=document.getElementById('prompt-input');i.value='with a file';i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}))})()`);
+  await sleep(120);
+  await evalJS(`(()=>{const i=document.getElementById('prompt-input');i.value='/discard';i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}))})()`);
+  await sleep(120);
+  check('discard during a send keeps its files', await evalJS(`removedIds.length===0&&document.getElementById('attachments').textContent.includes('uploading.txt')`), await evalJS(`JSON.stringify(removedIds)`));
+  check('discard during a send explains why', await evalJS(`document.getElementById('command-feedback').textContent.includes('before discarding files')`), await evalJS(`document.getElementById('command-feedback').textContent`));
   check('no runtime errors', problems.length === 0, problems.slice(0, 4).join(' | '));
 } catch (e) {
   console.error(e);

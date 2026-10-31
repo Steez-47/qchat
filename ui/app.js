@@ -3641,6 +3641,11 @@
       showCommandFeedback("Nothing to discard");
       return;
     }
+    // Files stay pending while a send uploads them, and the chip's own Remove is disabled then too.
+    if (files.length && isBusy()) {
+      showCommandFeedback("Wait for the reply to start before discarding files");
+      return;
+    }
     const selectionStart = text ? el.promptInput.selectionStart : 0;
     const selectionEnd = text ? el.promptInput.selectionEnd : 0;
     const selectionDirection = text ? el.promptInput.selectionDirection : "none";
