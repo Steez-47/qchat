@@ -1158,7 +1158,7 @@
     if (isBusy() || switchingProvider) return false;
     closeRenameChat(false);
     switchingProvider = true;
-    syncReasoningButton();
+    updateComposerMode();
     try {
       await invoke("provider_set", {provider});
       // Each site keeps its own page, so returning must remember which chat that page still holds.
@@ -1171,10 +1171,11 @@
       updateStatusHeader(providerStates[provider] || {ready:false, loggedIn:false});
       return true;
     } catch (_) { showGlobalError(null, "Couldn't switch providers. Try again in a moment."); return false; }
-    finally { switchingProvider = false; syncReasoningButton(); }
+    finally { switchingProvider = false; updateComposerMode(); }
   }
   async function chooseProvider(provider) {
-    if (provider === activeProvider) return;
+    if (provider === activeProvider || isBusy()) return;
+    for (const item of pendingFiles.slice()) if (item.retrying) removeAttachment(item);
     const draft = el.promptInput.value;
     if (!await setProvider(provider)) return;
     // Staged files live on this PC until a send, so they can follow the draft to the new provider.
@@ -1400,24 +1401,54 @@
       const chip = make("div", "attachment-chip glass glass-tiny");
       chip.dataset.state = item.state;
       const label = make("span", "attachment-name", item.file.name);
-      const status = item.state === "error" ? "Could not attach. Remove and try again." : item.state === "ready" ? fileSize(item.file.size) : `${Math.floor(item.offset / Math.max(1, item.file.size) * 100)}%`;
+      const status = item.state === "error" ? "Failed" : item.state === "ready" ? fileSize(item.file.size) : `${Math.floor(item.offset / Math.max(1, item.file.size) * 100)}%`;
       const remove = make("button", "icon-btn"); remove.append(makeIcon(GLYPH.close));
       remove.type = "button";
       remove.setAttribute("aria-label", `Remove ${item.file.name}`);
       remove.disabled = sending;
       remove.addEventListener("click", () => removeAttachment(item));
       if (item.previewURL) chip.append(previewImage(item.previewURL, item.file.name, "attachment-thumbnail"));
-      chip.append(label, make("span", "attachment-status", status), remove);
+      chip.append(label, make("span", "attachment-status", status));
+      if (item.state === "error") {
+        const retry = make("button", "btn btn-compact", "Retry");
+        retry.type = "button";
+        retry.dataset.action = "retry-attachment";
+        retry.setAttribute("aria-label", `Retry ${item.file.name}`);
+        retry.addEventListener("click", () => retryAttachment(item));
+        chip.append(retry);
+      }
+      chip.append(remove);
       if (item.previewURL) chip.append(imageCopyButton(() => previewImage(item.previewURL, item.file.name)));
       el.attachments.append(chip);
     }
     updateComposerMode();
   }
   async function discardAttachment(item) {
+    if (item.discardPromise) return item.discardPromise;
     if (!item.id || item.discarded) return;
-    item.discarded = true;
-    try { await invoke("attachment_remove", { id: item.id }); }
-    catch (_) { item.discarded = false; showGlobalError("attachment_failed", "Could not discard a file. Try New chat before attaching more files."); }
+    item.discardPromise = (async () => {
+      try { await invoke("attachment_remove", { id: item.id }); item.discarded = true; }
+      catch (_) { item.discarded = false; showGlobalError("attachment_failed", "Could not discard a file. Try New chat before attaching more files."); }
+    })();
+    try { await item.discardPromise; } finally { item.discardPromise = null; }
+  }
+  function retryAttachment(item) {
+    if (isBusy() || item.cancelled || !pendingFiles.includes(item) || item.state !== "error") return;
+    item.state = "staging";
+    item.retrying = true;
+    renderAttachments();
+    const start = el.promptInput.selectionStart, end = el.promptInput.selectionEnd, direction = el.promptInput.selectionDirection;
+    el.promptInput.focus();
+    el.promptInput.setSelectionRange(start, end, direction);
+    stageQueue = stageQueue.then(async () => { try {
+      if (item.cancelled || !pendingFiles.includes(item)) return;
+      if (isBusy()) { item.state = "error"; renderAttachments(); return; }
+      await discardAttachment(item);
+      if (item.cancelled || !pendingFiles.includes(item)) return;
+      if (isBusy() || (item.id && !item.discarded)) { item.state = "error"; renderAttachments(); return; }
+      item.id = null; item.offset = 0; item.discarded = false;
+      await stageAttachment(item);
+    } finally { item.retrying = false; } });
   }
   function removeAttachment(item) {
     item.cancelled = true;
@@ -2426,6 +2457,7 @@
     const attachable = pendingFiles.some((f) => f.state === "ready");
     el.btnAttach.disabled = active || sending;
     for (const button of el.attachments.querySelectorAll(".selection-chip button")) button.disabled = sending;
+    for (const button of el.attachments.querySelectorAll('[data-action="retry-attachment"]')) button.disabled = isBusy();
     el.btnSnapshot.disabled = active || sending || snapshotCapturing;
     el.btnSend.disabled = !active && (!bridge.ready || sending || staging || snapshotCapturing || (!el.promptInput.value.trim() && !attachable && !chats.current.selectionTexts.length));
     syncReasoningButton();

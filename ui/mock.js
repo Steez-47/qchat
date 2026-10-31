@@ -30,6 +30,8 @@
     models: {gemini:[{id:"flash",label:"Flash-Lite",selected:true,meta:"Fast answers"},{id:"pro",label:"Pro",meta:"Advanced reasoning",disabled:true},{id:"thinking",label:"Thinking",meta:"Deeper answers"}]},
     levels: [],
     calls: [],
+    attachmentFaults: {},
+    attachmentFiles: mockFiles,
     fit: null,
     fits: [],
     settingsOpen: false,
@@ -116,6 +118,14 @@
     core: {
       invoke: async (cmd, args = {}) => {
         mock.calls.push({ cmd, args });
+        if (cmd.startsWith("attachment_")) {
+          const fault = mock.attachmentFaults[cmd];
+          if (fault) {
+            const n = fault.calls = (fault.calls || 0) + 1;
+            if (fault.holdOn?.includes(n)) await new Promise(resolve => { fault.release = resolve; });
+            if (fault.failOn?.includes(n)) throw new Error("Mock attachment failure");
+          }
+        }
         switch (cmd) {
           case "provider_get": return mock.provider;
           case "provider_set": if (mock.failProvider) throw new Error("unavailable"); mock.provider = args.provider; if (!mock.statusHold) emitStatus(0); return;
