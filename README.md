@@ -20,6 +20,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - Hover a reply to copy it, retry it or open it in ChatGPT. Up arrow recalls earlier prompts.
 - Your prompts have Copy and Edit in composer actions. Editing loads the prompt and quoted selections so you can revise and send it; reattach files when needed. Ctrl+Z recovers a draft replaced by an edit.
 - Removing recent chats or clearing local chats offers Undo for six seconds.
+- `/discard` clears the unsent composer in one step, and Undo can bring it back.
 - **Ctrl+Alt+Q** opens QChat with the text selected in the current app quoted in the box.
 - The desktop is really blurred behind the glass, and clicks pass through the empty space around it. Desktop blur can be turned off in Settings.
 - Code is highlighted and maths is rendered.

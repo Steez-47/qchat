@@ -2993,7 +2993,8 @@
       shortcuts.splice(8, 0, ["Ctrl+F", "Find in conversation"], ["F3 / Shift+F3", "Next / previous match"]);
       shortcuts.push(["Ctrl+Shift+N", "Temporary chat"], ["Ctrl+Home", "Jump to start"], ["Ctrl+End", "Jump to latest"], ["Ctrl+Shift+C", "Copy reply"], ["Ctrl+Shift+X", "Copy last code block"]);
       showFeatureList("Keyboard shortcuts", shortcuts.map(([key, action]) => ({ keys: key, title: action })));
-    } }
+    } },
+    { name: "discard", icon: GLYPH.trash, desc: () => "Discard unsent draft", run: discardDraft }
   );
   const featureList = make("section", "feature-list glass");
   featureList.hidden = true; featureList.tabIndex = -1; el.attachments.before(featureList);
@@ -3610,7 +3611,7 @@
       commandFeedback.hidden = true;
     } else {
       const latest = pendingChatUndo[pendingChatUndo.length - 1];
-      commandFeedback.replaceChildren(document.createTextNode(message || (latest.type === "clear" ? "Chats cleared" : "Chat removed")));
+      commandFeedback.replaceChildren(document.createTextNode(message || (latest.type === "clear" ? "Chats cleared" : latest.type === "discard" ? "Draft discarded" : "Chat removed")));
       const button = make("button", "btn", "Undo");
       button.type = "button";
       button.addEventListener("click", () => void undoChatChange());
@@ -3632,6 +3633,40 @@
     clearTimeout(undoExpiryTimer);
     hideCommandFeedback();
   }
+  function discardDraft() {
+    const text = draftValue();
+    const quotes = (chats.current.selectionTexts || []).slice();
+    const files = pendingFiles.slice();
+    if (!text && !quotes.length && !files.length) {
+      showCommandFeedback("Nothing to discard");
+      return;
+    }
+    const selectionStart = text ? el.promptInput.selectionStart : 0;
+    const selectionEnd = text ? el.promptInput.selectionEnd : 0;
+    const selectionDirection = text ? el.promptInput.selectionDirection : "none";
+    const originalFiles = files.map(item => item.file);
+
+    offerChatUndo({
+      type: "discard",
+      chatKey: chats.current.key,
+      text,
+      selectionStart,
+      selectionEnd,
+      selectionDirection,
+      quotes,
+      files: originalFiles
+    });
+
+    el.promptInput.value = "";
+    autoResizePrompt();
+    updateDraft();
+    chats.current.selectionTexts = [];
+    for (const item of files) removeAttachment(item);
+    saveChats();
+    renderAttachments();
+    updateIdleChips();
+    queueSizes();
+  }
   async function undoChatChange() {
     pendingChatUndo = pendingChatUndo.filter(item => item.expires > Date.now());
     const item = pendingChatUndo.pop();
@@ -3641,6 +3676,33 @@
       if (keep && !chats.recent.some(chat => sameChat(chat, item.chat)) && !sameChat(chats.current, item.chat)) {
         chats.recent.splice(Math.min(item.index, chats.recent.length), 0, item.chat);
       }
+    } else if (item.type === "discard") {
+      const changed = Boolean(el.promptInput.value)
+        || pendingFiles.length > 0
+        || Boolean(chats.current.selectionTexts?.length)
+        || chats.current.key !== item.chatKey
+        || isStreaming()
+        || sending;
+      if (changed) {
+        showCommandFeedback("Couldn't restore: the draft has changed");
+        return;
+      }
+      chats.current.selectionTexts = (item.quotes || []).slice();
+      el.promptInput.value = item.text || "";
+      updateDraft(true);
+      autoResizePrompt();
+      const start = item.selectionStart ?? el.promptInput.value.length;
+      const end = item.selectionEnd ?? start;
+      const direction = item.selectionDirection || "none";
+      el.promptInput.focus();
+      el.promptInput.setSelectionRange(start, end, direction);
+      if (item.files?.length) addFiles(item.files);
+      renderAttachments();
+      updateIdleChips();
+      queueSizes();
+      saveChats(); renderTabs(); featureList._repaint?.();
+      paintChatUndo();
+      return;
     } else {
       const unchanged = () => chats.current.key === item.clearedKey && !hasContent(chats.current) && !el.promptInput.value && pendingFiles.every(file => item.stagedFiles.includes(file));
       let restoreCurrent = !isBusy() && unchanged();
