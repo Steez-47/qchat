@@ -34,7 +34,7 @@ One material everywhere. No neon, no marble, no competing highlights.
 - **Tabs:** sit flush on the bar's top edge and read as one shape with it: rounded top corners, no bottom rim, no shadow, concave 8px fillets where they meet the bar. 24px tall, 11.5px text, the clock glyph quiet at 10px. Title capped at 24 characters then the elapsed time.
 - **Bubbles:** the user's bubble is the only tinted one, and only lightly. Replies are plain glass.
 - **History pill and Latest chip:** small quiet glass chips that never cover reply text.
-- **History:** the whole conversation from the account's own record (the rendered page is the fallback), in the same bubbles as the live view. "All chats" lists this PC's chats, then every other chat on the account, searchable. A small clock tab beside the recent tabs opens it.
+- **History:** the whole conversation from the account's own record (the rendered page is the fallback), in the same bubbles as the live view, with its images. That record replaces the local copy when a chat opens. "All chats" lists this PC's chats, then every other chat on the account, searchable. A small clock tab beside the recent tabs opens it.
 - **Errors:** plain glass with a 1px critical-coloured hairline and critical-coloured title. No muddy red fill.
 
 ## Type
@@ -43,13 +43,14 @@ Segoe UI Variable. Body 15/1.65 in replies, measure capped at 72ch; the bar uses
 
 ## Motion
 
-One authored moment: a sent message rises out of the bar and becomes a bubble, and the reply grows in its place. Everything else is quiet: 120 to 200ms, exponential ease-out, transform and opacity. The default feel is calm, with no overshoot. Reduced motion is respected. No sheen passes over text by default. Scrolling is native: nothing moves, scales or fades messages as they scroll.
+Pressing and hovering are colour only: transforms promote and demote compositor layers as they start and stop, which reads as the whole window jittering. One authored moment: a sent message rises out of the bar and becomes a bubble, and the reply grows in its place. Everything else is quiet: 120 to 200ms, exponential ease-out, transform and opacity. The default feel is calm, with no overshoot. Reduced motion is respected. No sheen passes over text by default. Scrolling is native: nothing moves, scales or fades messages as they scroll.
 
 ### Streaming
 
 Text must read as a steady flow, never as a machine catching up.
 
-- Reveal by whole words, so nothing starts on one line and jumps to the next. Network bursts change the rate gradually.
+- By default a block appears only once it is finished (a paragraph at its blank line; list items, table rows and code lines at their newline), then flows in by whole words. Live tokens can be rough until then. Live word and character streams remain as settings.
+- Nothing starts on one line and jumps to the next. Network bursts change the rate gradually.
 - New words surface from low contrast through the CSS Highlight API: paint only, so no DOM, layout or selection changes.
 - Unfinished Markdown is closed or held back, so markers, half tables and raw TeX never flash. Finished blocks are parsed once and left alone.
 - Following the end is the reader's choice. One wheel notch up stops it at once and new text never pulls them back; reaching the end resumes it.

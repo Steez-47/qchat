@@ -122,6 +122,7 @@
       return source ? `[${sources.indexOf(source) + 1}](<${source.url}>)` : "";
     }).filter(Boolean).join(" ");
     const src = String(markdownText ?? "")
+      .replace(/<Entity\b[^>]*?\bvalue\s*=\s*"([^"]*)"[^>]*?(?:\/>|>(?:\s*<\/Entity>)?)/g, "$1")
       .replace(/<Cite\b[^>]*\bref=["']([^"']+)["'][^>]*\/?\s*>(?:<\/Cite>)?/gi, (_, refs) => citation(refs))
       .replace(/\uE200cite\uE202([^\uE201]*)\uE201/g, (_, refs) => citation(refs.replace(/\uE202/g, " ")));
     if (!src) return "";
@@ -350,12 +351,18 @@
     return { text: text.trim(), hasMedia: media };
   }
 
+  // Files by id only: signed URLs never go into saved chats.
+  function cleanStoredMedia(items) {
+    return (Array.isArray(items) ? items : []).filter(item => typeof item?.file === "string" && /^[A-Za-z0-9_-]{4,120}$/.test(item.file)).slice(0, 40)
+      .map(item => ({ file: item.file, kind: item.kind === "image" ? "image" : "file", name: String(item.name || "Attachment").slice(0, 200), ...(typeof item.mime === "string" ? { mime: item.mime.slice(0, 100) } : {}) }));
+  }
+
   function cleanTranscript(raw, lastSnapshot) {
     if (Array.isArray(raw.transcript)) return raw.transcript.filter(item => item &&
       typeof item.id === "string" && (item.role === "user" || item.role === "assistant") && typeof item.text === "string")
       .map(item => {
         const snapshot = item.role === "user" ? { text: item.text, hasMedia: Boolean(item.hasMedia) } : completedSnapshot(item.text, item.hasMedia);
-        return { id: item.id, role: item.role, text: snapshot.text, hasMedia: snapshot.hasMedia, hadAttachments: Boolean(item.hadAttachments), stopped: item.role === "assistant" && Boolean(item.stopped), sources: cleanSources(item.sources) };
+        return { id: item.id, role: item.role, text: snapshot.text, hasMedia: snapshot.hasMedia, media: cleanStoredMedia(item.media), hadAttachments: Boolean(item.hadAttachments), stopped: item.role === "assistant" && Boolean(item.stopped), sources: cleanSources(item.sources) };
       });
     // Older versions saved only the latest exchange; earlier turns are unavailable.
     const transcript = [];
@@ -384,7 +391,7 @@
     const item = snapshotTurn(turn);
     const index = transcript.findIndex(existing => existing.id === item.id);
     if (index < 0) transcript.push(item);
-    else transcript[index] = item;
+    else transcript[index] = { ...item, media: transcript[index].media };
   }
 
   function historyItems() {
@@ -396,7 +403,7 @@
       const item = snapshotTurn(turn, visible);
       const index = items.findIndex(existing => existing.id === item.id);
       if (index < 0) items.push(item);
-      else items[index] = item;
+      else items[index] = { ...item, media: items[index].media };
     }
     return items.filter(item => item.text || item.hasMedia);
   }
@@ -465,7 +472,7 @@
         if (!stoppedNote) row.append(make("div", "turn-note", "Stopped"));
       } else if (stoppedNote) stoppedNote.remove();
       // Completed messages are immutable during a stream; avoid reparsing them.
-      const fingerprint = JSON.stringify([item.text, item.hasMedia, item.sources, item.stopped]);
+      const fingerprint = JSON.stringify([item.text, item.hasMedia, item.media, item.sources, item.stopped]);
       if (row._historyFingerprint === fingerprint) continue;
       row._historyFingerprint = fingerprint;
       row._copyText = item.text;
@@ -478,7 +485,9 @@
       syncMarkdownNodes(content, template.content);
       window.QMath?.renderInto(content);
       const media = row.querySelector(".turn-media");
-      if (item.hasMedia && !media.childElementCount) {
+      if (item.media?.length && chats.current.conversationId) {
+        media.replaceChildren(...item.media.map(file => storedMediaCard(file, chats.current.conversationId)));
+      } else if (item.hasMedia && !media.childElementCount) {
         const view = make("button", "hyperlink-btn", "View attachments in ChatGPT");
         view.type = "button";
         view.dataset.action = "history-media";
@@ -491,6 +500,66 @@
     else if (atEnd) panel.scrollTop = panel.scrollHeight;
     syncHistoryEdge();
     queueSizes();
+  }
+
+  // A file from a saved conversation, loaded when it scrolls near view.
+  const storedMediaLoader = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      storedMediaLoader.unobserve(entry.target);
+      entry.target._load?.();
+    }
+  }, { rootMargin: "600px" });
+
+  function storedMediaCard(file, conversationId) {
+    const card = make("div", "media-card stored-media");
+    card.dataset.file = file.file;
+    const mediaId = `stored:${file.file}:${conversationId}`;
+    const preview = make("div", "media-preview");
+    const status = make("span", "media-status");
+    const actions = make("div", "media-actions");
+    const save = make("button", "btn btn-compact", "Save to Downloads");
+    save.type = "button";
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try { await invoke("media_save", { mediaId, revision: 0 }); status.textContent = "Saved to Downloads"; }
+      catch (_) { status.textContent = "Could not save. View in ChatGPT to download."; }
+      finally { save.disabled = false; }
+    });
+    actions.append(save);
+    if (file.kind !== "image") {
+      card.append(make("div", "attachment-name", file.name), status, actions);
+      return card;
+    }
+    let image = null;
+    actions.prepend(imageCopyButton(async () => image));
+    card.append(preview, status, actions);
+    actions.hidden = true;
+    const load = async () => {
+      status.textContent = "Loading…";
+      try {
+        const meta = await invoke("media_load", { mediaId, revision: 0 });
+        if (!safeMediaSource(meta, "image")) throw new Error("Unsupported media");
+        image = make("img");
+        image.alt = file.name;
+        image.crossOrigin = "anonymous";
+        image.addEventListener("load", () => { queueSizes(); });
+        image.addEventListener("error", () => { status.textContent = "Preview unavailable."; });
+        image.src = meta.src;
+        preview.replaceChildren(image);
+        status.textContent = "";
+        actions.hidden = false;
+      } catch (_) {
+        status.textContent = "";
+        const retry = make("button", "btn btn-compact", "Retry image");
+        retry.type = "button";
+        retry.addEventListener("click", () => { retry.remove(); void load(); });
+        status.append(retry);
+      }
+    };
+    card._load = load;
+    storedMediaLoader.observe(card);
+    return card;
   }
 
   function syncHistoryEdge() {
@@ -628,16 +697,22 @@
     setHistoryStatus("");
     const older = cleanTranscript({ transcript: messages.map(item => ({ ...item, id: crypto.randomUUID() })) }).filter(item => item.text || item.hasMedia);
     const local = chat.transcript.filter(item => item.text || item.hasMedia);
-    if (complete && older.length >= local.length) {
-      // The account's record is the whole conversation, in order, including anything
-      // said on the website. Messages this PC already has keep their markdown and sources.
+    if (complete) {
+      // The account's record is the truth, including anything said on the website. A longer
+      // local list means messages this PC misfiled or lost the text of, never more truth.
+      // Messages this PC already has keep their markdown and sources.
       const known = new Map();
       for (const item of local) {
+        if (!item.text) continue;
         const key = `${item.role}:${comparable(item.text)}`;
         if (!known.has(key)) known.set(key, []);
         known.get(key).push(item);
       }
-      chat.transcript = older.map(item => known.get(`${item.role}:${comparable(item.text)}`)?.shift() || item);
+      chat.transcript = older.map(item => {
+        const mine = known.get(`${item.role}:${comparable(item.text)}`)?.shift();
+        return mine ? { ...mine, media: item.media, hasMedia: item.hasMedia || mine.hasMedia } : item;
+      });
+      if (chat === chats.current) refreshAfterRecord(chat);
       saveChats();
       renderHistory();
       return;
@@ -656,6 +731,21 @@
     chat.transcript = [...older.slice(0, end), ...chat.transcript];
     saveChats();
     renderHistory();
+  }
+
+  // Bubbles on screen were built from the old local copy. Any not in the record must not write
+  // themselves back into it when they leave, and a stale restored reply is rebuilt.
+  function refreshAfterRecord(chat) {
+    for (const turn of turns) {
+      if (turn.status !== "streaming" && !chat.transcript.some(item => item.id === turn.id)) turn.chatKey = "superseded";
+    }
+    if (isBusy() || historyOpen || !turns.length || turns.some(turn => !turn.restored)) return;
+    const shown = turns[0];
+    const latest = chat.transcript.findLast(item => item.role === "assistant");
+    if (latest && (latest.id !== shown.id || latest.text !== shown.text || latest.media?.length)) {
+      dismissExchange(true);
+      showCachedResponse(chat);
+    }
   }
 
   const capText = (value) => {
@@ -1472,7 +1562,7 @@
   // Keep transport snapshots separate from their paced presentation. The full
   // text remains on the turn for history/copy even while the visible tail drains.
   const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-  const streamStyle = () => QSettings.motionOn ? QSettings.settings.streamStyle || "fade" : "instant";
+  const streamStyle = () => QSettings.motionOn ? QSettings.settings.streamStyle || "paragraph" : "instant";
 
   // New words surface from low contrast. This is paint only (the CSS Highlight API), so it
   // adds no DOM, keeps selections intact and cannot change the layout of the text around it.
@@ -1486,7 +1576,7 @@
   }
 
   function noteRevealed(entry) {
-    if (!fadeHighlights || streamStyle() !== "fade") return;
+    if (!fadeHighlights || !["fade", "paragraph"].includes(streamStyle())) return;
     const length = entry.contentEl.textContent.length;
     const fade = entry.fade ||= { length: 0, recent: [], running: false };
     if (length > fade.length) fade.recent.push({ count: Math.min(length - fade.length, 800), at: performance.now() });
@@ -1557,6 +1647,12 @@
   // and jumps to the next as it grows; the last word waits briefly in case it is unfinished.
   function revealPlan(turn, state) {
     const style = streamStyle();
+    if (style === "paragraph") {
+      // Live tokens can be rough until a block is finished, so only finished blocks show.
+      clearTimeout(state.holdTimer);
+      state.holdTimer = null;
+      return window.QStream.revealStops(turn.backendDone ? turn.text : turn.text.slice(0, window.QStream.completeBoundary(turn.text)));
+    }
     if (style === "type") {
       const stops = [];
       for (const part of graphemes.segment(turn.text)) stops.push(part.index + part.segment.length);
@@ -1595,7 +1691,7 @@
         cancelReveal(entry);
         clearTimeout(state.holdTimer);
         state.index = state.stops.length;
-        state.visible = turn.text;
+        state.visible = streamStyle() === "paragraph" && !turn.backendDone ? turn.text.slice(0, state.stops.at(-1) || 0) : turn.text;
         state.credit = 0;
         state.last = Date.now();
         if (turn.text) revealResponse(turn);
@@ -1625,7 +1721,7 @@
       const now = Date.now();
       const elapsed = Math.min(64, Math.max(0, now - state.last));
       state.last = now;
-      const remaining = state.target.length - state.visible.length;
+      const remaining = (state.stops.at(-1) ?? state.visible.length) - state.visible.length;
       const base = 95 * (QSettings.settings.streamSpeed || 1);
       // Drain a backlog gradually: the rate glides, so a burst from the network reads as
       // a slightly faster flow rather than a lurch.
@@ -1750,13 +1846,18 @@
     renderHistory();
     const cachedTurn = chat.transcript.findLast(item => item.role === "assistant");
     const snapshot = completedSnapshot(cachedTurn ? cachedTurn.text : chat.lastResponse, cachedTurn ? cachedTurn.hasMedia : chat.lastHasMedia);
-    const fallback = snapshot.hasMedia || (!snapshot.text && chat.conversationId && chat.lastPrompt);
-    if (!snapshot.text && !fallback) return;
-    const turn = { id: cachedTurn?.id || crypto.randomUUID(), role: "assistant", text: snapshot.text, sources: cleanSources(cachedTurn ? cachedTurn.sources : chat.lastSources), status: "done", cachedMedia: Boolean(fallback), chatKey: chat.key, prompt: chat.lastPrompt, hadAttachments: cachedTurn?.hadAttachments || chat.lastHadAttachments, stopped: Boolean(cachedTurn?.stopped) };
+    const stored = chat.conversationId ? (cachedTurn?.media || []) : [];
+    const fallback = !stored.length && (snapshot.hasMedia || (!snapshot.text && chat.conversationId && chat.lastPrompt));
+    if (!snapshot.text && !fallback && !stored.length) return;
+    const turn = { id: cachedTurn?.id || crypto.randomUUID(), role: "assistant", text: snapshot.text, sources: cleanSources(cachedTurn ? cachedTurn.sources : chat.lastSources), status: "done", restored: true, cachedMedia: Boolean(fallback), chatKey: chat.key, prompt: chat.lastPrompt, hadAttachments: cachedTurn?.hadAttachments || chat.lastHadAttachments, stopped: Boolean(cachedTurn?.stopped) };
     turns.push(turn);
     el.zone.append(createResponseRow(turn));
     const entry = turnNodes.get(turn.id);
     renderSources(turn);
+    if (stored.length) {
+      entry.mediaEl.append(...stored.map(file => storedMediaCard(file, chat.conversationId)));
+      entry.row.toggleAttribute("data-wide", true);
+    }
     if (fallback) {
       const view = make("button", "hyperlink-btn", "View in ChatGPT");
       view.type = "button";
@@ -2067,6 +2168,8 @@
     }
     updateComposerMode();
     el.promptInput.focus();
+    // Bring the whole chat up to date as soon as it is opened.
+    if (target.conversationId) backfillHistory(target);
   }
 
   // ---------------------------------------------------------------------------
@@ -2150,10 +2253,12 @@
   }
   listen("bridge", ({ payload }) => { if (payload.type === "models") showModels(payload); else if (payload.type === "model-chosen") setModelLabel(payload.model.label); });
   // Every chat on the account, read through the signed-in page, with this PC's chats first.
-  const accountChats = { items: [], loading: false, loaded: false };
+  const accountChats = { items: [], loading: false, loaded: false, at: 0 };
 
   function loadAccountChats() {
     if (accountChats.loading || !bridge.loggedIn) return;
+    // ChatGPT rate-limits this list, so reopening the menu reuses a recent copy.
+    if (accountChats.loaded && Date.now() - accountChats.at < 120000) return;
     accountChats.loading = true;
     accountChats.items = [];
     invoke("chat_list_conversations", { offset: 0 }).catch(() => { accountChats.loading = false; });
@@ -2163,8 +2268,8 @@
     const seen = new Set(accountChats.items.map(item => item.id));
     for (const item of Array.isArray(event.items) ? event.items : []) if (!seen.has(item.id)) accountChats.items.push(item);
     const more = !event.error && event.items?.length && accountChats.items.length < Math.min(event.total || 0, 600);
-    if (more) invoke("chat_list_conversations", { offset: accountChats.items.length }).catch(() => { accountChats.loading = false; });
-    else { accountChats.loading = false; accountChats.loaded = !event.error; }
+    if (more) setTimeout(() => invoke("chat_list_conversations", { offset: accountChats.items.length }).catch(() => { accountChats.loading = false; }), 500);
+    else { accountChats.loading = false; accountChats.loaded = !event.error; accountChats.at = Date.now(); }
     if (!featureList.hidden) featureList._repaint?.();
   }
 
@@ -2300,11 +2405,16 @@
     el.orb.title = "QChat menu";
   }
 
+  let startupRead = false;
   function updateStatusHeader({ ready, loggedIn, signedOut }) {
     bridge.ready = Boolean(ready);
     bridge.loggedIn = Boolean(loggedIn);
     bridge.signedOut = Boolean(signedOut);
     paintStatusDot();
+    if (bridge.ready && bridge.loggedIn && !startupRead) {
+      startupRead = true;
+      backfillHistory(chats.current);
+    }
     if (bridge.ready) {
       clearTimeout(connectTimer);
       connectTimer = null;
@@ -2767,7 +2877,8 @@
       case "done": {
         const turn = turns.find((t) => t.id === evt.id);
         if (turn?.status === "streaming" && !turn.backendDone) {
-          if (typeof evt.text === "string") turn.text = evt.text;
+          // An empty final snapshot means the page lost track, not that the reply was erased.
+          if (typeof evt.text === "string" && (evt.text || !turn.text)) turn.text = evt.text;
           turn.backendDone = true;
           turn.activity = null;
           if (turnNodes.get(turn.id)?.activity) turnNodes.get(turn.id).activity.hidden = true;
@@ -2777,6 +2888,7 @@
               chat.conversationId = evt.conversationId;
               page = { key: chat.key, conv: evt.conversationId, pristine: false };
             }
+            backfilled.delete(chat);
             rememberTurn(turn);
             const snapshot = completedSnapshot(turn.text, turn.media?.length);
             chat.lastResponse = snapshot.text;

@@ -1,8 +1,8 @@
 // The blur companion must stay up and aligned while the window moves. Runs the real app in an
 // isolated guest profile, placed off screen, and moves it from outside with SetWindowPos: this is
 // the same message path as a drag, with no OS input. `--visual` also parks it on screen for about
-// two seconds and saves crops of only its own area to compare blur strengths. The window can take
-// focus when it loads, so this refuses to run while a fullscreen app (a game) is in front.
+// two seconds and saves crops of only its own area to compare blur strengths. Refuses to run while
+// a fullscreen app (a game) is in front.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,6 +30,7 @@ public static class W {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
   public static string Sweep(IntPtr main, IntPtr glass, int steps) {
     R m, g; GetWindowRect(main, out m);
     int hidden = 0, worst = 0, x = m.L, y = m.T; var sb = new StringBuilder();
@@ -68,7 +69,11 @@ try {
   const debug = () => ev(`window.__TAURI__.core.invoke('surfaces_debug')`);
   const ready = await until(async () => { const d = await debug(); return d.glassHwnd && d.blurOk && d.glassVisible && d.rectCount > 0 ? d : false; }, 'companion visible');
   check('companion shows under the real window', ready.glassIsBelowMain);
-    const hitOnly = await ev(`(()=>{const n=document.getElementById('bar');return n.classList.contains('glass');})()`);
+    // Give the pages time to load: a late focus grab is the failure this looks for.
+  await sleep(6000);
+  const owner = runPS('$h=[W]::GetForegroundWindow();$p=0;[void][W]::GetWindowThreadProcessId($h,[ref]$p);$p').stdout.trim();
+  check('neither hidden window takes the foreground', owner !== String(app.pid), owner);
+  const hitOnly = await ev(`(()=>{const n=document.getElementById('bar');return n.classList.contains('glass');})()`);
   check('the bar is a blur surface', hitOnly);
 
   const sweep = runPS(`[W]::Sweep([IntPtr]${ready.mainHwnd},[IntPtr]${ready.glassHwnd},60)`);

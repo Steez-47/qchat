@@ -207,6 +207,8 @@ try {
   await evalJS(`(()=>{window.streamId=__mock.last('chat_send').args.id;__mock.emit('bridge',{type:'delta',id:streamId,text:'Stable **paragraph**.\\n\\nGrowing tail'});})()`);
   await until(`document.querySelector('[data-role=assistant] .turn-content p')?.textContent==='Stable paragraph.'`);
   await evalJS(`window.stableParagraph=document.querySelector('[data-role=assistant] .turn-content p')`);
+  // This section is about the live word stream, not the default of whole paragraphs.
+  await evalJS(`QSettings.apply(document.documentElement,{...QSettings.settings,streamStyle:'fade'})`);
   await evalJS(`__mock.emit('bridge',{type:'delta',id:streamId,text:'Stable **paragraph**.\\n\\nGrowing tail with more words 🌿'});`);
   await until(`document.querySelector('[data-role=assistant] .turn-content')?.textContent.includes('more words')`);
   check('stream updates retain completed paragraph nodes', await evalJS(`stableParagraph===document.querySelector('[data-role=assistant] .turn-content p')`));

@@ -1,3 +1,10 @@
+## Owner's test bugs after the overhaul (2026-10-31)
+
+1. Garbled stream with raw `<Entity .../>`: only named layout tags switched the bridge to rendered text. Any JSX-style component now does, Entity tags become their value everywhere, and the new default stream style `paragraph` shows only finished blocks. Could not reproduce the garble on demand (it needs a rich reply), so that exact reply is unverified live.
+2. Button jitter: colour-only press and hover, no per-surface CSS blur, and blur sprites are moved in place instead of replacing the composition tree. Headless proves nothing moves or refits on press; the feel needs the owner's eye.
+3. Old chats: replies lost and "View attachments" came from local records that were misfiled or lost their text, and merge kept the local list when longer. The account record now always wins, chats refresh on open and at startup, an empty final snapshot cannot erase a reply, tool-authored images attach to the reply, and files load by id (`stored:<file>:<conversation>`). Live: 2 of 2 images rendered at 1254x1254, no placeholders (tools/live/old-image-check.mjs).
+Also: focus no longer lands on the off-screen page at launch (verified live, Brave kept focus). Account list hit HTTP 429 from repeated probing: it is cached 2 minutes and paged slowly; bridge reads retry while the session settles. Use tools/live/history-live-check.mjs sparingly.
+
 ## UI overhaul (2026-10-31, branch overnight-polish)
 
 Owner asked for easier reading, better animation, calmer streaming, real history, a usable scroll while streaming, far more customization and presets, and for the window's transparency to stop changing while it moves. Sol built the settings and presets; T0 did the rest.

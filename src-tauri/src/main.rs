@@ -146,6 +146,10 @@ fn show(app: &tauri::AppHandle) {
                 let _ = w.set_position(tauri::PhysicalPosition::new(-20000, -20000));
                 let _ = w.show();
             }
+            if let Some(w) = app.get_webview_window("chatgpt") {
+                let _ = w.set_position(tauri::PhysicalPosition::new(-32000, -32000));
+                let _ = w.show();
+            }
         }
         return;
     }
@@ -544,6 +548,7 @@ fn test_profile() -> Option<std::path::PathBuf> {
     }
 }
 fn main() {
+    surfaces::remember_launch_foreground();
     #[cfg(debug_assertions)]
     if let Ok(port) = std::env::var("QCHAT_DEBUG_PORT") {
         if port.parse::<u16>().is_ok() {

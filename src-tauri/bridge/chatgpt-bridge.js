@@ -233,6 +233,13 @@
     if (typeof token !== 'string' || !token) throw new Error('No session');
     return token;
   }
+  // Just after the page reports ready its session can still be settling, so a miss here is not final.
+  async function settled(read) {
+    for (let attempt = 0; ; attempt++) {
+      try { return await read(await sessionToken()); }
+      catch (error) { if (attempt === 3) throw error; await sleep(1000 + attempt * 1000); }
+    }
+  }
   async function readJSON(url, token) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
@@ -244,30 +251,50 @@
   }
   // The visible branch only: walks up from the current node, then drops tool calls,
   // hidden system context and reasoning. Consecutive assistant parts form one reply.
+  function storedMedia(parts, attachments) {
+    const seen = new Set(), out = [];
+    const add = (file, kind, name, mime) => {
+      if (typeof file !== 'string' || !/^[A-Za-z0-9_-]{4,120}$/.test(file) || seen.has(file)) return;
+      seen.add(file);
+      out.push({ file, kind, name: String(name || (kind === 'image' ? 'Image' : 'Attachment')).slice(0, 200), ...(typeof mime === 'string' ? { mime: mime.slice(0, 100) } : {}) });
+    };
+    for (const part of parts) {
+      if (part && typeof part === 'object' && typeof part.asset_pointer === 'string') add(part.asset_pointer.split('://').pop(), /image/.test(part.content_type || '') ? 'image' : 'file', part.name, part.mime_type);
+    }
+    for (const item of attachments) add(item?.id, /^image\//.test(item?.mime_type || '') ? 'image' : 'file', item?.name, item?.mime_type);
+    return out;
+  }
   function messagesFromMapping(data) {
     const chain = [];
     const seen = new Set();
     for (let id = data?.current_node; id && data.mapping?.[id] && !seen.has(id); id = data.mapping[id].parent) { seen.add(id); chain.unshift(data.mapping[id]); }
     const out = [];
+    let generated = [];
     for (const node of chain) {
       const message = node.message;
       const role = message?.author?.role;
-      if ((role !== 'user' && role !== 'assistant') || message.metadata?.is_visually_hidden_from_conversation) continue;
+      if (message?.metadata?.is_visually_hidden_from_conversation) continue;
+      // Generated images are stored on the tool's message; they belong to the next reply.
+      if (role === 'tool') { generated.push(...storedMedia(Array.isArray(message.content?.parts) ? message.content.parts : [], [])); continue; }
+      if (role !== 'user' && role !== 'assistant') continue;
       if (role === 'assistant' && message.recipient && message.recipient !== 'all') continue;
       const content = message.content;
       if (!content || !['text', 'multimodal_text'].includes(content.content_type)) continue;
       const parts = Array.isArray(content.parts) ? content.parts : [];
-      const text = parts.filter(part => typeof part === 'string').join('\n').replace(/\uE200[^\uE201]*\uE201/g, '').replace(/[\uE200-\uE206]/g, '').trim();
-      const hasMedia = parts.some(part => part && typeof part === 'object') || (Array.isArray(message.metadata?.attachments) && message.metadata.attachments.length > 0);
-      if (!text && !hasMedia) continue;
+      const text = entityText(parts.filter(part => typeof part === 'string').join('\n')).replace(/\uE200[^\uE201]*\uE201/g, '').replace(/[\uE200-\uE206]/g, '').trim();
+      const files = storedMedia(parts, Array.isArray(message.metadata?.attachments) ? message.metadata.attachments : []);
+      if (role === 'assistant') { files.unshift(...generated); generated = []; }
+      if (!text && !files.length) continue;
       const last = out[out.length - 1];
-      if (role === 'assistant' && last?.role === 'assistant') { last.text = [last.text, text].filter(Boolean).join('\n\n'); last.hasMedia = last.hasMedia || hasMedia; continue; }
-      out.push({ role, text, hasMedia });
+      if (role === 'assistant' && last?.role === 'assistant') { last.text = [last.text, text].filter(Boolean).join('\n\n'); last.media.push(...files); last.hasMedia = last.media.length > 0; continue; }
+      out.push({ role, text, media: files, hasMedia: files.length > 0 });
     }
+    // An image can be the last thing in a conversation, with no reply text after it.
+    if (generated.length) out.push({ role: 'assistant', text: '', media: generated, hasMedia: true });
     return out;
   }
   async function storedMessages(id) {
-    const data = await readJSON(`/backend-api/conversation/${id}`, await sessionToken());
+    const data = await settled(token => readJSON(`/backend-api/conversation/${id}`, token));
     const messages = messagesFromMapping(data);
     return messages.length ? messages : null;
   }
@@ -356,12 +383,16 @@
       emit({ type: 'sources', id: job.id, items });
     }
   }
+  // <Entity value="R34"/> is how the site marks a named thing: its value is the visible text.
+  function entityText(text) {
+    return text.replace(/<Entity\b[^>]*?\bvalue\s*=\s*"([^"]*)"[^>]*?(?:\/>|>(?:\s*<\/Entity>)?)/g, '$1').replace(/<\/?Entity\b[^>]*(?:>|$)/g, '');
+  }
   function citationText(job, text) {
     const links = refs => [...new Set(refs.split(/[\s,;\uE202]+/).filter(Boolean))].map(ref => {
       const item = job.sourceRefs?.get(ref);
       return item ? `[${item.title.replace(/[\\[\]]/g, '\\$&')}](${item.url})` : '';
     }).filter(Boolean).join(' ');
-    return text.replace(/<Cite\b[^>]*\bref\s*=\s*["']([^"']*)["'][^>]*\/?>(?:\s*<\/Cite>)?/gi, (_, refs) => links(refs))
+    return entityText(text).replace(/<Cite\b[^>]*\bref\s*=\s*["']([^"']*)["'][^>]*\/?>(?:\s*<\/Cite>)?/gi, (_, refs) => links(refs))
       .replace(/\uE200(?:cite|navlist|image)\uE202([^\uE201]*)\uE201/g, (_, refs) => links(refs))
       .replace(/<\/?Cite\b[^>]*>/gi, '')
       .replace(/<(?:C|Ci|Cit|Cite\b[^>]*)$|\uE200[^\uE201]*$/gi, '')
@@ -578,8 +609,10 @@
     // JSX props identify the site's rich layout stream outside code examples.
     const prose = text.replace(/(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\1[^\n]*|$)|`+[^`\n]*`+/g, '');
     const partial = /<([a-z]+)$/i.exec(prose)?.[1].toLowerCase();
-    return /<(?:AsyncImage|row|box|text)\b/i.test(prose) ||
-      !!partial && ['asyncimage', 'row', 'box', 'text'].some(name => name.startsWith(partial));
+    // Any JSX-style component is the site's own markup; only citations are handled here.
+    const component = [...prose.matchAll(/<\/?([A-Z][A-Za-z]*)\b/g)].some(match => match[1] !== 'Cite');
+    return component || /<(?:row|box|text)\b/i.test(prose) ||
+      !!partial && ['asyncimage', 'row', 'box', 'text', 'entity'].some(name => name.startsWith(partial));
   }
   function networkText(job, text, canonicalFallback = false) {
     if (active !== job || job.finished || job.finishing) return;
@@ -927,7 +960,26 @@
     control.click();
     return mediaInfo(id);
   }
+  // Files in saved conversations are addressed by id, so they outlive any page or session.
+  async function resolveStoredMedia(file, conversation) {
+    const token = await sessionToken();
+    const info = await readJSON(`/backend-api/files/download/${file}?conversation_id=${conversation}&inline=true`, token);
+    const url = safeURL(info?.download_url);
+    if (!url) throw new Error('This attachment is unavailable. View it in ChatGPT.');
+    const name = String(info.file_name || 'Image').slice(0, 200);
+    const mime = typeof info.mime_type === 'string' ? info.mime_type : undefined;
+    const kind = mediaKind(name, mime);
+    if (new URL(url, location.href).origin !== location.origin) return { url, kind, name, ...(mime ? { mime } : {}) };
+    // Same-origin content needs the session header, which the native loader cannot add.
+    const response = await originalFetch(url, { credentials: 'same-origin', headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) throw new Error('This attachment is unavailable. View it in ChatGPT.');
+    const blob = URL.createObjectURL(await response.blob());
+    setTimeout(() => URL.revokeObjectURL(blob), 60000);
+    return { url: blob, kind, name, ...(mime ? { mime } : {}) };
+  }
   async function resolveMedia(id) {
+    const stored = /^stored:([A-Za-z0-9_-]{4,120}):([A-Za-z0-9_-]{8,80})$/.exec(id);
+    if (stored) return resolveStoredMedia(stored[1], stored[2]);
     const entry = media.get(id);
     if (!entry) throw new Error('This attachment is unavailable. View it in ChatGPT.');
     if (!entry.url && !entry.node) {
@@ -1135,11 +1187,11 @@
     async listConversations(offset = 0) {
       const start = Math.max(0, Math.floor(Number(offset)) || 0);
       try {
-        const data = await readJSON(`/backend-api/conversations?offset=${start}&limit=100&order=updated`, await sessionToken());
+        const data = await settled(token => readJSON(`/backend-api/conversations?offset=${start}&limit=100&order=updated`, token));
         const items = (Array.isArray(data?.items) ? data.items : []).filter(item => typeof item?.id === 'string' && /^[A-Za-z0-9_-]{8,80}$/.test(item.id))
           .map(item => ({ id: item.id, title: String(item.title || '').slice(0, 200), updated: Date.parse(item.update_time) || (Number(item.update_time) * 1000) || 0 }));
         emit({ type: 'conversations', items, offset: start, total: Number(data?.total) || items.length });
-      } catch (_) { emit({ type: 'conversations', items: [], offset: start, total: 0, error: 'unavailable' }); }
+      } catch (error) { emit({ type: 'conversations', items: [], offset: start, total: 0, error: 'unavailable', reason: String(error?.message || '').slice(0, 80) }); }
     },
     async openConversation(id) {
       if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(id)) throw new Error('invalid_id');

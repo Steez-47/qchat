@@ -1,4 +1,5 @@
-// Opt-in, read-only check of chat history against the real account. Needs QChat closed so the
+// Opt-in, read-only check of chat history against the real account. Uses the rate-limited chat list,
+// so run it sparingly; tools/live/old-image-check.mjs avoids that list. Needs QChat closed so the
 // signed-in profile can be copied. Runs the debug build off screen on a disposable copy, sends
 // nothing, prints only counts and shapes, and deletes the copy (it holds a session) when done.
 import { spawn, spawnSync } from 'node:child_process';
@@ -34,7 +35,7 @@ try {
 
   // The real commands, as the UI calls them.
   await ev(`window.__TAURI__.core.invoke('chat_list_conversations',{offset:0})`);
-  const list = await until(() => ev(`(()=>{const e=window.__seen.find(e=>e.type==='conversations');return e?{count:e.items.length,total:e.total,error:e.error||null,titled:e.items.filter(i=>i.title).length,timed:e.items.filter(i=>i.updated>0).length}:null;})()`), 'chat list', 30000);
+  const list = await until(() => ev(`(()=>{const e=window.__seen.find(e=>e.type==='conversations');return e?{count:e.items.length,total:e.total,error:e.error||null,reason:e.reason||null,titled:e.items.filter(i=>i.title).length,timed:e.items.filter(i=>i.updated>0).length}:null;})()`), 'chat list', 30000);
   check('the account chat list comes back', list.count > 0 && !list.error, JSON.stringify(list));
   check('chats have titles and times', list.titled > 0 && list.timed === list.count);
 
@@ -60,6 +61,7 @@ try {
     return {listed:count,open:!panel.hidden,rows:panel.querySelectorAll('.turn-row').length,visible,withText:[...panel.querySelectorAll('.turn-content')].filter(n=>n.textContent.trim()).length,status:document.getElementById('history-status').hidden,loaded:!!filled};
   })()`);
   check('All chats lists the account and opening one shows its messages', ui.listed > 0 && ui.open && ui.rows > 0 && ui.visible === ui.rows && ui.withText > 0, JSON.stringify(ui));
+
 } catch (e) { console.error(`FAIL ${e.message}`); failed++; }
 finally {
   ws?.close();

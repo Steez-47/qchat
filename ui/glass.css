@@ -113,7 +113,8 @@ h1, h2, h3 { margin: 0; font-weight: inherit; font-size: inherit; }
   --fill-a: var(--tint-a); --fill-b: var(--tint-b); --fill-alpha: var(--glass-a);
   position: relative; isolation: isolate;
   background: linear-gradient(180deg, rgb(var(--fill-a) / var(--fill-alpha)), rgb(var(--fill-b) / var(--fill-alpha)));
-  backdrop-filter: blur(var(--blur));
+  /* The real blur is native. A CSS one here reaches only the page, and costs a redraw of
+     everything behind any animation inside the glass. */
   box-shadow: inset 0 1px 0 rgb(255 255 255 / var(--specular)), var(--material-shadow);
 }
 .glass::after {

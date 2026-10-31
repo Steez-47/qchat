@@ -337,6 +337,9 @@ extern "system" {
     fn GetAsyncKeyState(k: i32) -> i16;
     fn GetWindowRect(h: isize, r: *mut Rect) -> i32;
     fn IsWindowVisible(h: isize) -> i32;
+    fn GetForegroundWindow() -> isize;
+    fn SetForegroundWindow(h: isize) -> i32;
+    fn GetWindowThreadProcessId(h: isize, process: *mut u32) -> u32;
     fn IsIconic(h: isize) -> i32;
     fn GetDpiForWindow(h: isize) -> u32;
     fn CreateWindowExW(
@@ -377,6 +380,7 @@ extern "system" {
 #[link(name = "kernel32")]
 extern "system" {
     fn GetModuleHandleW(s: *const u16) -> isize;
+    fn GetCurrentProcessId() -> u32;
 }
 #[link(name = "advapi32")]
 extern "system" {
@@ -433,6 +437,34 @@ unsafe extern "system" fn follow_main(
     }
     DefSubclassProc(h, message, w, l)
 }
+static LAUNCH_FOREGROUND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+// Must run before any window exists: creating them is what takes the foreground.
+pub fn remember_launch_foreground() {
+    LAUNCH_FOREGROUND.store(unsafe { GetForegroundWindow() }, std::sync::atomic::Ordering::Relaxed);
+}
+// The hidden ChatGPT page lives off screen but is a real window, and it or its webview can take the
+// foreground when shown or when the page loads. Focus there goes nowhere, so hand it straight back.
+unsafe fn return_stray_focus(w: &tauri::WebviewWindow, last_other: &mut isize) {
+    let front = GetForegroundWindow();
+    if front == 0 {
+        return;
+    }
+    let mut process = 0u32;
+    GetWindowThreadProcessId(front, &mut process);
+    if process != GetCurrentProcessId() {
+        *last_other = front;
+        return;
+    }
+    let mut at = Rect::default();
+    GetWindowRect(front, &mut at);
+    if at.left < -10000 && *last_other != 0 && IsWindow(*last_other) != 0 {
+        // Windows only honours this from the thread that owns the current foreground window.
+        let target = *last_other;
+        let _ = w.run_on_main_thread(move || unsafe {
+            SetForegroundWindow(target);
+        });
+    }
+}
 // One call, so the top edge and the size change in the same frame.
 pub fn place_window(w: &tauri::WebviewWindow, x: i32, y: i32, width: i32, height: i32) {
     if let Ok(hwnd) = w.hwnd() {
@@ -443,7 +475,10 @@ pub fn place_window(w: &tauri::WebviewWindow, x: i32, y: i32, width: i32, height
 // All WinRT objects live on the companion thread and are released there.
 struct GlassComposition {
     compositor: windows::UI::Composition::Compositor,
-    target: windows::UI::Composition::Desktop::DesktopWindowTarget,
+    _target: windows::UI::Composition::Desktop::DesktopWindowTarget,
+    root: windows::UI::Composition::ContainerVisual,
+    brush: windows::UI::Composition::CompositionBackdropBrush,
+    sprites: std::cell::RefCell<Vec<(windows::UI::Composition::SpriteVisual, windows::UI::Composition::CompositionRoundedRectangleGeometry)>>,
     _queue: windows::System::DispatcherQueueController,
 }
 impl GlassComposition {
@@ -474,21 +509,40 @@ impl GlassComposition {
         let compositor = windows::UI::Composition::Compositor::new()?;
         let interop: ICompositorDesktopInterop = compositor.cast()?;
         let target = interop.CreateDesktopWindowTarget(HWND(hwnd as _), false)?;
+        let root = compositor.CreateContainerVisual()?;
+        target.SetRoot(&root)?;
+        let brush = compositor.CreateHostBackdropBrush()?;
         Ok(Self {
             compositor,
-            target,
+            _target: target,
+            root,
+            brush,
+            sprites: Default::default(),
             _queue: queue,
         })
     }
     fn update(&self, rects: &[Surface], scale: f64, strength: f64) -> windows::core::Result<()> {
         let c = &self.compositor;
-        // Construct a detached tree, then replace the root once. No intermediate
-        // empty/partially rebuilt tree can be presented while a reply streams.
-        let root = c.CreateContainerVisual()?;
-        let children = root.Children()?;
-        let brush = c.CreateHostBackdropBrush()?;
-        for r in rects.iter().filter(|r| r.b).filter_map(|r| r.physical_inset(scale)) {
-            let sprite = c.CreateSpriteVisual()?;
+        // Existing sprites are moved in place. Replacing the tree on every small change
+        // makes all the glass blink, which reads as the whole window jittering.
+        let wanted: Vec<Surface> = rects.iter().filter(|r| r.b).filter_map(|r| r.physical_inset(scale)).collect();
+        let children = self.root.Children()?;
+        let mut sprites = self.sprites.borrow_mut();
+        while sprites.len() > wanted.len() {
+            if let Some((sprite, _)) = sprites.pop() {
+                children.Remove(&sprite)?;
+            }
+        }
+        for (index, r) in wanted.iter().enumerate() {
+            if index == sprites.len() {
+                let sprite = c.CreateSpriteVisual()?;
+                let geometry = c.CreateRoundedRectangleGeometry()?;
+                sprite.SetClip(&c.CreateGeometricClipWithGeometry(&geometry)?)?;
+                sprite.SetBrush(&self.brush)?;
+                children.InsertAtTop(&sprite)?;
+                sprites.push((sprite, geometry));
+            }
+            let (sprite, geometry) = &sprites[index];
             // The system blur has a fixed radius; strength crossfades it with the sharp desktop.
             sprite.SetOpacity(strength as f32)?;
             let mut size = sprite.Size()?;
@@ -499,17 +553,12 @@ impl GlassComposition {
             offset.X = r.x as f32;
             offset.Y = r.y as f32;
             sprite.SetOffset(offset)?;
-            let geometry = c.CreateRoundedRectangleGeometry()?;
             geometry.SetSize(size)?;
             let mut radius = geometry.CornerRadius()?;
             radius.X = r.r as f32;
             radius.Y = radius.X;
             geometry.SetCornerRadius(radius)?;
-            sprite.SetClip(&c.CreateGeometricClipWithGeometry(&geometry)?)?;
-            sprite.SetBrush(&brush)?;
-            children.InsertAtTop(&sprite)?;
         }
-        self.target.SetRoot(&root)?;
         let _ = c.RequestCommitAsync()?;
         Ok(())
     }
@@ -526,6 +575,7 @@ pub fn start(app: &tauri::AppHandle) {
     let registered = if !registered { chosen = "Alt+Q".into(); app.global_shortcut().register(chosen.as_str()).is_ok() } else { true };
     { let state=app.state::<State>(); let mut s=state.0.lock().unwrap(); s.hotkey=chosen; s.registered=registered; }
     let app = app.clone();
+    let mut last_other = LAUNCH_FOREGROUND.load(std::sync::atomic::Ordering::Relaxed);
     std::thread::spawn(move || unsafe {
         let Some(w) = app.get_webview_window("main") else {
             return;
@@ -591,6 +641,7 @@ pub fn start(app: &tauri::AppHandle) {
                 DestroyWindow(glass);
                 break;
             }
+            return_stray_focus(&w, &mut last_other);
             let visible = IsWindowVisible(main) != 0 && IsIconic(main) == 0;
             let scale = GetDpiForWindow(main) as f64 / 96.;
             let mut bounds = Rect::default();
@@ -608,7 +659,9 @@ pub fn start(app: &tauri::AppHandle) {
             // The glass stays up during a drag: hiding it is what made the window look
             // more transparent while moving. follow_main keeps the two together.
             let wanted_blur = (blur, tint, strength.to_bits());
-            if *rects != cached_rects || scale != oldscale || applied_blur != Some(wanted_blur) {
+            // Hit-test-only rects change as controls appear; they do not touch the glass.
+            let blur_rects: Option<Vec<Surface>> = rects.as_ref().map(|all| all.iter().filter(|r| r.b).cloned().collect());
+            if blur_rects != cached_rects || scale != oldscale || applied_blur != Some(wanted_blur) {
                 // Tint is supplied by the existing web glass fill above this window.
                 blur_ok = composition.as_ref().is_some_and(|c| {
                     match c.update(
@@ -630,7 +683,7 @@ pub fn start(app: &tauri::AppHandle) {
                         }
                     }
                 });
-                cached_rects = (*rects).clone();
+                cached_rects = blur_rects;
                 oldscale = scale;
                 applied_blur = Some(wanted_blur);
             }

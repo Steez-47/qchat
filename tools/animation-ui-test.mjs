@@ -105,8 +105,9 @@ try {
 
   const plain = `document.querySelector('[data-role=assistant] .turn-content')?.textContent.trimEnd()||''`;
   const emit = (type, text) => evalJS(`__mock.emit('bridge',{type:${JSON.stringify(type)},id:__mock.last('chat_send').args.id,text:${JSON.stringify(text)},conversationId:'animation-fixture'})`);
+  const QCHAT_SETTINGS_V = 4;
   const begin = async (style = 'type') => {
-    await open('/', {settings:{animations:'on',autoDismiss:0,streamStyle:style}});
+    await open('/', {settings:{v:QCHAT_SETTINGS_V,animations:'on',autoDismiss:0,streamStyle:style}});
     await evalJS(`__mock.hold=true`);
     await send('Animation fixture');
     await until(`__mock.last('chat_send')`);
@@ -242,7 +243,54 @@ try {
   await emit('done',prose);await finishReply();
   check('highlights clear when the reply is done',await evalJS(`!CSS.highlights.has('qchat-fade-0')`));
 
+  // Paragraph streaming: only finished blocks ever show.
+  await begin('paragraph');
+  await emit('delta','First paragraph is done.\n\nSecond paragraph is still being wri');
+  await until(`(${plain}).includes('First paragraph is done.')`,'first paragraph flows in');
+  await sleep(500);
+  check('an unfinished paragraph stays hidden',await evalJS(`(${plain})==='First paragraph is done.'`),await evalJS(plain));
+  await emit('delta','First paragraph is done.\n\nSecond paragraph is now finished.\n\nThird sta');
+  await until(`(${plain}).includes('now finished.')`,'second paragraph flows in');
+  await sleep(300);
+  check('the next one appears only once finished',!(await evalJS(plain)).includes('Third'),await evalJS(plain));
+  await emit('done','First paragraph is done.\n\nSecond paragraph is now finished.\n\nThird starts and ends here.');
+  await finishReply();
+  check('the end of the reply flows in and is exact',await evalJS(`(${plain}).endsWith('Third starts and ends here.')`));
+  await begin('paragraph');
+  const entityReply='The **<Entity category="vehicle" value="Nissan Skyline GT-R R34" disambig="1999-2002 coupe"/>** is great.\n\nMore text';
+  await emit('delta',entityReply);
+  await until(`(${plain}).includes('is great.')`,'entity paragraph');
+  check('site markup becomes its visible value while streaming',await evalJS(`(()=>{const t=${plain};return t==='The Nissan Skyline GT-R R34 is great.' && !t.includes('Entity') && !t.includes('disambig');})()`),await evalJS(plain));
+  await emit('done',entityReply.replace('More text','More text here.'));await finishReply();
+  check('and once it has finished',await evalJS(`!(${plain}).includes('Entity') && (${plain}).includes('More text here.')`));
+  const whole=(input)=>evalJS(`QStream.completeBoundary(${JSON.stringify(input)})`);
+  check('a paragraph is finished by its blank line',await whole('One line\nstill going')===0 && await whole('One.\n\nTwo')===6);
+  check('list items and code lines finish at their newline',await whole('- one\n- tw')===6 && await whole('```js\nconst a;\nconst')===15);
+
+  // Pressing a button must not disturb anything else, at any point in its animation.
+  await open('/',{settings:{animations:'on',autoDismiss:0}});
+  await evalJS(`__mock.hold=true`);await send('Button press fixture');await until(`__mock.last('chat_send')`);
+  await emit('done','A short reply to press the buttons on.\n\nWith a second line.');await finishReply();await settle();
+  const box=await evalJS(`(()=>{const r=document.querySelector('.bubble-response').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};})()`);
+  await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:box.x,y:box.y});await sleep(350);
+  const tool=await evalJS(`(()=>{const r=document.querySelector('[data-action=copy-turn]').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};})()`);
+  await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:tool.x,y:tool.y});await sleep(200);
+  await evalJS(`window.__watch={moves:0,rows:new Set(),fits:__mock.fits.length,run:true,base:JSON.stringify([document.getElementById('bar').getBoundingClientRect(),document.querySelector('.bubble-response').getBoundingClientRect()])};(function look(){if(!__watch.run)return;const now=JSON.stringify([document.getElementById('bar').getBoundingClientRect(),document.querySelector('.bubble-response').getBoundingClientRect()]);if(now!==__watch.base)__watch.moves++;requestAnimationFrame(look);})()`);
+  await cdp('Input.dispatchMouseEvent',{type:'mousePressed',x:tool.x,y:tool.y,button:'left',clickCount:1});
+  const pressed=await evalJS(`getComputedStyle(document.querySelector('[data-action=copy-turn]')).transform`);
+  await sleep(150);
+  await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:tool.x,y:tool.y,button:'left',clickCount:1});
+  await sleep(400);
+  const watch=await evalJS(`(()=>{__watch.run=false;return {moves:__watch.moves,fits:__mock.fits.length-__watch.fits};})()`);
+  check('pressing and releasing a button moves nothing',watch.moves===0,JSON.stringify(watch));
+  check('and asks the window for nothing',watch.fits===0,JSON.stringify(watch));
+  check('press feedback uses no transform',pressed==='none',pressed);
+  check('glass has no page-level blur to redraw',await evalJS(`getComputedStyle(document.getElementById('bar')).backdropFilter==='none' && getComputedStyle(document.querySelector('.bubble-response')).backdropFilter==='none'`));
+  const barPress=await evalJS(`(()=>{const sheet=[...document.styleSheets].flatMap(s=>[...s.cssRules]).filter(r=>r.selectorText&&/:active|:hover/.test(r.selectorText)&&r.style?.transform&&r.style.transform!=='none'&&/bar-btn|send-btn|\\.btn|suggestion|history-button/.test(r.selectorText));const later=[...document.styleSheets].flatMap(s=>[...s.cssRules]).filter(r=>r.selectorText&&/:active|:hover/.test(r.selectorText)&&r.style?.transform==='none');return {moving:sheet.length,neutralised:later.length};})()`);
+  check('button rules that move are neutralised',barPress.neutralised>=1,JSON.stringify(barPress));
+
   const unit=(input)=>evalJS(`QStream.stabilize(${JSON.stringify(input)})`);
+  check('an entity tag still arriving stays hidden',await unit('The <Entity category="veh')==='The ');
   check('a half-typed bold closes immediately',await unit('Some **bold wo')==='Some **bold wo**');
   check('half-typed inline code closes',await unit('Use `npm i')==='Use `npm i`');
   check('a link in progress shows only its label',await unit('See [the docs](https://exa')==='See the docs');

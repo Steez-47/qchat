@@ -847,3 +847,14 @@ html[data-scrollbar="hidden"] :is(.scroll, .history-panel, .feature-results)::-w
 
 /* These block margins outrank the generic last-child reset above. */
 .turn-content > :is(.code-block, table, blockquote, ul, ol):last-child { margin-bottom: 0; }
+
+/* Press and hover feedback is colour only. Transforms promote and demote compositor layers
+   as they start and stop, which reads as the whole window jittering. */
+.bar-btn, .btn, .suggestion, .tab, .history-button, .send-btn { transition: background-color var(--t1) linear, color var(--t1) linear, opacity var(--t1) linear; }
+.bar-btn:active:not(:disabled), .btn:active:not(:disabled), .btn-accent:hover:not(:disabled), .suggestion:hover, .history-button:active,
+.send-btn:not(:disabled)[data-mode="send"]:hover, .send-btn:not(:disabled)[data-mode="send"]:active, .send-btn:disabled:not([data-mode="stop"]) { transform: none; }
+.bar-btn:active:not(:disabled), .btn:active:not(:disabled), .tool-btn:active, .history-button:active { background: var(--fill-3); }
+.send-btn:not(:disabled)[data-mode="send"]:active { opacity: 0.82; }
+.history-row .stored-media, .bubble-response .stored-media { width: auto; padding: 0; background: none; box-shadow: none; }
+.stored-media .media-preview img { margin: 0 0 6px; max-height: 420px; }
+.stored-media .media-actions:empty { display: none; }

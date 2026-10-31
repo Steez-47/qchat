@@ -47,6 +47,27 @@
     return boundary;
   }
 
+  // Everything before the returned index is finished for reading: paragraphs end at a blank
+  // line, while list items, table rows, quotes, headings and code lines end at their newline.
+  function completeBoundary(text) {
+    let fence = null, offset = 0, end = 0;
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length - 1; i++) {
+      const line = lines[i];
+      const next = offset + line.length + 1;
+      const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      if (match) {
+        if (!fence) fence = { marker: match[1][0], size: match[1].length };
+        else if (match[1][0] === fence.marker && match[1].length >= fence.size && !match[2].trim()) fence = null;
+        end = next;
+      } else if (fence || !line.trim() || /^\s*(?:[-*+]\s|\d+[.)]\s|>|\||#{1,6}\s)/.test(line)) {
+        end = next;
+      }
+      offset = next;
+    }
+    return end;
+  }
+
   function closeInline(line) {
     let out = line;
     // A link still being typed shows its label only; the URL appears once it is whole.
@@ -74,6 +95,8 @@
   // What should be rendered for this tail right now. The canonical text is untouched.
   function stabilize(text) {
     let source = text;
+    // The site's own markup is never reading material, finished or not.
+    source = source.replace(/<Entity\b[^>]*?\bvalue\s*=\s*"([^"]*)"[^>]*?(?:\/>|>(?:\s*<\/Entity>)?)/g, "$1").replace(/<\/?(?:E|En|Ent|Enti|Entit|Entity\b[^>]*)$/, "");
     // Native citation tokens and Cite tags are only meaningful when complete.
     source = source.replace(/[^]*$/, "").replace(/<Cite\b[^>]*$/i, "").replace(/<\/?C?i?t?e?$/i, match => (match.startsWith("<") && match.length > 1 ? "" : match));
     const fence = scanFences(source);
@@ -133,8 +156,8 @@
     const stops = [];
     for (const part of words.segment(text.slice(from))) {
       const end = from + part.index + part.segment.length;
-      // Trailing whitespace belongs to the word before it, so a line never ends mid-gap.
-      if (!part.segment.trim() && stops.length) { stops[stops.length - 1] = end; continue; }
+      // Spaces and closing punctuation belong to the word before them.
+      if (stops.length && /^[\s.,;:!?)\]'"’”…]+$/.test(part.segment)) { stops[stops.length - 1] = end; continue; }
       if (part.segment.length <= cap) { stops.push(end); continue; }
       let at = from + part.index, run = 0;
       for (const g of graphemes.segment(part.segment)) {
@@ -146,5 +169,5 @@
     return stops;
   }
 
-  window.QStream = { stabilize, stableBoundary, revealStops };
+  window.QStream = { stabilize, stableBoundary, completeBoundary, revealStops };
 })();

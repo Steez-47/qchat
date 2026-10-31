@@ -6,7 +6,7 @@
   const STORAGE_KEY = "qchat.settings";
   const THEME_KEY = "qchat.theme";
   const LEGACY_LOOK_KEY = "qchat.look";
-  const VERSION = 3;
+  const VERSION = 4;
 
   // ---------------------------------------------------------------------------
   // Looks. Everything else (fills, text tiers, rims) is derived in apply().
@@ -93,7 +93,7 @@
     codeFont: choice("cascadia",["cascadia","consolas","system","courier"]), codeWrap: bool(false),
     userLines: range(6,0,20,1), userAlign: choice("right",["right","left"]), showPrompt: bool(false),
     linkStyle: choice("underline",["underline","color","bold"]), quoteStyle: choice("fill",["fill","plain","italic"]), softEdges: bool(true),
-    streamStyle: choice("fade",["fade","word","type","instant"]), streamSpeed: range(1,.5,3,.1,"×"), followStream: bool(true), streamCaret: bool(false),
+    streamStyle: choice("paragraph",["paragraph","fade","word","type","instant"]), streamSpeed: range(1,.5,3,.1,"×"), followStream: bool(true), streamCaret: bool(false),
     enterStyle: choice("rise",["rise","fade","scale","none"]), tabCount: range(3,1,8,1), tabStyle: choice("attached",["attached","floating","text"]),
     showAttach: bool(true), orbStyle: choice("gradient",["gradient","solid","ring","hidden"]), sendStyle: choice("accent",["accent","quiet"]),
     scrollbarStyle: choice("thin",["thin","wide","hidden"]), placeholderText: {type:"text",def:"Ask anything",max:60},
@@ -230,6 +230,8 @@
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return sanitize({});
       const upgrading = parsed.v !== VERSION;
       if ((parsed.v || 0) < 2) for (const key of V2_RESET) delete parsed[key];
+      // Paragraph streaming replaced the live word stream as the default.
+      if ((parsed.v || 0) < 4 && parsed.streamStyle === "fade") parsed.streamStyle = "paragraph";
       if ((parsed.v || 0) < 3) {
         delete parsed.blur; delete parsed.replyOpacity;
         if (parsed.feel === "springy") parsed.feel = "calm";
