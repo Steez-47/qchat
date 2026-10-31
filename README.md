@@ -14,7 +14,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - Code is highlighted and maths is rendered.
 - `/keys` lists the shortcuts. Settings has the global shortcut.
 - **Open at startup:** turn it on in Settings, the tray or with `/startup`. QChat then starts quietly in the tray at login, ready for your shortcut. Turn on *Show the bar at startup* to see it straight away. Opening QChat yourself always shows the bar.
-- **Gemini:** the button beside the prompt, or `/gemini` and `/chatgpt`, switches provider. Each chat stays with the provider it started on, and Settings has a default provider and a sign-in for each. Gemini loads only once you first use it.
+- **Gemini:** `/gemini` and `/chatgpt`, or the last row of the picker beside the prompt, switch provider. That picker sets reasoning on ChatGPT and the model on Gemini. Tabs show each chat's provider logo. Each chat stays with the provider it started on, and Settings has a default provider and a sign-in for each. Gemini loads only once you first use it.
 - **Sign in:** Settings or the tray -> Sign in. Log in once in the window that opens, and you stay signed in.
 - Without signing in it chats as a ChatGPT guest.
 - Attach files with the paperclip, paste from the clipboard, or drop them onto the chat. Attachments can be sent with or without text.
@@ -25,7 +25,7 @@ QChat accepts up to 10 attachments totalling 512 MB. ChatGPT's own account, uplo
 
 ## Install
 
-Download `QChat_1.0.0_x64-setup.exe` from the [v1.0.0 release](https://github.com/Steez-47/qchat/releases/tag/v1.0.0). The Windows x64 installer includes WebView2, installs for your current user, and creates a Start menu shortcut. Quit any existing QChat tray instance first. This release is unsigned; Windows may show an unknown-publisher warning. See [installation and testing notes](packaging/INSTALL.txt).
+Download `QChat_1.2.0_x64-setup.exe` from the [v1.2.0 release](https://github.com/Steez-47/qchat/releases/tag/v1.2.0). The Windows x64 installer includes WebView2, installs for your current user, and creates a Start menu shortcut. Quit any existing QChat tray instance first. This release is unsigned; Windows may show an unknown-publisher warning. See [installation and testing notes](packaging/INSTALL.txt).
 
 ## Build and run
 ```

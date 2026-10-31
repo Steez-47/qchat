@@ -1,7 +1,7 @@
-QChat 1.1.0 for Windows x64
+QChat 1.2.0 for Windows x64
 
 INSTALL
-Run QChat_1.1.0_x64-setup.exe. Install for your Windows user, then open
+Run QChat_1.2.0_x64-setup.exe. Install for your Windows user, then open
 QChat from the Start menu or the installer's Finish page.
 The setup file contains the Microsoft Edge WebView2 runtime installer.
 No separate Node.js, Rust, Python or Visual C++ download is needed.
@@ -14,8 +14,8 @@ ARM devices and older Windows versions have not been tested.
 
 FIRST USE
 Alt+Q opens or hides QChat. Sign in through QChat to use your ChatGPT or
-Gemini account. The button beside the prompt, or /gemini and /chatgpt,
-switches provider. Type / for commands. Ctrl+Alt+Q captures selected text.
+Gemini account. /gemini and /chatgpt, or the picker beside the
+prompt, switch provider. Type / for commands. Ctrl+Alt+Q captures selected text.
 Drag the circle to move the window. Quit through the tray menu.
 Open at startup is optional and off by default: use Settings, the tray
 or /startup. It starts quietly in the tray unless you choose to show the bar.
@@ -58,7 +58,7 @@ not beside the exe. Use the setup exe for a new device.
 
 CHECKSUMS AND NOTICES
 SHA256SUMS.txt covers the release files. In PowerShell, use:
-  Get-FileHash .\QChat_1.1.0_x64-setup.exe -Algorithm SHA256
+  Get-FileHash .\QChat_1.2.0_x64-setup.exe -Algorithm SHA256
 THIRD-PARTY-NOTICES.txt contains dependency notices and source references.
 
 VALIDATION

@@ -547,7 +547,7 @@ fn allowed_media_url(raw: &str) -> bool {
             && url.username().is_empty()
             && url.password().is_none()
             && url.port_or_known_default() == Some(443)
-            && (host.ends_with(".blob.core.windows.net") || host=="gemini.google.com" || host.ends_with(".googleusercontent.com")))
+            && (host.ends_with(".blob.core.windows.net") || host=="gemini.google.com" || host.ends_with(".googleusercontent.com") || host.strip_prefix("encrypted-tbn").and_then(|h| h.strip_suffix(".gstatic.com")).is_some_and(|n| n.chars().all(|c| c.is_ascii_digit()))))
 }
 async fn load(app: &tauri::AppHandle, media_id: &str, revision: u64) -> Result<Cached, String> {
     let state = app.state::<MediaState>();

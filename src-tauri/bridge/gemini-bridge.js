@@ -100,10 +100,15 @@
   }
   function loginDue() { return Date.now() - loginAt >= loginInterval(); }
 
+  function modelShort() {
+    const node = document.querySelector('bard-mode-switcher button, button[data-test-id="bard-mode-menu-button"]');
+    return (node?.innerText || node?.textContent || '').trim() || undefined;
+  }
+
   async function status() {
     loginCache = detectLoggedIn();
     loginAt = Date.now();
-    emit({ type: 'status', ready: !!find('composer'), loggedIn: !!loginCache, authPending: false, url: location.href });
+    emit({ type: 'status', ready: !!find('composer'), loggedIn: !!loginCache, authPending: false, url: location.href, model: modelShort() });
   }
 
   function completeActivity(job) {
@@ -178,6 +183,14 @@
         return;
       }
     }
+    const imageDeadline = Date.now() + 4000;
+    while (!job.cancelled && active === job && Date.now() < imageDeadline &&
+      [...(job.assistantNode?.querySelectorAll('single-image, generated-image') || [])].some(n =>
+        !safeURL(n.querySelector('img')?.currentSrc || n.querySelector('img')?.getAttribute('src') || ''))) {
+      await sleep(100);
+      sampleDOM(job);
+    }
+    sampleDOM(job);
     await sleep(Math.max(0, 50 - (Date.now() - job.lastDelta)));
     if (active !== job || job.finished) return;
     if (fallback && !job.cancelled && (find('stop') || isStreamingNode(job.assistantNode))) {
@@ -240,7 +253,7 @@
   }
 
   function registerMedia(job, { url, kind = 'image', name = 'Image', mime, node, key }) {
-    if (!job || active !== job || job.finished) return null;
+    if (!job || (active !== job && !job.history) || job.finished) return null;
     const safe = safeURL(url);
     if (/svg|html/i.test(mime || '') || /\.(svg|html?)(?:[?#]|$)/i.test(`${url || ''} ${name}`)) kind = 'file';
     const identity = key || safe || url || `${kind}:${name}`;
@@ -277,11 +290,11 @@
 
   function isDecorativeImage(node) {
     if (!node) return true;
-    if (node.closest?.('sources-list, message-actions, response-container-header, user-profile-picture, mat-icon, gem-icon, a[href], button')) return true;
+    if (node.closest?.('sources-list, message-actions, response-container-header, user-profile-picture, mat-icon, gem-icon, button')) return true;
     const cls = String(node.className || '');
     if (/avatar|favicon|icon|logo|badge/i.test(cls)) return true;
     const src = node.currentSrc || node.src || node.getAttribute?.('src') || '';
-    if (!src || /favicon|gstatic\.com\/.*(?:icon|logo|avatar|sparkle)/i.test(src)) return true;
+    if ((!src && !node.closest?.('single-image, generated-image')) || /favicon|gstatic\.com\/.*(?:icon|logo|avatar|sparkle)/i.test(src)) return true;
     if (typeof node.naturalWidth === 'number' && node.naturalWidth > 0 && node.naturalWidth < 32 &&
         typeof node.naturalHeight === 'number' && node.naturalHeight > 0 && node.naturalHeight < 32) return true;
     return false;
@@ -292,7 +305,7 @@
     for (const img of root.querySelectorAll?.('img') || []) {
       if (img.closest?.('[hidden], [aria-hidden="true"]') || isDecorativeImage(img)) continue;
       const url = img.currentSrc || img.src || img.getAttribute?.('src');
-      if (!safeURL(url)) continue;
+      if (!safeURL(url) || img.closest?.('a.image-source-link') || /^https:\/\/encrypted-tbn[0-9]*\.gstatic\.com\//.test(url)) continue;
       const name = (img.getAttribute?.('alt') || 'Image').trim() || 'Image';
       registerMedia(job, { url, kind: 'image', name, node: img, key: safeURL(url) });
     }
@@ -333,7 +346,7 @@
     'script', 'style', 'svg', 'iframe', '[hidden]', '[aria-hidden="true"]',
     '.cdk-visually-hidden', '.sr-only', '.screen-reader-model-response-label',
     '.screen-reader-user-query-label', '.model-response-label-announcer',
-    '.table-footer', '[hide-from-message-actions]', '.code-block-decoration .buttons'
+    '.table-footer', '.code-block-decoration .buttons'
   ].join(', ');
 
   function extractLanguage(codeBlockNode) {
@@ -384,7 +397,7 @@
       if (node.matches?.(EXCLUDED_MD_SELECTOR)) return '';
       const cls = String(node.className || '');
       if (/\b(?:cdk-visually-hidden|sr-only|screen-reader-model-response-label|screen-reader-user-query-label|model-response-label-announcer|table-footer)\b/.test(cls)) return '';
-      if (node.hasAttribute?.('hidden') || node.getAttribute?.('aria-hidden') === 'true' || node.hasAttribute?.('hide-from-message-actions')) return '';
+      if (node.hasAttribute?.('hidden') || node.getAttribute?.('aria-hidden') === 'true' || (node.hasAttribute?.('hide-from-message-actions') && !node.closest?.('single-image, generated-image'))) return '';
 
       // Math handling before generic children traversal so .katex-html (or MathML glyphs) are never emitted
       if (/\b(?:math-inline|math-block|katex-display|katex)\b/.test(cls) || node.hasAttribute?.('data-math') || tag === 'math') {
@@ -423,10 +436,20 @@
       if (tag === 'br') return inTable ? ' ' : '\n';
       if (tag === 'hr') return '\n\n---\n\n';
 
+      if (tag === 'a' && node.matches?.('.image-source-link')) {
+        const image = node.querySelector('img');
+        const href = node.href || '';
+        const caption = (image?.getAttribute('alt') || 'Image').replace(/[\[\]\r\n]/g, ' ');
+        return image ? `\n\n${walk(image)}\n\n${/^https?:/.test(href) ? `[${caption}](${href})` : ''}\n\n` : '';
+      }
       if (tag === 'img') {
         if (isDecorativeImage(node)) return '';
         const url = node.currentSrc || node.src || node.getAttribute?.('src') || '';
         const alt = (node.getAttribute?.('alt') || 'Image').replace(/[\[\]\r\n]/g, ' ').trim() || 'Image';
+        const safeWeb = safeURL(url);
+        if (safeWeb && /^https:/.test(safeWeb) && (node.closest?.('a.image-source-link') || /^encrypted-tbn[0-9]*\.gstatic\.com$/.test(new URL(safeWeb).hostname))) {
+          return `![${alt}](qchat-web:${btoa(safeWeb).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')})`;
+        }
         if (job) {
           const id = registerMedia(job, { url, kind: 'image', name: alt, node, key: safeURL(url) || url });
           if (id) return `![${alt}](qchat-media:${id})`;
@@ -592,9 +615,14 @@
     }
 
     if (node) {
+      const generating = !!node.querySelector('generated-image [role="progressbar"], generated-image .loading, image-generation-progress, .image-generation-progress');
+      if (job.imageGenerating !== generating && (generating || job.imageGenerating)) {
+        job.imageGenerating = generating;
+        emit({ type: 'image_progress', id: job.id, state: generating ? 'generating' : 'complete' });
+      }
       domMedia(job, node);
       collectDOMSources(job, node);
-      const body = selectors.body.map(s => node.querySelector?.(s)).find(Boolean) || node;
+      const body = node;
       const md = htmlToMarkdown(body, { job });
       if (md && md !== job.domText) {
         job.domText = md;
@@ -671,8 +699,8 @@
         const hasMedia = !!(node.querySelector?.('.file-preview-container img, .file-preview-container [data-test-id*="file"], img'));
         return { role: 'user', text, hasMedia };
       }
-      const body = selectors.body.map(s => node.querySelector?.(s)).find(Boolean) || node;
-      const text = htmlToMarkdown(body);
+      const body = node;
+      const text = htmlToMarkdown(body, { job: { history: true, id: 'history', media: new Map() } });
       const imgs = [...(body.querySelectorAll?.('img') || [])].filter(img => !isDecorativeImage(img));
       return { role: 'assistant', text, hasMedia: imgs.length > 0 };
     }).filter(item => item.text || item.hasMedia);
@@ -774,7 +802,20 @@
     if (!entry) throw new Error('This attachment is unavailable. View it in Gemini.');
     const url = safeURL(entry.node?.currentSrc || entry.node?.src || entry.node?.href || entry.url);
     if (!url) throw new Error('This attachment cannot be downloaded here. View it in Gemini.');
-    return { url, kind: entry.kind, name: entry.name, ...(entry.mime ? { mime: entry.mime } : {}) };
+    let resolved = url;
+    if (/^https:/.test(url) && entry.kind === 'image') {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      try {
+        const response = await fetch(url, { credentials: 'include', signal: controller.signal });
+        if (!response.ok) throw new Error('Image unavailable');
+        const blob = await response.blob();
+        if (!/^image\/(png|jpeg|gif|webp|avif|bmp)$/i.test(blob.type) || blob.size > 32 * 1024 * 1024) throw new Error('Unsupported image');
+        resolved = URL.createObjectURL(blob);
+        entry.url = resolved;
+      } finally { clearTimeout(timer); }
+    }
+    return { url: resolved, kind: entry.kind, name: entry.name, ...(entry.mime ? { mime: entry.mime } : {}) };
   }
 
   window.__qchat = {
@@ -1034,11 +1075,16 @@
           const selected = !!(node.getAttribute('aria-checked') === 'true' || node.getAttribute('aria-selected') === 'true' ||
             /\bselected\b/.test(String(node.className || '')) || /\bselected\b/.test(String(content?.className || '')) ||
             node.querySelector?.('[aria-label="Selected"]'));
-          return { id: label, label, selected, disabled, node };
+          const meta = (node.querySelector?.('.sublabel')?.textContent || '').trim();
+          const group = node.closest?.('[role="group"], [role="listbox"], section');
+          const heading = group?.querySelector?.('[role="heading"], h2, h3, .group-title')?.textContent || group?.getAttribute?.('aria-label') || '';
+          return { id: label, label, selected, disabled, meta, level: /think|reason|effort/i.test(heading), node };
         };
         const parsed = nodes.map(parseItem).filter(item => item.label && !/^sign in\b/i.test(item.label));
         if (!parsed.length) { unavailable(); return; }
-        const models = parsed.map(({ id, label, selected }) => ({ id, label, selected }));
+        const pack = ({ id, label, selected, disabled, meta }) => ({ id, label, selected, disabled, meta });
+        const models = parsed.filter(p => !p.level).map(pack);
+        const levels = parsed.filter(p => p.level).map(pack);
         if (chooseId !== undefined) {
           const target = parsed.find(m => m.id === chooseId || m.label === chooseId || m.label.toLowerCase().includes(String(chooseId).toLowerCase()));
           if (!target || target.disabled) {
@@ -1066,9 +1112,10 @@
             unavailable();
             return;
           }
-          emit({ type: 'model-chosen', model: { id: target.id, label: target.label, selected: true } });
+          await status();
+          emit({ type: 'model-chosen', short: modelShort(), model: { id: target.id, label: target.label, selected: true } });
         } else {
-          emit({ type: 'models', models });
+          emit({ type: 'models', models, levels });
         }
       } catch (_) {
         unavailable();

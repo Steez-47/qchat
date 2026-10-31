@@ -324,3 +324,5 @@ html[data-mode="light"] .tok-keyword { color: #593298; }
 html[data-mode="light"] .tok-string { color: #246437; }
 html[data-mode="light"] .tok-number { color: #834414; }
 html[data-mode="light"] .tok-comment { color: #515968; }
+
+.tab svg.icon { width: 11px; height: 11px; fill: currentColor; align-self: center; }

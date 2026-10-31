@@ -383,6 +383,9 @@ function createBrowser({ hostname = 'gemini.google.com', pathname = '/app', read
       disconnect() { observerCallbacks = observerCallbacks.filter(c => c !== this.cb); }
     },
     URL,
+    AbortController,
+    btoa, atob,
+    fetch: async () => ({ ok: true, blob: async () => new Blob(['image'], { type: 'image/png' }) }),
     console,
     getComputedStyle: () => ({ overflowY: 'visible' }),
     Date: class extends Date { static now() { return now; } },
@@ -714,8 +717,8 @@ test('listModels and chooseModel read mode picker and verify selection', async (
   const modelsEvt = b.events.find(e => e.type === 'models');
   assert.ok(modelsEvt);
   assert.deepEqual(Array.from(modelsEvt.models, m => ({ ...m })), [
-    { id: '3.5 Flash-Lite', label: '3.5 Flash-Lite', selected: true },
-    { id: '3.6 Flash', label: '3.6 Flash', selected: false }
+    { id: '3.5 Flash-Lite', label: '3.5 Flash-Lite', selected: true, disabled: false, meta: 'Fastest answers' },
+    { id: '3.6 Flash', label: '3.6 Flash', selected: false, disabled: false, meta: 'All-around help' }
   ]);
 
   const p2 = b.api.chooseModel('3.6 Flash');
@@ -725,6 +728,19 @@ test('listModels and chooseModel read mode picker and verify selection', async (
   const chosenEvt = b.events.find(e => e.type === 'model-chosen');
   assert.ok(chosenEvt);
   assert.equal(chosenEvt.model.label, '3.6 Flash');
+  assert.equal(chosenEvt.short, '3.6 Flash');
+  assert.ok(b.events.some(e => e.type === 'status' && e.model === '3.6 Flash'));
+  item1.setAttribute('aria-disabled', 'true');
+  const disabled = b.api.chooseModel('3.5 Flash-Lite');
+  await b.tick(2000); await disabled;
+  assert.ok(b.events.some(e => e.type === 'error' && e.code === 'model_unavailable'));
+  const group = makeEl('section', { role: 'group', 'aria-label': 'Thinking effort' }, [
+    makeEl('gem-menu-item', { role: 'menuitem' }, [makeEl('span', { class: 'label' }, [makeText('High')])])
+  ]);
+  menu.append(group);
+  const levelsRequest = b.api.listModels();
+  await b.tick(2000); await levelsRequest;
+  assert.equal(b.events.filter(e => e.type === 'models').at(-1).levels[0].label, 'High');
 });
 
 test('listConversations returns empty list without error for guests and reads side nav links when signed in', async () => {
@@ -796,7 +812,7 @@ test('reply images register media items and resolveMedia returns safe url, kind,
   assert.equal(mediaEvt.items[0].name, 'Generated Sunset');
 
   const resolved = await b.api.resolveMedia(mediaEvt.items[0].id);
-  assert.equal(resolved.url, 'https://lh3.googleusercontent.com/a/generated-image-123');
+  assert.match(resolved.url, /^blob:/);
   assert.equal(resolved.kind, 'image');
   assert.equal(resolved.name, 'Generated Sunset');
 });
@@ -853,6 +869,20 @@ test('rendered sources-list links emit sources event and watchdog times out stal
   await b.tick(301000);
   const errEvt = b.events.find(e => e.type === 'error' && e.id === 'src-job');
   assert.equal(errEvt?.code, 'timeout');
+});
+
+test('whole response preserves linked thumbnails outside markdown and rejects lookalikes', async () => {
+  const b = createBrowser({ ready: true });
+  const root = parseHTML('<model-response><div class="markdown"><p>Before</p></div><single-image><div hide-from-message-actions=""><a class="image-source-link" href="https://example.com/tower"><span>Opens in a new window</span><img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:x" alt="Tower"></a></div></single-image><p>After</p><sources-list><img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:y"></sources-list></model-response>');
+  const md = b.api._htmlToMarkdown(root);
+  assert.match(md, /qchat-web:/);
+  assert.ok(md.indexOf('Before') < md.indexOf('qchat-web:') && md.indexOf('qchat-web:') < md.indexOf('After'));
+  assert.match(md, /\[Tower\]\(https:\/\/example.com\/tower\)/);
+  assert.ok(!md.includes('Opens in a new window'));
+  for (const host of ['encrypted-tbn0.gstatic.com.evil.test', 'evil-gstatic.com', 'encrypted-tbnx.gstatic.com']) {
+    const image = makeEl('img', { src: 'https://' + host + '/image', alt: 'Bad' });
+    assert.ok(!b.api._htmlToMarkdown(image).includes('qchat-web:'));
+  }
 });
 
 let failed = 0;

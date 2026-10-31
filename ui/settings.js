@@ -346,7 +346,7 @@
         () => rangeRow({ key: "barWidth", label: "Bar width" }),
         () => choiceRow({ key: "density", label: "Bar size", options: [["compact", "Compact"], ["cozy", "Cozy"], ["roomy", "Roomy"]] }),
         () => switchRow({ key: "showTabs", label: "Recent-chat tabs" }),
-        () => switchRow({ key: "showTabClock", label: "Clock icon on tabs" }),
+        () => switchRow({ key: "showTabClock", label: "Show logo on tabs" }),
         () => switchRow({ key: "showSuggestions", label: "Suggestion chips on an empty chat" }),
         () => switchRow({ key: "showStatusDot", label: "Connection dot on the orb" })
       ]]

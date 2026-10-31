@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "QChat",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "identifier": "com.qchat.app",
   "build": {
     "frontendDist": "../ui"
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://qchat-media.localhost https://images.openai.com; media-src 'self' http://qchat-media.localhost; connect-src ipc: http://ipc.localhost http://qchat-media.localhost",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://qchat-media.localhost https://images.openai.com https://encrypted-tbn.gstatic.com https://encrypted-tbn0.gstatic.com https://encrypted-tbn1.gstatic.com https://encrypted-tbn2.gstatic.com https://encrypted-tbn3.gstatic.com https://encrypted-tbn4.gstatic.com https://encrypted-tbn5.gstatic.com https://encrypted-tbn6.gstatic.com https://encrypted-tbn7.gstatic.com https://encrypted-tbn8.gstatic.com https://encrypted-tbn9.gstatic.com; media-src 'self' http://qchat-media.localhost; connect-src ipc: http://ipc.localhost http://qchat-media.localhost",
       "capabilities": [
         "main",
         "bridge",

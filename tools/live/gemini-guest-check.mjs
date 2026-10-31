@@ -184,6 +184,14 @@ try {
     length: md.length
   }));
 
+  await c.evaluate(`window.__qchatTestEvents = []; window.__qchat.send({id:'live-images',prompt:'Show me pictures of the Eiffel Tower.'})`);
+  const imageDone = await waitForEvent(c, `e => (e.type === 'done' || e.type === 'error') && e.id === 'live-images'`, 60000);
+  assert.equal(imageDone.type, 'done');
+  assert.match(imageDone.text, /qchat-web:/);
+  assert.ok(!imageDone.text.includes('Opens in a new window'));
+  assert.ok(await c.evaluate(`window.__qchatTestEvents.some(e=>e.type==='delta' && e.id==='live-images' && /qchat-web:/.test(e.text || ''))`));
+  console.log('PASS guest images in streaming and done snapshots');
+
   // 4. Test stop() API contract
   await c.evaluate(`window.__qchat.stop()`);
   console.log('PASS stop()');

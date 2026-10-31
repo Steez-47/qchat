@@ -130,7 +130,7 @@ try {
 
   await openPicker();
   check('the picker lists Low, Medium and High with one selected check',
-    await evalJS(`(()=>{const rows=[...document.querySelectorAll('.feature-list .feature-row')];const titles=rows.map(r=>r.querySelector('.feature-title').textContent);const checks=rows.filter(r=>{const c=r.querySelector('.feature-check');return c&&c.style.visibility==='visible';});return rows.length===3&&titles.join(',')==='Low,Medium,High'&&checks.length===1&&checks[0].querySelector('.feature-title').textContent==='Medium';})()`));
+    await evalJS(`(()=>{const rows=[...document.querySelectorAll('.feature-list .feature-row')].filter(r=>r.querySelector('.feature-check'));const titles=rows.map(r=>r.querySelector('.feature-title').textContent);const checks=rows.filter(r=>{const c=r.querySelector('.feature-check');return c&&c.style.visibility==='visible';});return rows.length===3&&titles.join(',')==='Low,Medium,High'&&checks.length===1&&checks[0].querySelector('.feature-title').textContent==='Medium';})()`));
   await pick('Low');
   check('picking Low stores an explicit per-chat override',
     (await label()) === 'Low' &&

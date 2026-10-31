@@ -187,7 +187,7 @@
     let url = null;
     try {
       const parsed = new URL(atob(figure.dataset.web.replace(/-/g, "+").replace(/_/g, "/")));
-      if (parsed.protocol === "https:" && parsed.hostname === "images.openai.com") url = parsed.href;
+      if (parsed.protocol === "https:" && (parsed.hostname === "images.openai.com" || /^encrypted-tbn[0-9]*\.gstatic\.com$/.test(parsed.hostname)) && !parsed.username && !parsed.password && (!parsed.port || parsed.port === "443")) url = parsed.href;
     } catch (_) {}
     if (!url) { void loadBrokeredImage(figure); return; }
     const image = make("img");
@@ -1018,21 +1018,17 @@
   let sentReasoning = null;
 
   function syncReasoningButton() {
-    el.btnReasoning.hidden = activeProvider === "gemini";
+    el.btnReasoning.hidden = false;
     el.zone.setAttribute("aria-label", `${providerName()} response`);
-    const button = document.getElementById("btn-provider");
-    button.querySelector("span").textContent = activeProvider === "gemini" ? "Gemini" : "GPT";
-    button.setAttribute("aria-label", `Provider: ${providerName()}`);
-    button.disabled = isBusy() || switchingProvider;
-    button.title = isBusy() ? "Available after the reply" : "Choose provider";
     const busy = isBusy();
     if (!busy) sentReasoning = null;
     const value = busy && sentReasoning ? sentReasoning : effectiveReasoning();
-    const label = REASONING_LABELS[value];
+    const label = activeProvider === "gemini" ? providerStates.gemini?.model || "Model" : REASONING_LABELS[value];
     el.btnReasoning.querySelector(".reasoning-label").textContent = label;
-    el.btnReasoning.setAttribute("aria-label", `Reasoning: ${label}`);
+    el.btnReasoning.setAttribute("aria-label", `${activeProvider === "gemini" ? "Model" : "Reasoning"}: ${label}`);
     el.btnReasoning.dataset.value = value;
-    el.btnReasoning.disabled = busy;
+    el.btnReasoning.disabled = busy || switchingProvider;
+    el.btnReasoning.title = activeProvider === "gemini" ? "Model" : "Reasoning";
   }
 
   function chooseReasoning(value) {
@@ -1046,13 +1042,14 @@
   function showReasoningPicker() {
     if (isBusy()) return;
     if (featureListAnchor === el.btnReasoning) { closeFeatureList(); return; }
+    if (activeProvider === "gemini") { requestModels(); return; }
     const selected = effectiveReasoning();
     showFeatureList("Reasoning", REASONING_LEVELS.map((value) => ({
       title: REASONING_LABELS[value],
       meta: value === "low" ? "Instant / Light" : value === "medium" ? "Standard" : "Extended",
       selected: value === selected,
       run: () => chooseReasoning(value)
-    })), false, el.btnReasoning);
+    })).concat(switchProviderRows()), false, el.btnReasoning);
   }
 
   async function setProvider(provider) {
@@ -1089,15 +1086,9 @@
     el.promptInput.value = draft;
     saveChats(); autoResizePrompt(); updateComposerMode();
   }
-  function showProviderPicker() {
-    if (isBusy() || switchingProvider) return;
-    const button = document.getElementById("btn-provider");
-    if (featureListAnchor === button) { closeFeatureList(); return; }
-    showFeatureList("Provider", ["chatgpt", "gemini"].map(provider => ({
-      title: provider === "gemini" ? "Gemini" : "ChatGPT",
-      meta: providerStates[provider]?.loggedIn ? "Signed in" : providerStates[provider]?.ready ? "Guest" : "Not connected yet",
-      selected: provider === activeProvider, run: () => chooseProvider(provider)
-    })), false, button);
+  function switchProviderRows() {
+    const provider = activeProvider === "gemini" ? "chatgpt" : "gemini";
+    return [{divider:true}, {title:`Switch to ${provider === "gemini" ? "Gemini" : "ChatGPT"}`, meta:providerStates[provider]?.loggedIn ? "Signed in" : "Signed out", run:() => chooseProvider(provider)}];
   }
 
   function storedChat(chat, capped = false) {
@@ -2523,6 +2514,16 @@
     for (const tab of el.tabs.children) tab.disabled = busy;
   }
 
+  function makeProviderLogo(provider) {
+    // simple-icons paths, CC0.
+    const paths = {
+      chatgpt: "M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z",
+      gemini: "M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"
+    };
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("class", "icon"); svg.setAttribute("aria-hidden", "true"); svg.dataset.provider = provider || "chatgpt";
+    const path = document.createElementNS(svg.namespaceURI, "path"); path.setAttribute("d", paths[provider] || paths.chatgpt); svg.append(path); return svg;
+  }
   function renderTabs() {
     const visible = tabsVisible();
     el.tabs.hidden = !visible;
@@ -2537,19 +2538,19 @@
         tab.type = "button";
         tab.dataset.key = chat.key;
         tab.style.setProperty("--i", String(fresh++));
-        tab.append(makeIcon(GLYPH.clock), make("span", "tab-title"), make("span", "tab-label"));
+        tab.append(makeProviderLogo(chat.provider), make("span", "tab-title"), make("span", "tab-label"));
         tab.addEventListener("animationend", () => tab.classList.remove("pop"), { once: true });
         tab.addEventListener("click", () => switchToChat(tab.dataset.key));
       }
       const label = elapsedLabel(chat.lastActive);
-      tab.querySelector(".tab-label").textContent = chat.provider !== activeProvider && (chat.title || "").length < 16 ? `${chat.provider === "gemini" ? "G" : "GPT"} · ${label}` : label;
+      tab.querySelector(".tab-label").textContent = label;
       const title = chat.title || "Untitled chat";
       const characters = Array.from(title);
       tab.querySelector(".tab-title").textContent = characters.length > 24
         ? `${characters.slice(0, 23).join("")}…` : title;
       const when = label === "now" ? "just now" : `${label} ago`;
-      tab.title = `${title}\nLast active ${when}${chat.provider !== activeProvider ? " · " + providerName(chat) : ""}`;
-      tab.setAttribute("aria-label", `Switch to chat: ${title}, last active ${when}`);
+      tab.title = `${title}\nLast active ${when}${" · " + providerName(chat)}`;
+      tab.setAttribute("aria-label", `Switch to ${providerName(chat)} chat: ${title}, last active ${when}`);
       return tab;
     });
     el.tabs.replaceChildren(...nodes, allChatsTab);
@@ -2648,8 +2649,11 @@
   let featureListAnchor = null;
   let modelRequest = null;
   function cancelModelRequest() { if (modelRequest) clearTimeout(modelRequest.timer); modelRequest = null; }
+  const modelCache = {};
   function requestModels() {
-    showFeatureList("Loading models…", []);
+    if (isBusy()) return;
+    if (activeProvider === "gemini") showModels(modelCache.gemini || {loading:true});
+    else showFeatureList("Loading models…", []);
     const request = { provider: activeProvider };
     modelRequest = request;
     const finish = event => { if (modelRequest !== request) return; cancelModelRequest(); showModels(event); };
@@ -2701,7 +2705,9 @@
     const paint = () => {
       results.replaceChildren(); lines = []; selected = 0;
       const query = `${field.value}`.toLowerCase();
-      for (const row of getRows().filter(row => `${row.title} ${row.prompt || ""}`.toLowerCase().includes(query))) {
+      for (const row of getRows().filter(row => !query || `${row.title || ""} ${row.prompt || ""}`.toLowerCase().includes(query))) {
+        if (row.divider) { const divider = make("div", "feature-divider"); divider.setAttribute("role", "separator"); results.append(divider); continue; }
+        if (row.heading) { results.append(make("div", "feature-heading", row.heading)); continue; }
         const line = make("div", "feature-row");
         if (row.selected !== undefined) {
           const check = makeIcon(GLYPH.check, "icon feature-check");
@@ -2711,9 +2717,11 @@
         if (row.run) {
           const button = make("button", "feature-choice"); button.type = "button";
           button.append(make("span", "feature-title", row.title), make("span", "feature-meta", row.meta || ""));
-          button.onclick = () => { closeFeatureList(); row.run(); };
+          button.disabled = Boolean(row.disabled);
+          button.onclick = () => { if (!row.disabled) { closeFeatureList(); row.run(); } };
           button.addEventListener("focus", () => { selected = lines.findIndex(entry => entry.line === line); mark(); });
-          line.append(button); lines.push({ line, row });
+          line.append(button); if (!row.disabled) lines.push({ line, row });
+          else { line.classList.add("feature-disabled"); line.setAttribute("aria-disabled", "true"); }
         } else {
           line.append(make("kbd", "key", row.keys), make("span", "feature-title", row.title));
         }
@@ -2735,9 +2743,32 @@
   }
   function showModels(event) {
     const models = event.models || [];
-    showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? models.map(model => ({ title: model.label, selected: Boolean(model.selected), run: () => invoke("chat_model_choose", { id: model.id }).catch(() => {}) })) : [{ title: event.error ? `Open ${providerName()}` : "Sign in", run: openSignin }]);
+    const choose = id => invoke("chat_model_choose", {id}).catch(() => showGlobalError(null, "Couldn't change the model. Try again in a moment."));
+    const rows = items => items.map(model => ({title:model.label, meta:[model.meta, model.disabled && !providerStates[activeProvider]?.loggedIn ? "Sign in" : ""].filter(Boolean).join(" · "), selected:Boolean(model.selected), disabled:model.disabled, run:() => choose(model.id)}));
+    if (activeProvider === "gemini") {
+      const items = models.length ? rows(models) : [{title:event.loading ? "Loading models…" : "Couldn't read the model list", disabled:true, run:() => {}}];
+      if (event.levels?.length) items.push({divider:true}, {heading:"Reasoning"}, ...rows(event.levels));
+      showFeatureList("Model", items.concat(switchProviderRows()), false, el.btnReasoning);
+    } else showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? rows(models) : [{title:event.error ? `Open ${providerName()}` : "Sign in", run:openSignin}]);
   }
-  listen("bridge", ({ payload }) => { if ((payload.provider || "chatgpt") !== activeProvider) return; if (payload.type === "models") { if (modelRequest?.provider === activeProvider) { cancelModelRequest(); showModels(payload); } } else if (payload.type === "model-chosen") setModelLabel(payload.model.label); });
+  listen("bridge", ({ payload }) => {
+    const provider = payload.provider || "chatgpt";
+    if (payload.type === "status" && modelCache[provider] && modelCache[provider]._loggedIn !== payload.loggedIn) delete modelCache[provider];
+    if (provider !== activeProvider) return;
+    if (payload.type === "models") {
+      const previous = modelCache[provider];
+      modelCache[provider] = {...payload, _loggedIn:providerStates[provider]?.loggedIn};
+      if (modelRequest?.provider === provider) {
+        cancelModelRequest();
+        if (provider !== "gemini" || featureListAnchor === el.btnReasoning && !featureList.hasAttribute("data-leaving")) {
+          if (provider !== "gemini" || JSON.stringify(previous) !== JSON.stringify(modelCache[provider])) showModels(payload);
+        }
+      }
+    } else if (payload.type === "model-chosen") {
+      if (provider === "gemini") { providerStates.gemini = {...providerStates.gemini, model:payload.short || payload.model.label}; syncReasoningButton(); }
+      else setModelLabel(payload.model.label);
+    }
+  });
   // Every chat on the account, read through the signed-in page, with this PC's chats first.
   const accountChats = { items: [], loading: false, loaded: false, at: 0 };
 
@@ -3208,7 +3239,6 @@
     else submitFromInput();
     el.promptInput.focus();
   });
-  document.getElementById("btn-provider").addEventListener("click", showProviderPicker);
   el.btnReasoning.addEventListener("click", showReasoningPicker);
 
   el.btnGuestSignin.addEventListener("click", openSignin);
@@ -3296,7 +3326,7 @@
   listen("bridge", ({ payload: evt }) => {
     if (!evt || typeof evt !== "object") return;
     const provider = evt.provider || "chatgpt";
-    if (evt.type === "status") providerStates[provider] = evt;
+    if (evt.type === "status") { providerStates[provider] = evt; syncReasoningButton(); }
     if (provider !== activeProvider) return;
     switch (evt.type) {
       case "status":

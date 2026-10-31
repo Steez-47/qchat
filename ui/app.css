@@ -34,19 +34,20 @@
 .reasoning-btn {
   width: auto;
   min-width: 0;
+  max-width: min(110px, calc(var(--bar-w) - 272px));
   padding: 0 7px;
   font: 500 11.5px/1 var(--font-small);
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
   white-space: nowrap;
 }
-.reasoning-btn .reasoning-label { pointer-events: none; }
+.reasoning-btn .reasoning-label { pointer-events: none; min-width: 0; max-width: min(96px, calc(var(--bar-w) - 276px)); overflow: hidden; text-overflow: ellipsis; }
 
 @container (max-width: 360px) {
   .bar > .bar-btn:not(.reasoning-btn) { width: 20px; }
   .bar > .bar-btn .icon { font-size: 14px; }
   .bar > .bar-input { padding-inline: 0; }
-  .bar > .reasoning-btn { padding-inline: 2px; font-size: 10.5px; }
+  .bar > .reasoning-btn { padding-inline: 2px; font-size: 10.5px; max-width: 68px; }
 }
 
 /* ---------------------------------------------------------------------------
@@ -928,3 +929,6 @@ textarea.qinteractive-control { display: block; min-height: 70px; width: 100%; r
 select.qinteractive-control option { background: #252b35; color: #eee; }
 
 .bar > .reasoning-btn:active:not(:disabled) { transform: none; }
+
+.feature-divider { border-top: 1px solid var(--stroke-1); margin: 5px 8px; }
+.feature-disabled { opacity: .5; }

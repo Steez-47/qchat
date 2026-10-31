@@ -27,14 +27,14 @@ try {
   const ui = cdp(list.find(p => p.url.includes('tauri.localhost')).webSocketDebuggerUrl); await ui.ready;
   check('Gemini page not loaded until needed', !list.some(p => p.url.includes('gemini.google.com')));
   const slash = async name => { await ui.evaluate(`(()=>{const t=document.getElementById('prompt-input');t.value='/${name}';t.dispatchEvent(new Event('input',{bubbles:true}));t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));})()`); };
-  const label = () => ui.evaluate(`document.querySelector('#btn-provider span').textContent`);
+  const label = () => ui.evaluate(`document.querySelector('#btn-provider span')?.textContent || document.querySelector('#btn-reasoning')?.textContent || ''`);
   const status = () => ui.evaluate(`document.getElementById('status-label').textContent`);
   const waitReady = async () => { for (let i = 0; i < 100; i++) { const s = await status(); if (/Ready|Guest/.test(s)) return s; await sleep(400); } return status(); };
   check('ChatGPT bridge ready first', /Ready|Guest/.test(await waitReady()));
   await slash('gemini');
-  for (let i = 0; i < 40 && await label() !== 'Gemini'; i++) await sleep(250);
-  check('picker shows Gemini', await label() === 'Gemini');
-  check('reasoning hidden on Gemini', await ui.evaluate(`document.getElementById('btn-reasoning').hidden`));
+  for (let i = 0; i < 40 && !/Gemini|Flash|Model/.test(await label()); i++) await sleep(250);
+  check('picker shows Gemini', /Gemini|Flash|Model/.test(await label()));
+  check('model picker available on Gemini', await ui.evaluate(`!document.getElementById('btn-reasoning').hidden`));
   const ready = await waitReady(); check('Gemini bridge ready as guest', /Ready|Guest/.test(ready), ready);
   list = await targets(); check('exactly one Gemini page', list.filter(p => p.url.includes('gemini.google.com')).length === 1);
   const lastTurn = `(()=>{const ts=[...document.querySelectorAll('#bubble-zone [data-role=assistant]')];const l=ts[ts.length-1];return l?{txt:l.querySelector('.turn-content')?.innerText||'',html:l.querySelector('.turn-content')?.innerHTML||'',err:!l.querySelector('.turn-error')?.hidden,streaming:l.dataset.status==='streaming',label:l.getAttribute('aria-label')}:null})()`;
@@ -54,6 +54,18 @@ try {
   check('Gemini reply arrives in the bubble', /pineapple/i.test(r.txt) && !r.err, r.txt.slice(0, 60));
   check('Markdown rendered, not raw', /<h2/.test(r.html) && /<ul/.test(r.html) && /<table/.test(r.html) && /<pre/.test(r.html) && !/^##/m.test(r.txt));
   check('reply is labelled Gemini', /Gemini/.test(r.label || ''), r.label || '');
+  r = await ask('Show me pictures of the Eiffel Tower.');
+  let imageLoaded = false;
+  for (let i = 0; i < 60; i++) {
+    imageLoaded = await ui.evaluate(`(()=>{const t=[...document.querySelectorAll('#bubble-zone [data-role=assistant]')].at(-1);return !!t && [...t.querySelectorAll('img')].some(i=>i.naturalWidth>0)})()`);
+    if (imageLoaded) break;
+    await sleep(250);
+  }
+  check('guest reply image loads in assistant bubble', imageLoaded);
+  const pages = await targets();
+  const guest = cdp(pages.find(p => p.url.includes('gemini.google.com')).webSocketDebuggerUrl); await guest.ready;
+  console.log('IMAGE DOM ' + JSON.stringify(await guest.evaluate(`[...document.querySelectorAll('model-response')].at(-1) && [...[...document.querySelectorAll('model-response')].at(-1).querySelectorAll('single-image img')].map(i=>({outsideMarkdown:!i.closest('.markdown'),linked:!!i.closest('a.image-source-link'),hiddenActionContainer:!!i.closest('[hide-from-message-actions]'),host:new URL(i.src).hostname,naturalWidth:i.naturalWidth}))`)));
+  guest.close();
   r = await ask('Remember the code word walnut. Reply with only: ok');
   check('second turn in the same chat', !r.err && r.txt.trim().length > 0, r.txt.slice(0, 40));
   r = await ask('What code word did I just give you? Reply with only that word.');
@@ -62,8 +74,8 @@ try {
   check('stop ends the reply cleanly', !r.timeout);
   await sleep(1500);
   await slash('chatgpt');
-  for (let i = 0; i < 40 && await label() !== 'GPT'; i++) await sleep(250);
-  check('back on ChatGPT', await label() === 'GPT');
+  for (let i = 0; i < 40 && !/GPT|Low|Medium|High/.test(await label()); i++) await sleep(250);
+  check('back on ChatGPT', /GPT|Low|Medium|High/.test(await label()));
   check('reasoning restored', !(await ui.evaluate(`document.getElementById('btn-reasoning').hidden`)));
   check('earlier Gemini chat kept as a tab', await ui.evaluate(`document.querySelectorAll('#tabs [data-key], #tabs .tab').length>0`));
   ui.close();

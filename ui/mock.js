@@ -25,6 +25,10 @@
     provider: "chatgpt",
     autostart: params.has("autostart"),
     failProvider: params.has("failProvider"),
+    model: "Flash-Lite",
+    failModel: false,
+    models: {gemini:[{id:"flash",label:"Flash-Lite",selected:true,meta:"Fast answers"},{id:"pro",label:"Pro",meta:"Advanced reasoning",disabled:true},{id:"thinking",label:"Thinking",meta:"Deeper answers"}]},
+    levels: [],
     calls: [],
     fit: null,
     fits: [],
@@ -85,7 +89,7 @@
   };
 
   const emitStatus = (delay, url = "https://chatgpt.com/") => setTimeout(() => {
-    emitMock("bridge", { type: "status", ready: true, loggedIn: mock.loggedIn, url });
+    emitMock("bridge", { type: "status", ready: true, loggedIn: mock.loggedIn, model:mock.provider === "gemini" ? mock.model : undefined, url });
   }, delay);
 
   const runStream = (id, targetText) => {
@@ -145,9 +149,11 @@
           case "media_save": return "Demo image.png";
           case "image_copy": return null;
           case "chat_models":
-            if (params.get("mock") === "silent-models") return null;
-            emitMock("bridge", { type: "models", models: params.get("mock") === "no-models" ? [] : [{ id: "0", label: "Mock model", selected: true }, { id: "1", label: "Mock alternate", selected: false }] }); return null;
+            if (mock.silentModels || params.get("mock") === "silent-models") return null;
+            emitMock("bridge", { type: "models", levels:mock.provider === "gemini" ? mock.levels : undefined, models: mock.models[mock.provider] || (params.get("mock") === "no-models" ? [] : [{ id: "0", label: "Mock model", selected: true }, { id: "1", label: "Mock alternate", selected: false }]) }); return null;
           case "chat_model_choose":
+            if (mock.failModel) throw new Error("unavailable");
+            if (mock.provider === "gemini") { mock.model = mock.models.gemini.find(m=>m.id===args.id)?.label || args.id; emitMock("bridge",{type:"model-chosen",short:mock.model,model:{id:args.id,label:mock.model}}); return null; }
             emitMock("bridge", { type: "model-chosen", model: { id: args.id, label: args.id === "0" ? "Mock model" : "Mock alternate" } }); return null;
           case "chat_status":
             if (!mock.statusHold) emitStatus(15);
