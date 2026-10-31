@@ -37,7 +37,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 
 QChat accepts up to 10 attachments totalling 512 MB. ChatGPT's own account, upload and format limits still apply; audio/video playback also depends on WebView2's codecs. Live voice/camera sessions are not implemented. Files are staged in bounded chunks and reply media is cached on disk, then cleared on New chat or Quit. Normal sign-in stays saved.
 
-Temporary mode can be refused on guest, localized or changed provider interfaces. ChatGPT currently requires its English active control; readonly indicators are not yet supported. Signed-in live Temporary chats and uploads have not been verified by these tests.
+Temporary mode can be refused on guest, localized or changed provider interfaces. ChatGPT currently requires its English active control; readonly indicators are not yet supported. Gemini's fresh-chat checks currently expect `/app`; secondary-account routes such as `/u/1/app` may refuse. Signed-in live Temporary chats and uploads have not been verified by these tests.
 
 ## Install
 

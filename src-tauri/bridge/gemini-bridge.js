@@ -768,9 +768,9 @@
     }
   }
 
-  function attachmentRemovers(names = []) {
+  function attachmentRemovers(names = [], includeDisabled = false) {
     return [...document.querySelectorAll('button')].filter(node => {
-      if (node.disabled || node.getAttribute('aria-disabled') === 'true') return false;
+      if (!includeDisabled && (node.disabled || node.getAttribute('aria-disabled') === 'true')) return false;
       const label = (node.getAttribute('aria-label') || '').trim();
       const testid = node.getAttribute('data-test-id') || node.getAttribute('data-testid') || '';
       return /^remove (?:file|attachment|image)(?:\b|$)/i.test(label) || /^remove-(?:file|attachment|image)/i.test(testid) ||
@@ -1235,8 +1235,13 @@
       currentSetupId = options.temporary ? options.setupId || null : null;
       clearTemporaryStage();
       await window.__qchat.stop();
+      const composer = find('composer');
+      const emptyTemporary = options.temporary && temporaryReady() && location.pathname === '/app' &&
+        !assistantNodes().length && !userNodes().length && !(composer.value ?? composer.textContent).trim() &&
+        !uploads && !cancelledAttachments && !attachmentRemovers([], true).length &&
+        !document.querySelector('input-container [role="progressbar"], input-area-v2 [role="progressbar"], mat-progress-spinner') &&
+        ![...document.querySelectorAll('input[type="file"]')].some(input => input.files?.length);
       media.clear();
-      cancelledAttachments = null;
       downloadActivation = null;
       loginCache = detectLoggedIn();
       if (options?.temporary) {
@@ -1245,11 +1250,13 @@
           return;
         }
         if (temporaryReady()) {
+          if (emptyTemporary) { await status(); return; }
           const fresh = find('fresh');
           if (!fresh || fresh.disabled || fresh.getAttribute('aria-disabled') === 'true') { emit({type:'error', code:'temporary_unavailable', message:'Could not start a fresh temporary chat in Gemini.', setupId:options.setupId || null}); return; }
           dispatchClickSequence(fresh, true);
           for (let i = 0; i < 15 && (location.pathname !== '/app' || assistantNodes().length || userNodes().length); i++) await sleep(100);
           if (location.pathname !== '/app' || assistantNodes().length || userNodes().length) { emit({type:'error', code:'temporary_unavailable', message:'Could not start a fresh temporary chat in Gemini.', setupId:options.setupId || null}); return; }
+          cancelledAttachments = null;
           if (temporaryReady()) { await status(); return; }
         }
         const tempBtn = [...document.querySelectorAll('button, a, [role="button"], gem-nav-list-item')].find(node =>
@@ -1263,6 +1270,7 @@
         await status();
         return;
       }
+      cancelledAttachments = null;
       const hadTurns = assistantNodes().length > 0 || userNodes().length > 0 || location.pathname !== '/app';
       const button = find('fresh');
       if (button) dispatchClickSequence(button);

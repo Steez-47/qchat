@@ -2,7 +2,7 @@
 
 Goal: add useful compact features, refine and test each one, commit locally, then continue. Preserve the running app, account/profile and unrelated icon.icns modification. No publication requested. The absent orchestrator playbook was read from git commit 37b5396.
 
-Current portable checkpoint: dist/overnight/20261101-065523-7c7d6f8/QChat.exe (source7c7d6f864d5c0416c1aee3126f8e69619bcf48a3, SHA25684888496c5d6788d747b591384b69279a371f841cde6a7577b603b11be87143b). O19/O20 are included, with native134 and related suites verified and Claude's final checkpoint holding. Compiled/staged/manifest/checksum match; original app and all4 older checkpoints are unchanged. Next is O21 attachment control stability in an isolated worker; O22 is the nonblocking empty-Gemini Temporary follow-up. Goal stays active.
+Current portable checkpoint: dist/overnight/20261101-065523-7c7d6f8/QChat.exe (source7c7d6f864d5c0416c1aee3126f8e69619bcf48a3, SHA25684888496c5d6788d747b591384b69279a371f841cde6a7577b603b11be87143b). O19/O20 are included, with native134 and related suites verified and Claude's final checkpoint holding. O21/O22 are now verified and committed for the next separate production checkpoint. Goal stays active.
 
 | id | task | model | owns | status |
 |---|---|---|---|---|
@@ -27,7 +27,7 @@ Current portable checkpoint: dist/overnight/20261101-065523-7c7d6f8/QChat.exe (s
 | O19 | Retry file preparation without reattaching | Terra high + root, Claude cross-family review | UI/mock/staging regressions and native harness | done - UI42/native18 PASS; cleanup/quota review findings reproduced/fixed, related suites PASS; release awaits O20 |
 | O20 | Preserve edits made during a pending provider change | Terra medium/high + root, Claude source review | provider draft and temporary-mode lifecycle/tests | done -7c7d6f8 reviewed, native134/UI18/bridge33/Rust32 and related suites PASS; production checkpoint staged and verified |
 | O21 | Preserve attachment keyboard focus during preparation | Terra medium + root | attachment rendering/tests | done - c1b8826; UI14/native16 PASS after6 baseline failures each;10 worker UI suites and native staging18/provider-draft27 PASS; Claude source read has no findings;340px native layout inspected |
-| O22 | Empty Gemini Temporary setup without an available New chat control | root after companion review | provider setup/tests | todo - nonblocking fail-closed refusal on an already-empty /app; evaluate guard without reusing old context or provider attachments |
+| O22 | Empty Gemini Temporary setup without an available New chat control | root after companion review | provider setup/tests | done - native56/bridge33/Gemini21 PASS;3 setup failures and textarea-value case reproduced/fixed; leftover text/context/files/removers/upload indicators/cancellation still refuse; secondary-account route limit documented; Claude no blocker |
 
 Verification uses isolated headless browsers and hidden native profiles. Build to a separate executable; do not replace dist/QChat.exe while the owner's instance is running. Each completed feature gets its own commit. Free provider failures will be recorded; no claims of exhaustive edge-case coverage.
 
