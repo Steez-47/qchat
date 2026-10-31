@@ -334,7 +334,7 @@ try {
   // --- Tabs -----------------------------------------------------------------
   await open('/', { chats: seeded(chat('cur', 'conv-current', 5 * MIN, 'Current chat'), chat('old', 'conv-old', 3 * DAY, 'Oldest chat'), chat('mid', 'conv-mid', 5 * HOUR, 'Middle chat'), chat('new', 'conv-new', 30 * MIN, 'A very recent chat')) });
   await settle();
-  const tabInfo = () => evalJS(`[...document.querySelectorAll('#tabs .tab')].map(t=>({key:t.dataset.key,label:t.querySelector('.tab-label').textContent,disabled:t.disabled,title:t.title,logo:t.querySelector('svg.icon')?.dataset.provider}))`);
+  const tabInfo = () => evalJS(`[...document.querySelectorAll('#tabs .tab')].map(t=>({key:t.dataset.key,label:t.querySelector('.tab-label').textContent,disabled:t.disabled,ariaDisabled:t.getAttribute('aria-disabled'),title:t.title,logo:t.querySelector('svg.icon')?.dataset.provider}))`);
   let tabs = await tabInfo();
   check('exactly 3 tabs for 3 chats', tabs.length === 3);
   check('tabs are ordered most recent first', tabs.map((t) => t.key).join() === 'new,mid,old', tabs.map((t) => t.key).join());
@@ -397,7 +397,7 @@ try {
   await send('still here');
   await sleep(20);
   tabs = await tabInfo();
-  check('tabs are disabled while waiting or streaming', tabs.every((t) => t.disabled));
+  check('tabs are disabled while waiting or streaming', tabs.length > 0 && tabs.every((t) => t.ariaDisabled === 'true' && !t.disabled) && await evalJS(`document.querySelector('#tabs .tab-all').disabled`));
   const opensBefore = await count('chat_open');
   await evalJS(`document.querySelector('#tabs .tab').click()`);
   check('disabled tab does nothing', await count('chat_open') === opensBefore);

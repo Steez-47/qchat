@@ -2749,6 +2749,7 @@
     const focusedIndex = oldTabs.indexOf(focused);
     const focusedKey = focusedIndex >= 0 ? focused.dataset.key : null;
     const visible = tabsVisible();
+    if (!visible && el.tabs.contains(document.activeElement)) el.promptInput.focus();
     el.tabs.hidden = !visible;
     if (!visible) { el.tabs.replaceChildren(); queueSizes(); return; }
 
@@ -3152,7 +3153,8 @@
   const slashOpen = () => !el.slashMenu.hidden;
 
   function syncMenuFlag() {
-    const away = slashOpen() || !el.clearConfirm.hidden || !renameForm.hidden || !!document.querySelector("#command-feedback:not([hidden])");
+    const away = slashOpen() || !el.clearConfirm.hidden || !renameForm.hidden;
+    if (away && el.tabs.contains(document.activeElement)) el.promptInput.focus();
     if (away) el.stack.dataset.menu = ""; else delete el.stack.dataset.menu;
     el.stack.toggleAttribute("data-slash-menu", slashOpen());
   }

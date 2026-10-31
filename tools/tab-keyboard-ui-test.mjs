@@ -138,12 +138,27 @@ try {
   await setup(); await focusTab('b');
   await evalJS(`__mock.emit('qchat://settings-changed',{...QSettings.settings})`);
   check('render keeps focused chat key', await waitFor(`document.activeElement.classList.contains('tab') && document.activeElement.dataset.key==='b'`));
-  await list(); await focusTab('b'); await remove('b');
-  check('removing focused chat focuses nearest tab', await evalJS(`document.activeElement.classList.contains('tab') && document.activeElement.dataset.key==='c'`));
+  await focusTab('c');
+  await evalJS(`__mock.emit('qchat://settings-changed',{...QSettings.settings,tabCount:2})`);
+  check('focused tab removed from row moves focus to nearest visible tab', await waitFor(`document.activeElement.classList.contains('tab') && document.activeElement.dataset.key==='b'`));
+
+  await setup(); await list(); await focusTab('b'); await remove('a');
+  check('notice preserves focus on an unchanged tab', await evalJS(`document.activeElement.dataset.key==='b' && !document.getElementById('command-feedback').hidden`));
+
+  await setup(); await list(); await focusTab('b');
+  const beforePill = await evalJS(`({height:document.querySelector('#stack').offsetHeight, content:__mock.fit.content})`);
+  await remove('b');
+  check('focused removed tab moves to nearest while undo is visible', await evalJS(`document.activeElement.dataset.key==='c' && !document.getElementById('command-feedback').hidden`));
+  const pillFits = await waitFor(`(()=>{const tabs=document.getElementById('tabs').getBoundingClientRect(),pill=document.getElementById('command-feedback').getBoundingClientRect(),stack=document.getElementById('stack');return getComputedStyle(document.getElementById('tabs')).display!=='none' && tabs.width>0 && pill.width>0 && (tabs.bottom<=pill.top || pill.bottom<=tabs.top || tabs.right<=pill.left || pill.right<=tabs.left) && stack.offsetHeight>${beforePill.height} && __mock.fit.content>${beforePill.content} && __mock.fit.content>=stack.offsetHeight})()`);
+  check('tabs and undo remain visible without overlap and fit grows', pillFits);
   const hidesUndo = await count('hide_main'); await key('Escape');
-  check('Escape dismisses undo first while keeping tab focus', await evalJS(`document.getElementById('command-feedback').hidden && document.activeElement.dataset.key==='c'`) && await count('hide_main')===hidesUndo);
-  await key('Escape');
-  check('next Escape focuses composer', await evalJS(`document.activeElement.id==='prompt-input'`) && await count('hide_main')===hidesUndo);
+  check('Escape dismisses undo first and retains tab focus without hiding', await evalJS(`document.getElementById('command-feedback').hidden && document.activeElement.dataset.key==='c'`) && await count('hide_main')===hidesUndo);
+  await key('Escape'); check('next Escape returns focus to composer', await evalJS(`document.activeElement.id==='prompt-input'`) && await count('hide_main')===hidesUndo);
+
+  await setup(); await list(); await sleep(250);
+  await evalJS(`(()=>{const button=[...document.querySelectorAll('.feature-row')].find(r=>r.querySelector('.feature-title')?.textContent==='b').querySelector('[aria-label="Remove chat"]');button.focus();button.click()})()`);
+  const hidesReal = await count('hide_main'); await key('Escape');
+  check('Escape after removing from list dismisses undo without hiding', await evalJS(`!document.querySelector('#tabs [data-key="b"]') && document.getElementById('command-feedback').hidden`) && await count('hide_main')===hidesReal);
 
   await setup(); await evalJS(`document.getElementById('prompt-input').focus()`); await type('draft');
   const untouched = await evalJS(`(()=>{const e=new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true,cancelable:true});document.activeElement.dispatchEvent(e);return !e.defaultPrevented && document.activeElement.id==='prompt-input' && document.activeElement.value==='draft'})()`);
@@ -154,12 +169,14 @@ try {
 
   await setup(); await evalJS(`__mock.hold=true; document.getElementById('prompt-input').focus()`); await send('busy prompt');
   if (!await waitFor(`document.querySelector('#tabs .tab')?.getAttribute('aria-disabled')==='true'`)) throw Error('busy state did not appear');
+  if (!await waitFor(`__mock.count('chat_send')===1`)) throw Error('setup send did not reach mock');
   const sends = await count('chat_send');
   const current = await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).current.key`);
   await focusTab('a'); await key('ArrowRight');
   check('busy tabs remain focusable and expose disabled state', await evalJS(`document.activeElement.dataset.key==='b' && document.activeElement.getAttribute('aria-disabled')==='true'`));
   await key('Enter'); await key(' '); await evalJS(`document.querySelector('#tabs [data-key="a"]').click()`); await sleep(50);
-  check('busy keyboard and mouse activation do not switch or send', await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).current.key`)===current && await count('chat_send')===sends);
+  const busyAfter = await evalJS(`({active:document.activeElement.dataset.key,current:JSON.parse(localStorage.getItem('qchat.chats')).current.key,sends:__mock.count('chat_send')})`);
+  check('busy keyboard and mouse activation do not switch or send', busyAfter.current===current && busyAfter.sends===sends, JSON.stringify({before:{current,sends},after:busyAfter}));
 
   await setup(seed([chat('a')])); await focusTab('a');
   const oneArrow = await evalJS(`(()=>{const e=new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true,cancelable:true});document.activeElement.dispatchEvent(e);return !e.defaultPrevented && document.activeElement.dataset.key==='a'})()`);
