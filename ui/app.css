@@ -957,3 +957,4 @@ select.qinteractive-control option { background: #252b35; color: #eee; }
 .rename-bar > button { flex: none; }
 .rename-error { flex-basis: 100%; padding: 0 6px; color: var(--critical-text); font-size: 12px; }
 .tab:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
+.tab[aria-disabled="true"] { opacity: 0.5; }

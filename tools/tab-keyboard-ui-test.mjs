@@ -116,6 +116,57 @@ try {
   check('Escape focuses composer without hiding', await evalJS(`document.activeElement.id==='prompt-input'`) && await count('hide_main')===hides);
   await evalJS(`document.querySelector('#tabs .tab').focus()`); await key('Enter');
   check('Enter activates and focuses composer', await waitFor(`JSON.parse(localStorage.getItem('qchat.chats')).current.key==='a' && document.activeElement.id==='prompt-input'`));
+  const settings = {animations:'off', autoDismiss:0, keepHistory:true, showTabs:true};
+  const seed = (recent = [chat('a'), chat('b'), chat('c')]) => ({v:1, current:chat('current'), recent});
+  const setup = async (data = seed()) => {
+    await open('/?mock=signedin', {settings, chats:data});
+    if (!await waitFor(`document.querySelectorAll('#tabs .tab').length===${data.recent.length}`)) throw Error('tabs did not appear');
+  };
+  const focusTab = (key) => evalJS(`document.querySelector('#tabs [data-key="${key}"]').focus()`);
+  const list = async () => {
+    await key('p', {ctrlKey:true});
+    if (!await waitFor(`!document.querySelector('.feature-list').hidden`)) throw Error('chat list did not open');
+  };
+  const remove = (title) => evalJS(`(()=>{const row=[...document.querySelectorAll('.feature-row')].find(r=>r.querySelector('.feature-title')?.textContent===${JSON.stringify(title)}); if(!row) throw Error('missing row'); row.querySelector('[aria-label="Remove chat"]').click()})()`);
+
+  const other = chat('b'); other.provider = 'gemini';
+  await setup(seed([chat('a'), other, chat('c')]));
+  await focusTab('b'); await key(' ');
+  check('Space activates different-provider tab and focuses composer', await waitFor(`JSON.parse(localStorage.getItem('qchat.chats')).current.key==='b' && document.activeElement.id==='prompt-input'`));
+  check('different-provider activation preserves provider', await evalJS(`__mock.provider==='gemini' && JSON.parse(localStorage.getItem('qchat.chats')).current.provider==='gemini'`));
+
+  await setup(); await focusTab('b');
+  await evalJS(`__mock.emit('qchat://settings-changed',{...QSettings.settings})`);
+  check('render keeps focused chat key', await waitFor(`document.activeElement.classList.contains('tab') && document.activeElement.dataset.key==='b'`));
+  await list(); await focusTab('b'); await remove('b');
+  check('removing focused chat focuses nearest tab', await evalJS(`document.activeElement.classList.contains('tab') && document.activeElement.dataset.key==='c'`));
+  const hidesUndo = await count('hide_main'); await key('Escape');
+  check('Escape dismisses undo first while keeping tab focus', await evalJS(`document.getElementById('command-feedback').hidden && document.activeElement.dataset.key==='c'`) && await count('hide_main')===hidesUndo);
+  await key('Escape');
+  check('next Escape focuses composer', await evalJS(`document.activeElement.id==='prompt-input'`) && await count('hide_main')===hidesUndo);
+
+  await setup(); await evalJS(`document.getElementById('prompt-input').focus()`); await type('draft');
+  const untouched = await evalJS(`(()=>{const e=new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true,cancelable:true});document.activeElement.dispatchEvent(e);return !e.defaultPrevented && document.activeElement.id==='prompt-input' && document.activeElement.value==='draft'})()`);
+  check('composer horizontal arrows unaffected', untouched);
+  await type(''); await key('ArrowUp');
+  check('composer recall still works', await inputValue()==='question');
+  await key('ArrowDown'); check('composer recall returns to empty draft', await inputValue()==='');
+
+  await setup(); await evalJS(`__mock.hold=true; document.getElementById('prompt-input').focus()`); await send('busy prompt');
+  if (!await waitFor(`document.querySelector('#tabs .tab')?.getAttribute('aria-disabled')==='true'`)) throw Error('busy state did not appear');
+  const sends = await count('chat_send');
+  const current = await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).current.key`);
+  await focusTab('a'); await key('ArrowRight');
+  check('busy tabs remain focusable and expose disabled state', await evalJS(`document.activeElement.dataset.key==='b' && document.activeElement.getAttribute('aria-disabled')==='true'`));
+  await key('Enter'); await key(' '); await evalJS(`document.querySelector('#tabs [data-key="a"]').click()`); await sleep(50);
+  check('busy keyboard and mouse activation do not switch or send', await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).current.key`)===current && await count('chat_send')===sends);
+
+  await setup(seed([chat('a')])); await focusTab('a');
+  const oneArrow = await evalJS(`(()=>{const e=new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true,cancelable:true});document.activeElement.dispatchEvent(e);return !e.defaultPrevented && document.activeElement.dataset.key==='a'})()`);
+  check('single tab arrow does nothing', oneArrow);
+  await cdp('Input.dispatchKeyEvent',{type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+  await cdp('Input.dispatchKeyEvent',{type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+  check('single tab does not trap Tab focus', await evalJS(`document.activeElement.dataset.key!=='a'`));
   check('no runtime errors', problems.length===0, problems.join(' | '));
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: 999999, method: 'Browser.close' }));
