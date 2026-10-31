@@ -107,3 +107,5 @@
 2026-11-01 | Keyboard copy | companion Terra high + root integration | done | integrated 316c51a; root added 4 edge fixes and shared safe copy formatting; keyboard24 and native13 PASS, copy/media/history/features PASS
 2026-11-01 | Attachment retry review | codex/gpt-6.1-terra high | done | 4 findings: early staging exit loses ownership, stale native dispatch association, orphan expiry/UI reload, pending/terminal settlement race; not integrated
 2026-11-01 | Companion availability | Claude | quota exhausted | terminal at review stage; root adopts completed worker commits without editing peer worktrees; reset notice 1:20am Auckland
+2026-11-01 | Attachment retry repairs | codex/gpt-6.1-terra high | starting | isolated checkout from 1777f65; four review findings, UI races/native ownership/expiry/reload and native verification required
+2026-11-01 | Live Stop coverage | parent | done | app-e2e10 live guest PASS, actual Stop/native provider dispatch, persistence/stale events/follow-up; safe CDP ownership and timeouts; no user session touched

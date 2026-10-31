@@ -12,8 +12,9 @@ Goal: add useful compact features, refine and test each one, commit locally, the
 | O6 | Reversible local chat removal | companion Claude thread | ui/app.js, tools/chat-undo-ui-test.mjs | done - integrated 6e84bdb |
 | O7 | Paste anywhere in popup | companion Claude thread | ui/app.js, tools/paste-anywhere-ui-test.mjs | done - integrated 2f1dd01 |
 | O8 | Edit and resend messages | companion Claude thread, Terra review, parent native checks | ui/app.js/css, tools/edit-prompt-ui-test.mjs | done - fixed e07bc81 |
+| O9 | Reliable live Stop verification | root | tools/app-e2e.mjs | done - 10 live guest checks PASS |
 | O10 | Keyboard copy of last reply/code | Terra worker + root integration | ui/app.js, tools/keyboard-copy-ui-test.mjs | done - 316c51a integrated with polish |
-| O11 | Retry failed attachment turns | Sol worker + Terra review + root integration | UI, native media and retry tests | 046ec6f unmerged; 4 review findings open |
+| O11 | Retry failed attachment turns | Sol prototype + Terra high repair/review + root integration | UI, native media and retry tests | partial UI repair returned; root completing native lifecycle before integration |
 
 Verification uses isolated headless browsers and hidden native profiles. Build to a separate executable; do not replace dist/QChat.exe while the owner's instance is running. Each completed feature gets its own commit. Free provider failures will be recorded; no claims of exhaustive edge-case coverage.
 
@@ -34,6 +35,8 @@ Production build PASS from exactly e07bc81b48686a24aea3f4f05567a301ac72f83e. Sta
 Current coordination: companion hit Claude's 5-hour usage limit (tool notice: reset 1:20am Auckland); parent and both worker turns are terminal, both worktrees clean. Root is adopting the completed 316c51a keyboard-copy and 046ec6f attachment-retry commits for review/verification in the shared checkout. No peer worktree edits. No current test jobs remain; older unrelated headless sessions are preserved. Root owns serial test runs until the next handoff. Keyboard copy gets integrated first; attachment retry must resolve native ownership, expiry/reload, early-exit and settlement findings and pass native checks before integration. First build checkpoint stays unchanged; the ongoing feature goal remains active.
 
 O10 verification: keyboard24, copy/media/history/feature suites PASS; fresh debug native13 PASS, including Ctrl+Shift+C/X dispatch to a clipboard stub. Root fixed buffered last-code selection, plaintext-only editor exclusion, stale async feedback and readable image references while preserving code examples. Snapshot cleanup now protects public image Markdown inside code but still scrubs signed media URLs; regression covers both. Reply buttons/history/whole-conversation and keyboard copy share formatting. No real clipboard writes; physical OS shortcut/devtools routing remains untested. The existing e07bc81 production checkpoint is preserved until attachment retry is complete and the next batch is built.
+
+O9 verification: live ChatGPT guest app10 PASS against the fresh O10 debug build. Replaced polling/direct-native Stop and the response-speed-dependent absence-of-200 assertion with the actual Stop button triggered at first bridge delta. Observes provider stop once, exact saved stopped response and stable rendered content after live and explicitly stale native events, then proves a subsequent send works. Harness now selects a free CDP port, checks process-tree ownership before attachment, propagates protocol/page errors and bounds calls/cleanup. First run exposed that Tauri's exported invoke cannot be replaced for instrumentation; provider-side observation fixed the harness. Hidden disposable guest only; owner's app/profile untouched.
 
 ## v1.2.0: one picker, tab logos, Gemini images (2026-10-31, branch feat/v1.2)
 
