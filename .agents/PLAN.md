@@ -2,6 +2,8 @@
 
 Goal: add useful compact features, refine and test each one, commit locally, then continue. Preserve the running app, account/profile and unrelated icon.icns modification. No publication requested. The absent orchestrator playbook was read from git commit 37b5396.
 
+Current portable checkpoint: dist/overnight/20261101-034957-18cf484/QChat.exe (source18cf48492482fc44abc308f07e6077dcaceeef7b, SHA256015717d2a8f1a05ef6b7992097f26d2d6a82aa595e9c2385ee15ae2544f213e8). O17/O18 are included; next is O19 failed-file staging retry in an isolated worker checkout. Goal stays active.
+
 | id | task | model | owns | status |
 |---|---|---|---|---|
 | O1 | Copy full conversation command and focused edge-case UI tests | parent + Terra medium | ui/app.js, tools/conversation-copy-ui-test.mjs | done |
@@ -22,6 +24,7 @@ Goal: add useful compact features, refine and test each one, commit locally, the
 | O16 | Keyboard jump to the latest message | companion Claude + Terra, root native checks | UI and navigation tests | done - UI14 and native24 PASS after O18 modifier guard; native editing/default selection verified |
 | O17 | Save the open conversation as Markdown | Terra high + root, companion Claude review | UI/native export and tests | done - final UI20/native19/Rust31 PASS; Copy25/17 UI regressions/native24+9+6+guest10 verified; reviewed, release staging next |
 | O18 | Recall, attachment Undo and keyboard interactions | companion Claude after Terra audit, root review/native | UI and interaction tests | done - 6ab3e48 integrated; identity regression reproduced and fixed;15 companion +9 root UI suites and native24 PASS |
+| O19 | Retry file preparation without reattaching | root + Terra high | isolated UI/mock/staging regression | starting - error-chip Retry reuses original File, serialized cleanup/reset; no native Rust changes planned |
 
 Verification uses isolated headless browsers and hidden native profiles. Build to a separate executable; do not replace dist/QChat.exe while the owner's instance is running. Each completed feature gets its own commit. Free provider failures will be recorded; no claims of exhaustive edge-case coverage.
 
@@ -82,6 +85,8 @@ O17 acceptance: export UI19, native19, existing Copy25 and Rust31 (1 ignored cap
 O17 final review/verification: Claude read fe28b1f+66e7f0d with no build blocker (source only). Root accepted both follow-ups: report file-export outcomes across chat switches, because a disk operation must not fail silently, and sync_all after write_all before reporting success, using the same owned-file cleanup error path. This deliberately replaces the initial chat-scoped notice rule; it changes no current chat, draft or snapshot. Held success/failure regressions both failed on the old rule, then passed with global result notices. Additional reviewed Unicode format marks are stripped; their unit case also failed before the filter change. Final export UI20, native19, Rust31 (1 ignored) PASS after these changes. Prior Copy25 and17 UI regressions remain applicable; no changes to their exercised paths after66e7f0d. Fresh native navigation24/reconnect9/persistence6 PASS in the integrated round.
 
 Live guest verification: the first integrated app-e2e run passed send/context then failed7 later checks without enough diagnostics. Root kept that evidence in .tmp/O17-final-app-e2e.log, added bounded guest-only error code/message diagnostics without weakening any assertion, and investigated with fresh disposable profiles. Both the targeted limit-phrase reply and the exact first-three-prompt sequence passed; no provider-code change was made. The full live guest10 suite then passed after the export follow-ups (.tmp/O17-review-fix-app-e2e.log), including actual Stop, stable persistence/stale-event rejection and the next send. The initial failure's cause remains unconfirmed; do not describe it as a fixed provider bug or a proven rate limit. Production staging follows the final committed source; no signed-in uploads/account sends, OS input or real clipboard writes were used.
+
+Latest production checkpoint verified: dist/overnight/20261101-034957-18cf484/QChat.exe, source exactly18cf48492482fc44abc308f07e6077dcaceeef7b; SHA256015717d2a8f1a05ef6b7992097f26d2d6a82aa595e9c2385ee15ae2544f213e8,6138880 bytes, ProductVersion1.2.0. Direct Tauri release build PASS in1m16s; compiled/staged/BUILD.json/SHA256SUMS equality verified. All three earlier checkpoint hashes remain unchanged. Original dist/QChat.exe still hashesb71e4d302766006c8266cd22df0d64462c8d1a6d3be20e2afc0c19ffcbf85224 and PID34592 is responsive. Release executable not launched; runtime evidence uses fresh debug with the same UI/native payload. Quit the existing tray instance before opening this local portable build. No publication, signed-in acceptance or real OS clipboard/hotkey test was done. Next O19 adds a compact Retry only to failed staging chips, keeping drafts and original File objects and respecting the existing serialized staging queue/cleanup lifecycle.
 
 ## v1.2.0: one picker, tab logos, Gemini images (2026-10-31, branch feat/v1.2)
 
