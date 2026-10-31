@@ -18,6 +18,7 @@ fn main() {
             "attachment_remove",
             "media_load",
             "media_save",
+            "conversation_export",
             "image_copy", "snapshot_capture",
         ]),
     ))
