@@ -3141,6 +3141,7 @@
         if (row.divider) { const divider = make("div", "feature-divider"); divider.setAttribute("role", "separator"); results.append(divider); continue; }
         if (row.heading) { results.append(make("div", "feature-heading", row.heading)); continue; }
         const key = searchable ? row.key : null;
+        if (key != null && used.has(key)) continue;
         let entry = key != null ? cache.get(key) : null;
         const line = entry?.line || make("div", "feature-row");
         if (entry) {
@@ -3200,7 +3201,17 @@
     featureList.onkeydown = e => {
       if (e.key === "Escape") { e.stopPropagation(); closeFeatureList(); }
       else if (keysCard) { if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key !== "Shift" && e.key !== "Control" && e.key !== "Alt" && e.key !== "Meta") { e.preventDefault(); closeFeatureList(); } }
-      else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); if (!lines.length) return; selected = (selected + (e.key === "ArrowDown" ? 1 : -1) + lines.length) % lines.length; mark(); lines[selected]?.line.scrollIntoView({ block: "nearest" }); }
+      else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault(); if (!lines.length) return;
+        selected = (selected + (e.key === "ArrowDown" ? 1 : -1) + lines.length) % lines.length; mark();
+        if (searchable && results.contains(document.activeElement)) {
+          const entry = lines[selected];
+          const remove = document.activeElement.getAttribute("aria-label") === "Remove chat";
+          const next = remove ? entry.line.querySelector('[aria-label="Remove chat"]') || entry.button : entry.button;
+          next.focus({ preventScroll: true });
+        }
+        lines[selected]?.line.scrollIntoView({ block: "nearest" });
+      }
       else if (e.key === "Enter") { if (searchable && e.target instanceof HTMLButtonElement) return; e.preventDefault(); const entry = lines[selected] || lines[0]; if (entry) { closeFeatureList(); entry.row.run(); } }
     };
     paint(); queueSizes(); (searchable ? field : featureList).focus();
@@ -3247,8 +3258,9 @@
 
   function receiveAccountChats(event) {
     const seen = new Set(accountChats.items.map(item => item.id));
-    for (const item of Array.isArray(event.items) ? event.items : []) if (!seen.has(item.id)) accountChats.items.push(item);
-    const more = !event.error && event.items?.length && accountChats.items.length < Math.min(event.total || 0, 600);
+    const before = accountChats.items.length;
+    for (const item of Array.isArray(event.items) ? event.items : []) if (!seen.has(item.id)) { seen.add(item.id); accountChats.items.push(item); }
+    const more = !event.error && event.items?.length && accountChats.items.length > before && accountChats.items.length < Math.min(event.total || 0, 600);
     if (more) { const provider = activeProvider; setTimeout(() => { if (provider === activeProvider) invoke("chat_list_conversations", { offset: accountChats.items.length }).catch(() => { accountChats.loading = false; }); }, 500); }
     else { accountChats.loading = false; accountChats.loaded = !event.error; accountChats.at = Date.now(); }
     if (!featureList.hidden) featureList._repaint?.();

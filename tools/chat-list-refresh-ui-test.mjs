@@ -144,6 +144,23 @@ try {
   check('repeated empty batch retains duplicate identity, focused node and scroll',await evalJS(`document.activeElement===lastDuplicate&&lastDuplicate.isConnected&&resultBox.scrollTop===savedScroll`));
   await nativeKey('Enter','Enter',13); await sleep(50);
   check('Enter opens the exact duplicate account chat',await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).current.conversationId==='remote-29'`));
+  const reopen=async()=>{await open('/?mock=signedin',{settings:{animations:'off',keepHistory:true},chats:data});await key('p',{ctrlKey:true});await until('document.querySelectorAll(".feature-row").length===3');};
+  await reopen();await evalJS('document.querySelectorAll(".feature-row")[1].querySelector(".feature-choice").focus()');await nativeKey('ArrowDown','ArrowDown',40);
+  check('ArrowDown from Open moves actual focus with the highlight',await evalJS('document.activeElement.closest(".feature-row")?.querySelector(".feature-title").textContent==="Chat C"&&document.querySelector("[data-selected] .feature-title")?.textContent==="Chat C"'));
+  await nativeKey('Enter','Enter',13);await until('JSON.parse(localStorage.getItem("qchat.chats")).current.key!=="rename-current"');
+  check('Enter after action arrow navigation opens the highlighted chat',await evalJS('JSON.parse(localStorage.getItem("qchat.chats")).current.key==="chat-C"'));
+  await reopen();await evalJS('document.querySelectorAll(".feature-row")[1].querySelector(\'[aria-label="Remove chat"]\').focus()');await nativeKey('ArrowDown','ArrowDown',40);
+  check('ArrowDown from Remove moves the same action to the highlighted chat',await evalJS('document.activeElement.getAttribute("aria-label")==="Remove chat"&&document.activeElement.closest(".feature-row")?.querySelector(".feature-title").textContent==="Chat C"&&document.querySelector("[data-selected] .feature-title")?.textContent==="Chat C"'));
+  await nativeKey('Enter','Enter',13);await until('JSON.parse(localStorage.getItem("qchat.chats")).recent.length===2');
+  check('Enter after removal arrow navigation removes only the highlighted chat',await evalJS('(()=>{const state=JSON.parse(localStorage.getItem("qchat.chats"));return state.current.key==="rename-current"&&state.recent.some(chat=>chat.key==="chat-B")&&!state.recent.some(chat=>chat.key==="chat-C");})()'));
+  await reopen();await refresh();await evalJS('Array.from(document.querySelectorAll(".feature-row")).find(row=>row.querySelector(".feature-title")?.textContent==="Chat C").querySelector(\'[aria-label="Remove chat"]\').focus()');await nativeKey('ArrowDown','ArrowDown',40);
+  check('action arrows fall back to Open on an account result without Remove',await evalJS('document.activeElement.classList.contains("feature-choice")&&document.activeElement.closest(".feature-row")?.querySelector(".feature-title").textContent==="Remote result"'));
+  await nativeKey('ArrowDown','ArrowDown',40);
+  check('action arrow navigation wraps with matching focus and highlight',await evalJS('document.activeElement.closest(".feature-row")?.querySelector(".feature-title").textContent==="Chat A"&&document.querySelector("[data-selected] .feature-title")?.textContent==="Chat A"'));
+  await reopen();await evalJS('__mock.emit("bridge",{type:"conversations",items:[{id:"repeat-id",title:"Repeated account"},{id:"repeat-id",title:"Repeated account"},{id:"tail-id",title:"Tail account"}],total:2})');await nativeKey('ArrowDown','ArrowDown',40);await nativeKey('ArrowDown','ArrowDown',40);await nativeKey('ArrowDown','ArrowDown',40);
+  check('duplicate IDs in one batch create one keyboard stop per account',await evalJS('document.querySelectorAll(".feature-row").length===5&&document.querySelector("[data-selected] .feature-title")?.textContent==="Repeated account"'));
+  const pagesBefore=await count('chat_list_conversations');await evalJS('__mock.emit("bridge",{type:"conversations",items:[{id:"repeat-id",title:"Repeated account"}],total:99})');await sleep(650);
+  check('a duplicate-only batch does not keep requesting more pages',await count('chat_list_conversations')===pagesBefore);
   check('chat-list refresh probe has no runtime errors',problems.length===0,problems.join(' | '));
 } catch (e) {
   console.error(e);
