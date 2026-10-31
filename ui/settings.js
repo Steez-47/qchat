@@ -548,7 +548,8 @@
     const query = search.value.trim().toLowerCase(); let count = 0;
     for (const {node,section} of sectionNodes) {
       const rows = [...node.querySelectorAll(".row,.action-row,.preset-entry,.look-swatch")];
-      for (const row of rows) row.hidden = !!query && !row.textContent.toLowerCase().includes(query);
+      const titleMatch = !!query && section.title.toLowerCase().includes(query);
+      for (const row of rows) row.hidden = !!query && !titleMatch && !row.textContent.toLowerCase().includes(query);
       const visible = !query || rows.some(r => !r.hidden) || section.title.toLowerCase().includes(query);
       node.hidden = !visible; links.get(section.id).hidden = !visible; if (visible) count++;
       for (const detail of node.querySelectorAll("details")) if (query) detail.open = true;
