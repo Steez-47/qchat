@@ -610,9 +610,14 @@
     edit.title = "Edit in composer"; edit.setAttribute("aria-label", edit.title);
     const editIcon = make("span", "icon user-edit-icon");
     editIcon.setAttribute("aria-hidden", "true"); edit.append(editIcon);
-    edit.hidden = !(item.text || item.selectionTexts?.length);
     tools.append(copy, edit);
+    syncUserTools(tools, item);
     return tools;
+  }
+
+  // File-only turns have nothing to copy or load, so they show no tools at all.
+  function syncUserTools(tools, item) {
+    tools.hidden = !(item.text || item.selectionTexts?.length);
   }
 
   // The same bubble markup as the live view, without its per-reply viewport:
@@ -684,8 +689,7 @@
       row._historyFingerprint = fingerprint;
       row._copyText = item.text;
       row._userTurn = item.role === "user" ? item : null;
-      const edit = row.querySelector('[data-action="edit-prompt"]');
-      if (edit) edit.hidden = !(item.text || item.selectionTexts?.length);
+      if (item.role === "user") syncUserTools(row.querySelector(".bubble-tools"), item);
       row.toggleAttribute("data-wide", /\n/.test(item.text));
       const content = row.querySelector(".turn-content");
       const template = document.createElement("template");
@@ -3246,10 +3250,12 @@
     const item = row?._userTurn;
     if (!item || (item.chatKey && item.chatKey !== chats.current.key)) return;
     const input = el.promptInput;
-    const text = item.text || "";
-    const replaced = Boolean(input.value && input.value !== text);
+    const text = (item.text || "").replace(/\r\n?/g, "\n");
+    const previous = input.value;
+    const replaced = Boolean(text && previous && previous !== text);
     const notices = [];
-    if (input.value !== text) {
+    // A selection-only turn has no text to load, so any draft stays as it is.
+    if (text && previous !== text) {
       input.focus();
       input.select();
       let inputFired = false;
@@ -3258,7 +3264,19 @@
       let inserted = false;
       try { inserted = document.execCommand("insertText", false, text); } catch {}
       input.removeEventListener("input", markInput);
-      if (!inserted) input.setRangeText(text, 0, input.value.length, "end");
+      if (!inserted || input.value !== text) {
+        // Only insertText joins the native undo stack. Never overwrite a draft
+        // that could not be brought back; an empty composer has nothing to lose.
+        if (previous) {
+          if (input.value !== previous) input.setRangeText(previous, 0, input.value.length, "end");
+          if (inputFired || input.value !== previous) input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+          showCommandFeedback("Couldn't replace your draft. Clear it and try again.");
+          return;
+        }
+        input.setRangeText(text, 0, input.value.length, "end");
+      }
       if (!inputFired) input.dispatchEvent(new Event("input", { bubbles: true }));
       if (replaced) notices.push("Replaced draft, Ctrl+Z restores it");
     }
@@ -3390,7 +3408,8 @@
     if (button?.dataset.action === "edit-prompt") {
       editUserPrompt(button.closest(".history-row"));
     } else if (button?.dataset.action === "copy-user") {
-      copyWithFeedback(button.closest(".history-row")?._userTurn?.text || "", button);
+      const turn = button.closest(".history-row")?._userTurn;
+      if (turn) copyWithFeedback(wirePrompt(turn.text || "", turn.selectionTexts || []), button);
     } else if (button?.dataset.action === "copy-code") {
       const code = button.closest(".code-block")?.querySelector("pre code");
       if (code) copyWithFeedback(code.textContent, button);
@@ -3434,7 +3453,8 @@
     if (action === "edit-prompt") {
       editUserPrompt(actionBtn.closest(".turn-row"));
     } else if (action === "copy-user") {
-      copyWithFeedback(actionBtn.closest(".turn-row")?._userTurn?.text || "", actionBtn);
+      const turn = actionBtn.closest(".turn-row")?._userTurn;
+      if (turn) copyWithFeedback(wirePrompt(turn.text || "", turn.selectionTexts || []), actionBtn);
     } else if (action === "copy-code") {
       const codeEl = actionBtn.closest(".code-block")?.querySelector("pre code");
       if (codeEl) copyWithFeedback(codeEl.textContent, actionBtn);
