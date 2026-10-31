@@ -2,7 +2,7 @@
 
 Goal: add useful compact features, refine and test each one, commit locally, then continue. Preserve the running app, account/profile and unrelated icon.icns modification. No publication requested. The absent orchestrator playbook was read from git commit 37b5396.
 
-Current portable checkpoint: dist/overnight/20261101-071728-0c3edbc/QChat.exe (source0c3edbc7ef0ec8bf552acac6c1600aceadd74d33, SHA256a8034a80933c5b4b2430c910c7dbe1a1a58c51b03baced6607fb451e6c8ec23e). O21/O22 are included. Compiled/staged/manifest/checksum match; original app and all5 older checkpoints are unchanged. Native checks use the debug build of the same source; release not launched. Goal stays active.
+Current portable checkpoint: dist/overnight/20261101-074534-5b3389f/QChat.exe (source5b3389fdef9f11f665cd91ce818eab36b392347c, SHA256898a75af8ca2fe4b90cd3a309a07f2efd8a4233fbbcccc0c326d8159a23da318). O23/O24 are included. Compiled/staged/manifest/checksum match; original app and all6 older checkpoints are unchanged. Native checks use the debug build of the same source; release not launched. Goal stays active.
 
 | id | task | model | owns | status |
 |---|---|---|---|---|
@@ -29,7 +29,8 @@ Current portable checkpoint: dist/overnight/20261101-071728-0c3edbc/QChat.exe (s
 | O21 | Preserve attachment keyboard focus during preparation | Terra medium + root | attachment rendering/tests | done - c1b8826; UI14/native16 PASS after6 baseline failures each;10 worker UI suites and native staging18/provider-draft27 PASS; Claude source read has no findings;340px native layout inspected |
 | O22 | Empty Gemini Temporary setup without an available New chat control | root after companion review | provider setup/tests | done - native56/bridge33/Gemini21 PASS;3 setup failures and textarea-value case reproduced/fixed; leftover text/context/files/removers/upload indicators/cancellation still refuse; secondary-account route limit documented; Claude no blocker |
 | O23 | Start a Temporary chat with Ctrl+Shift+N | Terra medium partial + root | UI shortcut/help and focused regression | done - shared /temp path, UI226/native17 PASS; explicit held-Stop ordering; Claude no findings; real OS accelerator handling unverified |
-| O24 | Recover ordinary drafts that have no sent messages | Terra high partial + root | draft-only chat preservation and tests | done - c2b18cd adopted, native baseline3 failures; final UI311/native59 PASS; provider-move duplication2 failures fixed, quote-only concern refuted; Claude no blocker; combined checkpoint building |
+| O24 | Recover ordinary drafts that have no sent messages | Terra high partial + root | draft-only chat preservation and tests | done -5b3389f built and staged; native baseline3 failures; final UI311/native59 PASS; provider-move duplication2 failures fixed, quote-only concern refuted; Claude no blocker |
+| O25 | Name local chats before sending their first message | Terra medium + root | rename eligibility and focused regression | starting - support meaningful draft/quote-only work through existing Rename, preserve draft/privacy and explicit names through navigation |
 
 Verification uses isolated headless browsers and hidden native profiles. Build to a separate executable; do not replace dist/QChat.exe while the owner's instance is running. Each completed feature gets its own commit. Free provider failures will be recorded; no claims of exhaustive edge-case coverage.
 
