@@ -163,7 +163,7 @@ try {
   await type('draft');
   await evalJS(`document.querySelector('#tabs .tab').click()`);
   check('chat storage caps at 50 with three visible tabs', await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).recent.length===49 && document.querySelectorAll('#tabs .tab').length===3`));
-  check('older chats keep metadata only', await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).recent.slice(7).every(c=>c.transcript.length===0)`));
+  check('older chats keep their messages while storage allows', await evalJS(`JSON.parse(localStorage.getItem('qchat.chats')).recent.slice(7).every(c=>c.transcript.length>0)`));
   check('tabs use natural width and no fillets', await evalJS(`getComputedStyle(document.querySelector('.tab')).flexGrow==='0' && getComputedStyle(document.querySelector('.tab-label'),'::before').display==='none'`));
   await evalJS(`__mock.emit('qchat://settings-changed', QSettings.settings)`);
   check('settings refresh requests theme', await count('get_theme')>1);

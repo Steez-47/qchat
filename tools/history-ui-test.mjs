@@ -73,7 +73,7 @@ try {
   await cdp('Runtime.enable');
   await cdp('Log.enable');
   await cdp('Emulation.setScrollbarsHidden', { hidden: false });
-  await cdp('Emulation.setDeviceMetricsOverride', { width: 516, height: 800, deviceScaleFactor: 1, mobile: false, screenWidth: 1920, screenHeight: 1080 });
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 760, height: 800, deviceScaleFactor: 1, mobile: false, screenWidth: 1920, screenHeight: 1080 });
 
   const until = async (expr, what = expr, tries = 400) => {
     for (let i = 0; i < tries; i++) { if (await evalJS(`!!(${expr})`)) return; await sleep(10); }
@@ -192,27 +192,30 @@ try {
   check('the latest bubble stays exactly where it was',await evalJS(`(()=>{const b=[...document.querySelectorAll('#history-panel .bubble')].at(-1).getBoundingClientRect();return Math.abs(b.bottom-${liveBottom})<3 && Math.abs(b.left-${liveLeft})<3;})()`),await evalJS(`JSON.stringify([${liveBottom},${liveLeft},[...document.querySelectorAll('#history-panel .bubble')].at(-1).getBoundingClientRect()])`));
   check('with motion on, bubbles at rest are fully formed',await evalJS(`[...document.querySelectorAll('#history-panel .turn-row')].slice(-3).every(r=>parseFloat(getComputedStyle(r).opacity)>0.98)`));
   check('the panel fits its messages, up to the cap',await evalJS(`(()=>{const p=document.getElementById('history-panel');return p.clientHeight>100 && p.clientHeight<=p.scrollHeight;})()`));
-  const edge=(side)=>`(()=>{const p=document.getElementById('history-panel'),rows=[...p.children],box=p.getBoundingClientRect();const r=rows.find(c=>{const b=c.getBoundingClientRect();return ${side==='top'?'b.top<box.top+14 && b.bottom>box.top':'b.bottom>box.bottom-2 && b.top<box.bottom'};});return r?parseFloat(getComputedStyle(r).opacity):null;})()`;
-  const scan=async(side)=>{ let seen=null; const max=await evalJS(`document.getElementById('history-panel').scrollHeight`); for (let y=0;y<max;y+=9) { await evalJS(`new Promise(d=>{document.getElementById('history-panel').scrollTop=${y};requestAnimationFrame(()=>requestAnimationFrame(d));})`); const o=await evalJS(edge(side)); if (o!==null && o<0.9) { seen=o; break; } } return seen; };
-  const topFade=await scan('top');
-  check('bubbles pop out at the top edge',topFade!==null,String(topFade));
+  await evalJS(`document.getElementById('history-panel').scrollTop=60`);await sleep(120);
+  check('every message stays visible while scrolling through history',await evalJS(`[...document.getElementById('history-panel').children].every(r=>getComputedStyle(r).opacity==='1' && !r.style.transform)`));
   await shot('history-mid.png');
-  const bottomFade=await scan('bottom');
-  check('bubbles pop in at the bottom edge',bottomFade!==null,String(bottomFade));
-  await evalJS(`document.getElementById('history-panel').scrollTop=120`);await sleep(700);
-  const lag=await evalJS(`new Promise(done=>{const p=document.getElementById('history-panel');p.dispatchEvent(new WheelEvent('wheel',{deltaY:80,clientY:p.getBoundingClientRect().bottom-10,bubbles:true}));p.scrollTop+=80;let seen=0,n=0;const look=()=>{for(const r of p.children){const m=/translate3d\\(0px, (-?[\\d.]+)px/.exec(r.style.transform);if(m)seen=Math.max(seen,Math.abs(parseFloat(m[1])));}if(++n<20)requestAnimationFrame(look);else done(seen);};requestAnimationFrame(look);})`);
-  check('scrolling pushes and pulls the bubbles apart',lag>2,String(lag));
-  await sleep(900);
-  check('and the springs settle back to nothing',await evalJS(`[...document.getElementById('history-panel').children].every(r=>!r.style.transform||parseFloat(r.style.opacity)===0||/translate3d\\(0px, -?0\\.\\d+px/.test(r.style.transform))`));
-  await evalJS(`document.getElementById('history-panel').scrollTop=0`);await sleep(500);
-  const rubber=await evalJS(`new Promise(done=>{const p=document.getElementById('history-panel');p.dispatchEvent(new WheelEvent('wheel',{deltaY:-120,clientY:p.getBoundingClientRect().top+200,bubbles:true}));let seen=0,n=0;const look=()=>{for(const r of p.children){const m=/translate3d\\(0px, (-?[\\d.]+)px/.exec(r.style.transform);if(m)seen=Math.max(seen,parseFloat(m[1]));}if(++n<14)requestAnimationFrame(look);else done(seen);};requestAnimationFrame(look);})`);
-  check('pulling past the top stretches and springs back',rubber>2,String(rubber));
-  await sleep(700);
   await evalJS(`document.getElementById('btn-history').click()`);
-  await until(`document.getElementById('history-panel').hasAttribute('data-leaving')`,'glide to latest finishes',300);
+  await until(`document.getElementById('history-panel').hasAttribute('data-leaving')`,'history closes',300);
   check('leaving history fades in place while the live bubble returns',await evalJS(`document.getElementById('history-panel').hasAttribute('data-leaving') && !!document.querySelector('.bubble-zone .bubble').offsetHeight`));
   await settle();
   check('leaving history finishes cleanly',await evalJS(`document.getElementById('history-panel').hidden && document.getElementById('history-panel').childElementCount===0 && document.getElementById('history-label').textContent==='History'`));
+  // The account's record: complete, in order, and it keeps what this PC already knows.
+  await open('/',{settings:{animations:'off',autoDismiss:0,keepHistory:true},chats:{v:chatsVersion,current:{key:'whole',conversationId:'whole-conversation',title:'Whole',lastActive:1,lastPrompt:'Second question',lastResponse:'Local **second** answer',transcript:[{id:'lq',role:'user',text:'Second question'},{id:'la',role:'assistant',text:'Second answer',sources:[{id:'s',url:'https://example.com/',title:'Example'}]}],createdAt:1},recent:[]}});await settle();
+  await evalJS(`document.getElementById('btn-history').click()`);await settle();
+  const fullRecord=[{role:'user',text:'First question'},{role:'assistant',text:'First answer'},{role:'user',text:'Asked on the website'},{role:'assistant',text:'Website answer'},{role:'user',text:'Second question'},{role:'assistant',text:'Second answer'}];
+  await evalJS(`__mock.emit('bridge',{type:'transcript',conversationId:'whole-conversation',messages:${JSON.stringify(fullRecord)},complete:true})`);await settle();
+  check('the whole conversation shows, including turns from the website',await evalJS(`(()=>{const rows=[...document.querySelectorAll('#history-panel .turn-row')];return rows.length===6 && rows[2].textContent.includes('Asked on the website') && rows[0].textContent.includes('First question');})()`));
+  check('messages this PC already had keep their ids and sources',await evalJS(`(()=>{const t=JSON.parse(localStorage.getItem('qchat.chats')).current.transcript;return t.at(-1).id==='la' && t.at(-1).sources.length===1 && t.length===6;})()`));
+  await evalJS(`document.getElementById('btn-all-chats').click()`);await sleep(60);
+  await evalJS(`__mock.emit('bridge',{type:'status',ready:true,loggedIn:true,url:'https://chatgpt.com/'})`);await sleep(30);
+  await evalJS(`__mock.emit('bridge',{type:'conversations',offset:0,total:2,items:[{id:'account-chat-one',title:'From the account',updated:Date.now()-3600000},{id:'whole-conversation',title:'Already open',updated:Date.now()}]})`);await sleep(60);
+  check('all chats lists the account, without duplicating the open chat',await evalJS(`(()=>{const t=[...document.querySelectorAll('.feature-title')].map(n=>n.textContent);return t.includes('From the account') && !t.includes('Already open');})()`));
+  await evalJS(`[...document.querySelectorAll('.feature-choice')].find(b=>b.textContent.includes('From the account')).click()`);await settle();
+  await until(`__mock.calls.some(c=>c.cmd==='chat_read_transcript'&&c.args.conversationId==='account-chat-one')`,'opening an account chat reads it');
+  check('opening an account chat goes straight to its messages',await evalJS(`!document.getElementById('history-panel').hidden`));
+  await evalJS(`__mock.emit('bridge',{type:'transcript',conversationId:'account-chat-one',messages:[{role:'user',text:'Hello'},{role:'assistant',text:'Hi there'}],complete:true})`);await settle();
+  check('and shows them',await evalJS(`document.getElementById('history-panel').textContent.includes('Hi there')`));
   await open('/',{settings:{animations:'off',autoDismiss:0,keepHistory:false}});
   await evalJS(`__mock.hold=true`);await reply('Private prompt','Private answer');
   check('disabled history does not persist transcript',await evalJS(`localStorage.getItem('qchat.chats')===null`));
@@ -233,6 +236,17 @@ try {
   await evalJS(`window.__qchat.readConversation('abcdefgh')`);await sleep(250);
   const read=await evalJS(`window.__events.find(e=>e.type==='transcript')`);
   check('bridge reads the rendered conversation in order',read?.conversationId==='abcdefgh' && read.messages.map(m=>m.role).join()==='user,assistant,user,assistant' && read.messages[0].text==='First question' && read.messages[2].text==='Second' && read.messages[3].hasMedia===true,JSON.stringify(read));
+  const mapping={current_node:'n6',mapping:{n0:{id:'n0',parent:null,message:{author:{role:'system'},content:{content_type:'text',parts:['hidden system']}}},n1:{parent:'n0',message:{author:{role:'user'},content:{content_type:'text',parts:['Question one']}}},n2:{parent:'n1',message:{author:{role:'assistant'},recipient:'web.run',content:{content_type:'code',text:'search'}}},n3:{parent:'n2',message:{author:{role:'tool'},content:{content_type:'text',parts:['tool output']}}},n4:{parent:'n3',message:{author:{role:'assistant'},recipient:'all',content:{content_type:'text',parts:['Answer \uE200cite\uE202turn0\uE201one']}}},alt:{parent:'n3',message:{author:{role:'assistant'},recipient:'all',content:{content_type:'text',parts:['Abandoned branch']}}},n5:{parent:'n4',message:{author:{role:'user'},content:{content_type:'multimodal_text',parts:[{asset_pointer:'file'},'See image']}}},n6:{parent:'n5',message:{author:{role:'assistant'},recipient:'all',content:{content_type:'text',parts:['Answer two']}}}}};
+  await cdp('Page.navigate',{url:'about:blank'});await sleep(100);
+  await evalJS(`document.body.innerHTML='<main></main>';window.__events=[];window.__QCHAT_EMIT__=e=>{window.__events.push(e)};window.fetch=async(url,init)=>{window.__lastAuth=init?.headers?.Authorization||window.__lastAuth;const u=String(url);const json=b=>({ok:true,status:200,json:async()=>b,headers:new Headers()});if(u.includes('/api/auth/session'))return json({accessToken:'tok',user:{}});if(u.includes('/backend-api/conversations'))return json({items:[{id:'conversation-1',title:'T',update_time:'2026-10-30T00:00:00Z'},{id:'x',title:'bad id'}],total:1});if(u.includes('/backend-api/conversation/abcdefgh'))return json(${JSON.stringify(mapping)});return {ok:false,status:404,json:async()=>({})};};`);
+  await evalJS(`((location)=>{${bridgeSource}})({hostname:'chatgpt.com',href:'https://chatgpt.com/',pathname:'/',origin:'https://chatgpt.com'})`);
+  await evalJS(`window.__qchat.readConversation('abcdefgh')`);await sleep(60);
+  const stored=await evalJS(`window.__events.find(e=>e.type==='transcript')`);
+  check('the account record follows the visible branch and skips tool and system messages',stored?.complete===true && JSON.stringify(stored.messages.map(m=>m.text))===JSON.stringify(['Question one','Answer one','See image','Answer two']) && stored.messages[2].hasMedia===true,JSON.stringify(stored));
+  await evalJS(`window.__qchat.readConversation('missingconversation')`);await sleep(60);
+  check('with no record and a different page, it asks to open the chat',await evalJS(`window.__events.some(e=>e.type==='transcript'&&e.notOnPage&&e.conversationId==='missingconversation')`));
+  await evalJS(`window.__qchat.listConversations(0)`);await sleep(30);
+  check('the chat list keeps only valid ids and real times',await evalJS(`(()=>{const e=window.__events.find(e=>e.type==='conversations');return e.items.length===1 && e.items[0].id==='conversation-1' && e.items[0].updated>0;})()`));
   check('bridge turns replies back into markdown without page buttons',read?.messages[1].text.startsWith('## Title\n\nSome **bold** and [link](https://example.com/x)\n\n- one\n- two\n\n```python\nprint(1)\n```\n\n| A |') && !read.messages[1].text.includes('Good') && !read.messages[1].text.includes('Copy'),read?.messages[1].text);
 } catch (e) { console.error(e); if (problems.length) console.error("console:", problems.slice(0, 5).join(" | ")); failed++; }
 finally {

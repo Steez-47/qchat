@@ -8,6 +8,12 @@ pub struct Surface {
     w: f64,
     h: f64,
     r: f64,
+    // Hit-test only when false: controls outside the glass never get a blur panel.
+    #[serde(default = "blurred_by_default")]
+    b: bool,
+}
+fn blurred_by_default() -> bool {
+    true
 }
 impl Surface {
     fn hit(&self, x: f64, y: f64, scale: f64) -> bool {
@@ -28,6 +34,7 @@ impl Surface {
             w: r.w * scale,
             h: r.h * scale,
             r: r.r.min(r.w / 2.).min(r.h / 2.) * scale,
+            b: self.b,
         })
     }
     fn inset(&self) -> Option<Self> {
@@ -40,6 +47,7 @@ impl Surface {
             w: self.w - 3.,
             h: self.h - 3.,
             r: (self.r - 1.5).max(0.),
+            b: self.b,
         })
     }
 }
@@ -49,6 +57,7 @@ struct Data {
     reported: std::time::Instant,
     blur: bool,
     tint: u32,
+    strength: f64,
     revision: u64,
     hotkey: String,
     registered: bool,
@@ -63,6 +72,7 @@ impl Default for State {
             reported: std::time::Instant::now(),
             blur: false,
             tint: 0x99202020,
+            strength: 1.,
             revision: 0,
             hotkey: "Alt+Q".into(),
             registered: false,
@@ -144,10 +154,11 @@ pub fn surfaces_set(
     Ok(())
 }
 #[tauri::command]
-pub fn surfaces_set_blur(state: tauri::State<State>, enabled: bool, tint_argb: u32) {
+pub fn surfaces_set_blur(state: tauri::State<State>, enabled: bool, tint_argb: u32, strength: Option<f64>) {
     let mut s = state.0.lock().unwrap();
     s.blur = enabled;
     s.tint = tint_argb;
+    s.strength = strength.filter(|v| v.is_finite()).unwrap_or(1.).clamp(0., 1.);
     s.revision += 1;
 }
 fn config(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -353,6 +364,16 @@ extern "system" {
         flags: u32,
     ) -> u32;
 }
+#[link(name = "comctl32")]
+extern "system" {
+    fn SetWindowSubclass(
+        h: isize,
+        proc: unsafe extern "system" fn(isize, u32, usize, isize, usize, usize) -> isize,
+        id: usize,
+        data: usize,
+    ) -> i32;
+    fn DefSubclassProc(h: isize, m: u32, w: usize, l: isize) -> isize;
+}
 #[link(name = "kernel32")]
 extern "system" {
     fn GetModuleHandleW(s: *const u16) -> isize;
@@ -371,6 +392,53 @@ extern "system" {
         d: *mut u8,
         l: *mut u32,
     ) -> i32;
+}
+#[repr(C)]
+struct WindowPos {
+    hwnd: isize,
+    after: isize,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    flags: u32,
+}
+// Runs inside the main window's own move, so the companion is told in the same
+// breath. Async: the companion thread must never be able to block this window.
+unsafe extern "system" fn follow_main(
+    h: isize,
+    message: u32,
+    w: usize,
+    l: isize,
+    _id: usize,
+    glass: usize,
+) -> isize {
+    const WM_WINDOWPOSCHANGING: u32 = 0x0046;
+    const SWP_NOSIZE: u32 = 1;
+    const SWP_NOMOVE: u32 = 2;
+    if message == WM_WINDOWPOSCHANGING && l != 0 {
+        let p = &*(l as *const WindowPos);
+        if p.flags & SWP_NOSIZE == 0 || p.flags & SWP_NOMOVE == 0 {
+            let mut now = Rect::default();
+            GetWindowRect(h, &mut now);
+            let (x, y) = if p.flags & SWP_NOMOVE == 0 { (p.x, p.y) } else { (now.left, now.top) };
+            let (cx, cy) = if p.flags & SWP_NOSIZE == 0 {
+                (p.w, p.h)
+            } else {
+                (now.right - now.left, now.bottom - now.top)
+            };
+            // NOZORDER | NOACTIVATE | ASYNCWINDOWPOS
+            SetWindowPos(glass as isize, 0, x, y, cx, cy, 0x4 | 0x10 | 0x4000);
+        }
+    }
+    DefSubclassProc(h, message, w, l)
+}
+// One call, so the top edge and the size change in the same frame.
+pub fn place_window(w: &tauri::WebviewWindow, x: i32, y: i32, width: i32, height: i32) {
+    if let Ok(hwnd) = w.hwnd() {
+        // NOZORDER | NOACTIVATE
+        unsafe { SetWindowPos(hwnd.0 as isize, 0, x, y, width, height, 0x4 | 0x10) };
+    }
 }
 // All WinRT objects live on the companion thread and are released there.
 struct GlassComposition {
@@ -412,15 +480,17 @@ impl GlassComposition {
             _queue: queue,
         })
     }
-    fn update(&self, rects: &[Surface], scale: f64) -> windows::core::Result<()> {
+    fn update(&self, rects: &[Surface], scale: f64, strength: f64) -> windows::core::Result<()> {
         let c = &self.compositor;
         // Construct a detached tree, then replace the root once. No intermediate
         // empty/partially rebuilt tree can be presented while a reply streams.
         let root = c.CreateContainerVisual()?;
         let children = root.Children()?;
         let brush = c.CreateHostBackdropBrush()?;
-        for r in rects.iter().filter_map(|r| r.physical_inset(scale)) {
+        for r in rects.iter().filter(|r| r.b).filter_map(|r| r.physical_inset(scale)) {
             let sprite = c.CreateSpriteVisual()?;
+            // The system blur has a fixed radius; strength crossfades it with the sharp desktop.
+            sprite.SetOpacity(strength as f32)?;
             let mut size = sprite.Size()?;
             size.X = r.w as f32;
             size.Y = r.h as f32;
@@ -495,6 +565,10 @@ pub fn start(app: &tauri::AppHandle) {
         if glass == 0 {
             return;
         }
+        let hook = glass as usize;
+        let _ = w.run_on_main_thread(move || {
+            SetWindowSubclass(main, follow_main, 1, hook);
+        });
         let (composition, mut composition_error) = match GlassComposition::new(glass) {
             Ok(c) => (Some(c), None),
             Err(e) => (None, Some(e.to_string())),
@@ -506,7 +580,6 @@ pub fn start(app: &tauri::AppHandle) {
         let mut blur_ok = composition.is_some();
         let mut cached_rects = None;
         let mut reported_rects = None;
-        let mut moving = false;
         let mut applied_blur = None;
         loop {
             let mut msg = Msg::default();
@@ -522,29 +595,20 @@ pub fn start(app: &tauri::AppHandle) {
             let scale = GetDpiForWindow(main) as f64 / 96.;
             let mut bounds = Rect::default();
             GetWindowRect(main, &mut bounds);
-            let (blur, tint, rev) = {
+            let (blur, tint, strength, rev) = {
                 let state = app.state::<State>();
                 let s = state.0.lock().unwrap();
                 if s.revision != revision {
                     reported_rects = s.rects.clone();
                 }
-                (s.blur, s.tint, s.revision)
+                (s.blur, s.tint, s.strength, s.revision)
             };
             let rects = &reported_rects;
             let bounds_changed = previous != Some(bounds);
-            if bounds_changed && GetAsyncKeyState(1) < 0 {
-                moving = true;
-            }
-            if GetAsyncKeyState(1) >= 0 {
-                moving = false;
-            }
-            // Hide before changing geometry; region and position are committed in this tick.
-            if bounds_changed && moving {
-                if IsWindowVisible(glass) != 0 {
-                    ShowWindow(glass, 0);
-                }
-            }
-            if *rects != cached_rects || scale != oldscale || applied_blur != Some((blur, tint)) {
+            // The glass stays up during a drag: hiding it is what made the window look
+            // more transparent while moving. follow_main keeps the two together.
+            let wanted_blur = (blur, tint, strength.to_bits());
+            if *rects != cached_rects || scale != oldscale || applied_blur != Some(wanted_blur) {
                 // Tint is supplied by the existing web glass fill above this window.
                 blur_ok = composition.as_ref().is_some_and(|c| {
                     match c.update(
@@ -554,6 +618,7 @@ pub fn start(app: &tauri::AppHandle) {
                             &[]
                         },
                         scale,
+                        strength,
                     ) {
                         Ok(()) => {
                             composition_error = None;
@@ -567,7 +632,7 @@ pub fn start(app: &tauri::AppHandle) {
                 });
                 cached_rects = (*rects).clone();
                 oldscale = scale;
-                applied_blur = Some((blur, tint));
+                applied_blur = Some(wanted_blur);
             }
             revision = rev;
             // HWND_NOTOPMOST explicitly drops the companion out of the topmost band.
@@ -586,13 +651,13 @@ pub fn start(app: &tauri::AppHandle) {
             let show = visible
                 && blur
                 && blur_ok
-                && !moving
                 && rects.as_ref().is_some_and(|rs| !rs.is_empty());
             let glass_visible = IsWindowVisible(glass) != 0;
             if !show && glass_visible {
                 ShowWindow(glass, 0);
             }
             if bounds_changed || !below_main(main, glass, true) || (show && !glass_visible) {
+                // Besides the hook's positions, this repairs any missed one and the z-order.
                 if SetWindowPos(
                     glass,
                     main,
@@ -657,6 +722,7 @@ mod tests {
             w: 100.,
             h: 40.,
             r: 20.,
+            b: true,
         };
         assert!(!r.hit(10., 10., 1.));
         assert!(r.hit(30., 10., 1.));
@@ -675,6 +741,7 @@ mod tests {
             w: 460.,
             h: 74.,
             r: 24.,
+            b: true,
         };
         for scale in [1., 1.5] {
             let p = r.physical_inset(scale).unwrap();
@@ -688,6 +755,13 @@ mod tests {
         assert!(Surface { w: 3., ..r.clone() }.physical_inset(1.5).is_none());
         let square = Surface { r: 0., ..r };
         assert_eq!(square.physical_inset(1.5).unwrap().r, 0.);
+    }
+    #[test]
+    fn surface_blur_flag_defaults_on_and_survives_inset() {
+        let r: Surface = serde_json::from_str(r#"{"x":0,"y":0,"w":20,"h":20,"r":4}"#).unwrap();
+        assert!(r.b);
+        let hit: Surface = serde_json::from_str(r#"{"x":0,"y":0,"w":20,"h":20,"r":4,"b":false}"#).unwrap();
+        assert!(!hit.physical_inset(1.).unwrap().b);
     }
     #[test]
     fn shortcuts() {

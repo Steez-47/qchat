@@ -35,6 +35,8 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/auth-bridge-test.mjs`: signed-in composer detection, session retries, and sending after conversation preparation.
 - `node tools/stream-media-test.mjs`: Unicode, interruption recovery, media discovery and attachment cancellation.
 - `node tools/ux-regress-test.mjs`: streaming, dismiss and stop, retries, per-chat drafts, history and storage limits.
+- `node tools/settings-presets-test.mjs`: opacity, presets, migration, saved presets and settings search.
+- `node tools/drag-sync-native-test.mjs`: the blur stays up and aligned while the real window moves (skips while a fullscreen app is in front).
 - `node tools/feature-ui-test.mjs`: menus, model picker, chat search, tabs, the shortcuts card and temporary chats.
 - `node tools/math-ui-test.mjs`: maths rendering in replies.
 - `node tools/highlight-test.mjs`: code highlighting round trip, token typing and speed. Plain Node, no browser.

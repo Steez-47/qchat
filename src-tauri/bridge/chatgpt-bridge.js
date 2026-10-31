@@ -227,6 +227,50 @@
       return { role, text, hasMedia: !!node.querySelector('img, video, audio') };
     }).filter(item => item.text || item.hasMedia);
   }
+  async function sessionToken() {
+    const response = await originalFetch('/api/auth/session', { credentials: 'same-origin', cache: 'no-store' });
+    const token = response.ok ? (await response.json())?.accessToken : null;
+    if (typeof token !== 'string' || !token) throw new Error('No session');
+    return token;
+  }
+  async function readJSON(url, token) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await originalFetch(url, { credentials: 'same-origin', headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } finally { clearTimeout(timer); }
+  }
+  // The visible branch only: walks up from the current node, then drops tool calls,
+  // hidden system context and reasoning. Consecutive assistant parts form one reply.
+  function messagesFromMapping(data) {
+    const chain = [];
+    const seen = new Set();
+    for (let id = data?.current_node; id && data.mapping?.[id] && !seen.has(id); id = data.mapping[id].parent) { seen.add(id); chain.unshift(data.mapping[id]); }
+    const out = [];
+    for (const node of chain) {
+      const message = node.message;
+      const role = message?.author?.role;
+      if ((role !== 'user' && role !== 'assistant') || message.metadata?.is_visually_hidden_from_conversation) continue;
+      if (role === 'assistant' && message.recipient && message.recipient !== 'all') continue;
+      const content = message.content;
+      if (!content || !['text', 'multimodal_text'].includes(content.content_type)) continue;
+      const parts = Array.isArray(content.parts) ? content.parts : [];
+      const text = parts.filter(part => typeof part === 'string').join('\n').replace(/\uE200[^\uE201]*\uE201/g, '').replace(/[\uE200-\uE206]/g, '').trim();
+      const hasMedia = parts.some(part => part && typeof part === 'object') || (Array.isArray(message.metadata?.attachments) && message.metadata.attachments.length > 0);
+      if (!text && !hasMedia) continue;
+      const last = out[out.length - 1];
+      if (role === 'assistant' && last?.role === 'assistant') { last.text = [last.text, text].filter(Boolean).join('\n\n'); last.hasMedia = last.hasMedia || hasMedia; continue; }
+      out.push({ role, text, hasMedia });
+    }
+    return out;
+  }
+  async function storedMessages(id) {
+    const data = await readJSON(`/backend-api/conversation/${id}`, await sessionToken());
+    const messages = messagesFromMapping(data);
+    return messages.length ? messages : null;
+  }
   function safeURL(raw) {
     if (typeof raw !== 'string' || raw.length > 8 * 1024 * 1024) return null;
     if (/^data:image\/(?:png|jpeg|gif|webp|avif);base64,[a-z0-9+/=\r\n]+$/i.test(raw)) return raw;
@@ -1060,6 +1104,11 @@
     },
     async readConversation(id) {
       if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(id)) throw new Error('invalid_id');
+      // The account's own record is complete and needs no navigation. The rendered
+      // page below is the fallback for guests and for any change to that endpoint.
+      const stored = await storedMessages(id).catch(() => null);
+      if (stored) { emit({ type: 'transcript', conversationId: id, messages: stored, complete: true }); return; }
+      if (!location.pathname.endsWith('/c/' + id)) { emit({ type: 'transcript', conversationId: id, messages: null, notOnPage: true }); return; }
       // Messages hydrate after the route settles: wait for the count to hold steady.
       for (let i = 0, last = -1; i < 16; i++) {
         const count = conversationNodes().length;
@@ -1082,6 +1131,15 @@
       }
       const here = location.pathname.endsWith('/c/' + id);
       emit({ type: 'transcript', conversationId: id, messages: !active && here ? conversationMessages() : null });
+    },
+    async listConversations(offset = 0) {
+      const start = Math.max(0, Math.floor(Number(offset)) || 0);
+      try {
+        const data = await readJSON(`/backend-api/conversations?offset=${start}&limit=100&order=updated`, await sessionToken());
+        const items = (Array.isArray(data?.items) ? data.items : []).filter(item => typeof item?.id === 'string' && /^[A-Za-z0-9_-]{8,80}$/.test(item.id))
+          .map(item => ({ id: item.id, title: String(item.title || '').slice(0, 200), updated: Date.parse(item.update_time) || (Number(item.update_time) * 1000) || 0 }));
+        emit({ type: 'conversations', items, offset: start, total: Number(data?.total) || items.length });
+      } catch (_) { emit({ type: 'conversations', items: [], offset: start, total: 0, error: 'unavailable' }); }
     },
     async openConversation(id) {
       if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(id)) throw new Error('invalid_id');

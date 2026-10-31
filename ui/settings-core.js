@@ -6,7 +6,7 @@
   const STORAGE_KEY = "qchat.settings";
   const THEME_KEY = "qchat.theme";
   const LEGACY_LOOK_KEY = "qchat.look";
-  const VERSION = 2;
+  const VERSION = 3;
 
   // ---------------------------------------------------------------------------
   // Looks. Everything else (fills, text tiers, rims) is derived in apply().
@@ -55,6 +55,19 @@
     }
   };
 
+  LOOKS.nord = { label: "Nord", scheme: "dark", tint: ["#242933", "#2E3440"], ink: "#ECEFF4", accent: ["#88C0D0", "#81A1C1", "#5E81AC"], edge: "#8FBCBB", accentText: "#88C0D0", orb: ["#8FBCBB", "#81A1C1", "#5E81AC"], critical: "#F43F5E", criticalText: "#FDA4AF" };
+  LOOKS.ember = { label: "Ember", scheme: "dark", tint: ["#201715", "#2A1C18"], ink: "#FFF4EE", accent: ["#FDBA74", "#F97316", "#C2410C"], edge: "#FB923C", accentText: "#FDBA74", orb: ["#FDE68A", "#F97316", "#9A3412"], critical: "#F43F5E", criticalText: "#FDA4AF" };
+  LOOKS.ocean = { label: "Ocean", scheme: "dark", tint: ["#0F1D26", "#152833"], ink: "#EFFBFF", accent: ["#5EEAD4", "#22B8CF", "#0E7490"], edge: "#67E8F9", accentText: "#67E8F9", orb: ["#99F6E4", "#22B8CF", "#155E75"], critical: "#F43F5E", criticalText: "#FDA4AF" };
+  LOOKS.dusk = { label: "Dusk", scheme: "dark", tint: ["#1E1B2C", "#282338"], ink: "#F6F2FF", accent: ["#C4B5FD", "#A78BFA", "#7C3AED"], edge: "#F0ABFC", accentText: "#D8B4FE", orb: ["#F0ABFC", "#A78BFA", "#5B21B6"], critical: "#F43F5E", criticalText: "#FDA4AF" };
+  LOOKS.mocha = { label: "Mocha", scheme: "dark", tint: ["#241D19", "#2E2520"], ink: "#FBF3EC", accent: ["#E6C29A", "#C8956C", "#9C6B45"], edge: "#D6A77A", accentText: "#E6C29A", orb: ["#F2D8B8", "#C8956C", "#6F4A30"], critical: "#F43F5E", criticalText: "#FDA4AF" };
+  LOOKS.slate = { label: "Slate", scheme: "dark", tint: ["#1C2127", "#262C33"], ink: "#F1F5F9", accent: ["#A5B4C8", "#7E92AB", "#566A83"], edge: "#94A3B8", accentText: "#CBD5E1", orb: ["#CBD5E1", "#7E92AB", "#475569"], critical: "#F43F5E", criticalText: "#FDA4AF" };
+  LOOKS.midnight = { label: "Midnight", scheme: "dark", tint: ["#0A0E1A", "#111728"], ink: "#EEF2FF", accent: ["#93C5FD", "#818CF8", "#4F46E5"], edge: "#A5B4FC", accentText: "#A5B4FC", orb: ["#93C5FD", "#6366F1", "#312E81"], critical: "#F43F5E", criticalText: "#FDA4AF" };
+  LOOKS.oled = { label: "OLED black", scheme: "dark", tint: ["#000000", "#050505"], ink: "#FFFFFF", accent: ["#FFFFFF", "#E5E5E5", "#A3A3A3"], edge: "#737373", accentText: "#FFFFFF", orb: ["#FFFFFF", "#A3A3A3", "#404040"], critical: "#F43F5E", criticalText: "#FDA4AF" };
+  LOOKS.mint = { label: "Mint", scheme: "light", tint: ["#EFF7F2", "#E2EFE8"], ink: "#0C2A1E", accent: ["#10B981", "#059669", "#047857"], edge: "#34D399", accentText: "#047857", orb: ["#6EE7B7", "#059669", "#065F46"], critical: "#DC2626", criticalText: "#B91C1C" };
+  LOOKS.paper = { label: "Paper", scheme: "light", tint: ["#F8F5EE", "#EFEADF"], ink: "#2A2118", accent: ["#B4532A", "#9A4522", "#7C3618"], edge: "#D6A77A", accentText: "#8F3F1E", orb: ["#E0A070", "#9A4522", "#5F2A12"], critical: "#DC2626", criticalText: "#B91C1C" };
+  LOOKS.sand = { label: "Sand", scheme: "light", tint: ["#F2EBDD", "#E7DDCA"], ink: "#2B2416", accent: ["#A16207", "#854D0E", "#713F12"], edge: "#CA8A04", accentText: "#854D0E", orb: ["#EAB308", "#A16207", "#713F12"], critical: "#DC2626", criticalText: "#B91C1C" };
+  LOOKS.lavender = { label: "Lavender", scheme: "light", tint: ["#F3F0F9", "#E8E3F3"], ink: "#221A38", accent: ["#7C3AED", "#6D28D9", "#5B21B6"], edge: "#A78BFA", accentText: "#6D28D9", orb: ["#C4B5FD", "#7C3AED", "#4C1D95"], critical: "#DC2626", criticalText: "#B91C1C" };
+
   const SYSTEM_DARK = {
     scheme: "dark", tint: ["#181B22", "#23262D"], ink: "#F8FAFC", edge: "#429CE3",
     critical: "#F43F5E", criticalText: "#FDA4AF"
@@ -73,6 +86,18 @@
   const bool = (def) => ({ type: "bool", def });
 
   const SCHEMA = {
+    replyWidth: range(640,360,1000,10,"px"), replyOpacity: range(92,20,100,1,"%"), readableGuard: bool(true),
+    paragraphSpacing: range(1,.4,2,.05,"em"), letterSpacing: range(0,-.02,.06,.005,"em"),
+    replyWeight: range(400,300,600,10), headingScale: range(1,.85,1.5,.05,"×"),
+    replyPadding: range(18,8,36,1,"px"), bubbleGap: range(8,2,24,1,"px"), codeSize: range(.9,.75,1.15,.01,"em"),
+    codeFont: choice("cascadia",["cascadia","consolas","system","courier"]), codeWrap: bool(false),
+    userLines: range(6,0,20,1), userAlign: choice("right",["right","left"]), showPrompt: bool(false),
+    linkStyle: choice("underline",["underline","color","bold"]), quoteStyle: choice("fill",["fill","plain","italic"]), softEdges: bool(true),
+    streamStyle: choice("fade",["fade","word","type","instant"]), streamSpeed: range(1,.5,3,.1,"×"), followStream: bool(true), streamCaret: bool(false),
+    enterStyle: choice("rise",["rise","fade","scale","none"]), tabCount: range(3,1,8,1), tabStyle: choice("attached",["attached","floating","text"]),
+    showAttach: bool(true), orbStyle: choice("gradient",["gradient","solid","ring","hidden"]), sendStyle: choice("accent",["accent","quiet"]),
+    scrollbarStyle: choice("thin",["thin","wide","hidden"]), placeholderText: {type:"text",def:"Ask anything",max:60},
+    tintSource: choice("look",["look","custom"]), tintColor: {type:"color",def:"#14161C"}, inkBoost: range(0,0,100,1,"%"),
     look: choice("aurora", Object.keys(LOOKS)),
     accentSource: choice("look", ["look", "system", "custom"]),
     accentColor: { type: "color", def: "#7C5CFF" },
@@ -82,7 +107,7 @@
     cornerWeight: range(85, 0, 100, 1, "%"),
     glassOpacity: range(62, 20, 100, 1, "%"),
     nativeBlur: bool(true),
-    blur: range(18, 0, 40, 1, "px"),
+    blur: range(40, 0, 40, 1, "px"),
     rim: range(60, 0, 100, 1, "%"),
     sheen: range(50, 0, 100, 1, "%"),
     shadow: range(55, 0, 100, 1, "%"),
@@ -90,14 +115,14 @@
 
     animations: choice("auto", ["auto", "on", "off"]),
     speed: range(1, 0.4, 2, 0.1, "×"),
-    feel: choice("springy", ["smooth", "springy", "snappy"]),
+    feel: choice("calm", ["calm", "smooth", "springy", "snappy"]),
     riseDistance: range(30, 0, 60, 1, "px"),
     tabPop: bool(true),
     shimmer: bool(false),
 
-    textSize: range(14, 12, 20, 0.5, "px"),
+    textSize: range(15, 12, 20, 0.5, "px"),
     fontFamily: choice("segoe", ["segoe", "system", "serif", "rounded", "mono"]),
-    lineHeight: range(1.6, 1.2, 2, 0.05),
+    lineHeight: range(1.65, 1.2, 2, 0.05),
     justify: bool(false),
 
     barWidth: range(460, 340, 720, 10, "px"),
@@ -119,6 +144,44 @@
   };
 
   const DEFAULTS = Object.freeze(Object.fromEntries(Object.entries(SCHEMA).map(([k, v]) => [k, v.def])));
+  const APPEARANCE_KEYS = Object.keys(SCHEMA).filter(k => !["rememberPosition","selectionClipboard","alwaysOnTop","hideOnBlur","sendKey","autoDismiss","keepHistory"].includes(k));
+  const PRESETS = [
+    ["default","Default","Clear glass",{}],
+    ["reader","Reader","Wide, generous serif",{replyWidth:860,textSize:18,fontFamily:"serif",replyOpacity:100,paragraphSpacing:1.4}],
+    ["frosted","Frosted","Soft pale glass",{look:"frost",glassOpacity:80,replyOpacity:96}],
+    ["crystal","Crystal","Very clear chrome",{glassOpacity:20,replyOpacity:75,readableGuard:false,rim:80}],
+    ["compact","Compact","Small and close",{density:"compact",textSize:13,replyWidth:460,replyPadding:10,bubbleGap:4}],
+    ["focus","Focus","Quiet reading space",{showTabs:false,showAttach:false,orbStyle:"hidden",sendStyle:"quiet",replyOpacity:100}],
+    ["paper","Paper","Warm paper and ink",{look:"paper",replyOpacity:100,glassOpacity:100,fontFamily:"serif",shadow:20}],
+    ["midnight","Midnight","Deep blue evenings",{look:"midnight",glassOpacity:85,replyOpacity:98}],
+    ["oled","OLED","Black, crisp and quiet",{look:"oled",glassOpacity:100,replyOpacity:100,sheen:0,inkBoost:80}],
+    ["terminal","Terminal","Mono and code first",{look:"forest",fontFamily:"mono",codeSize:1,codeWrap:true,cornerWeight:10}],
+    ["soft","Soft","Round and unhurried",{look:"lavender",fontFamily:"rounded",cornerWeight:100,speed:.7,paragraphSpacing:1.2}],
+    ["big","Big text","Easy, roomy reading",{textSize:20,replyWidth:900,lineHeight:1.8,replyPadding:28,density:"roomy"}],
+    ["still","Minimal motion","A steady workspace",{animations:"off",enterStyle:"none",streamStyle:"instant",softEdges:false}],
+    ["snappy","Snappy","Quick and compact",{feel:"snappy",speed:1.7,streamStyle:"word",streamSpeed:2,density:"compact"}]
+  ].map(([id,label,blurb,values]) => ({id,label,blurb,values}));
+  const appearance = raw => Object.fromEntries(APPEARANCE_KEYS.filter(k => Object.hasOwn(raw || {},k)).map(k => [k,sanitizeValue(k,raw[k])]));
+  function listPresets() {
+    try { const raw = JSON.parse(localStorage.getItem("qchat.presets") || "[]");
+      return Array.isArray(raw) ? raw.filter(p => p && typeof p.id === "string" && typeof p.label === "string" && p.values && typeof p.values === "object" && !Array.isArray(p.values)).slice(0,40).map(p => ({id:p.id.slice(0,100),label:p.label.trim().slice(0,60) || "My preset",values:appearance(p.values)})) : [];
+    } catch (_) { return []; }
+  }
+  function savePreset(label, settings) {
+    const list = listPresets();
+    if (list.length >= 40 || typeof label !== "string" || !label.trim()) return null;
+    const preset = {id:`user-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,label:label.trim().slice(0,60),values:appearance(sanitize(settings))};
+    try { localStorage.setItem("qchat.presets",JSON.stringify([...list,preset])); return preset; } catch (_) { return null; }
+  }
+  function deletePreset(id) { try { localStorage.setItem("qchat.presets",JSON.stringify(listPresets().filter(p => p.id !== id))); return true; } catch (_) { return false; } }
+  function applyPreset(settings,id) {
+    const preset = [...PRESETS,...listPresets()].find(p => p.id === id);
+    if (!preset) return sanitize(settings);
+    return sanitize({...settings,...Object.fromEntries(APPEARANCE_KEYS.map(k => [k,DEFAULTS[k]])),...appearance(preset.values)});
+  }
+  function exportPreset(id) { const p = [...PRESETS,...listPresets()].find(p => p.id === id); return p ? JSON.stringify({label:p.label,values:appearance(p.values)}) : ""; }
+  function importPreset(json) { try { const p = JSON.parse(json); if (!p || typeof p.label !== "string" || !p.values || typeof p.values !== "object" || Array.isArray(p.values)) return null; return savePreset(p.label,p.values); } catch (_) { return null; } }
+
   const isHex = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
 
   function sanitizeValue(key, value) {
@@ -133,6 +196,7 @@
       }
       case "enum": return spec.options.includes(value) ? value : spec.def;
       case "bool": return typeof value === "boolean" ? value : spec.def;
+      case "text": return typeof value === "string" ? value.replace(/[\x00-\x1f\x7f]/g, "").slice(0, spec.max) : spec.def;
       case "color": return isHex(value) ? value.toUpperCase() : spec.def;
       default: return spec.def;
     }
@@ -165,7 +229,13 @@
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return sanitize({});
       const upgrading = parsed.v !== VERSION;
-      if (upgrading) for (const key of V2_RESET) delete parsed[key];
+      if ((parsed.v || 0) < 2) for (const key of V2_RESET) delete parsed[key];
+      if ((parsed.v || 0) < 3) {
+        delete parsed.blur; delete parsed.replyOpacity;
+        if (parsed.feel === "springy") parsed.feel = "calm";
+        if (parsed.textSize === 14) parsed.textSize = 15;
+        if (parsed.lineHeight === 1.6) parsed.lineHeight = 1.65;
+      }
       const loaded = sanitize(parsed);
       return upgrading ? save(loaded) : loaded;
     } catch (_) {
@@ -263,11 +333,12 @@
     return `linear(${stops.join(", ")})`;
   }
   const EASES = {
+    calm: "cubic-bezier(0.22,0.61,0.36,1)",
     smooth: "cubic-bezier(0.22, 0.8, 0.2, 1)",
     springy: springCurve(),
     snappy: "cubic-bezier(0.16, 1, 0.3, 1)"
   };
-  const FEEL_SCALE = { smooth: 1.1, springy: 1, snappy: 0.68 };
+  const FEEL_SCALE = { calm: 1.2, smooth: 1.1, springy: 1, snappy: 0.68 };
   const BASE_MS = { t1: 120, t2: 200, t3: 300, t4: 560 };
   const FONTS = {
     segoe: '"Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif',
@@ -301,7 +372,11 @@
     for (const key of Object.keys(DEFAULT_THEME)) if (!isHex(theme[key])) theme[key] = DEFAULT_THEME[key];
     const sysDark = typeof theme.dark === "boolean" ? theme.dark : darkScheme.matches;
     const isSystem = s.look === "system";
-    const base = isSystem ? (sysDark ? SYSTEM_DARK : SYSTEM_LIGHT) : LOOKS[s.look];
+    let base = isSystem ? (sysDark ? SYSTEM_DARK : SYSTEM_LIGHT) : LOOKS[s.look];
+    if (s.tintSource === "custom") {
+      const c = hexToRgb(s.tintColor), dark = contrast([255,255,255], c) >= contrast([0,0,0], c);
+      base = { ...base, scheme: dark ? "dark" : "light", ink: dark ? "#FFFFFF" : "#000000", tint: [s.tintColor, rgbToHex(mix(c, dark ? [255,255,255] : [0,0,0], .025))] };
+    }
     const dark = base.scheme === "dark";
 
     const fromSystem = dark
@@ -343,18 +418,21 @@
 
     // --- Material -----------------------------------------------------------
     const floor = legibleFloor(p.tint, p.ink);
-    const alpha = Math.max(s.glassOpacity / 100, lessGlass ? 0.96 : floor);
-    const textAlpha = alpha;
-    const backdrops = p.tint.flatMap((t) => [over(t, alpha, [255,255,255]), over(t, alpha, [0,0,0])]);
+    const alpha = Math.max(s.glassOpacity / 100, lessGlass ? 0.96 : (!s.nativeBlur && s.readableGuard ? floor : 0));
+    const textAlpha = Math.max(s.replyOpacity / 100, lessGlass ? .96 : s.readableGuard ? floor : 0);
+    // Accent text sits on replies and on the always-legible chips, so it has to hold on the thinner of the two.
+    const inkAlpha = Math.min(textAlpha, Math.max(alpha, floor));
+    const backdrops = p.tint.flatMap((t) => [over(t, inkAlpha, [255,255,255]), over(t, inkAlpha, [0,0,0])]);
     root.dataset.nativeblur = s.nativeBlur ? "on" : "off";
     const tintArgb = (((p.dark ? 0x55 : 0x66) << 24) | (Math.round(p.tint[0][0]) << 16) | (Math.round(p.tint[0][1]) << 8) | Math.round(p.tint[0][2])) >>> 0;
-    window.QSurfaces?.setBlur(s.nativeBlur, tintArgb)?.catch(() => {});
+    window.QSurfaces?.setBlur(s.nativeBlur, tintArgb, lessGlass ? 0 : s.blur / 40)?.catch(() => {});
 
     css["--tint-a"] = triple(p.tint[0]);
     css["--tint-b"] = triple(p.tint[1]);
     css["--glass-a"] = alpha.toFixed(3);
     css["--glass-scrim"] = "0";
-    css["--glass-solid"] = textAlpha.toFixed(3);
+    css["--glass-solid"] = Math.max(alpha, floor).toFixed(3);
+    css["--reply-a"] = textAlpha.toFixed(3);
     css["--blur"] = `${lessGlass ? 0 : s.blur}px`;
     css["--bw"] = `${s.border}px`;
 
@@ -395,7 +473,7 @@
     css["--critical-rgb"] = triple(p.critical);
 
     // User and error bubbles: as much tint as the text can bear.
-    const tintAlpha = Math.max(textAlpha, 0.86);
+    const tintAlpha = Math.max(textAlpha, s.readableGuard ? .86 : 0);
     css["--tinted-alpha"] = tintAlpha.toFixed(3);
     const strength = (s.bubbleTint / 100) * 0.28;
     const tinted = (color, wanted) => {
@@ -447,6 +525,14 @@
     css["--line-h"] = String(s.lineHeight);
     css["--font-body"] = FONTS[s.fontFamily];
 
+    const tokens = {replyWidth:["reply-w","px"],paragraphSpacing:["para-gap","em"],letterSpacing:["tracking","em"],replyWeight:["reply-weight",""],headingScale:["heading-scale",""],replyPadding:["reply-pad","px"],bubbleGap:["stack-gap-setting","px"],codeSize:["code-size","em"]};
+    for (const [key,[token,unit]] of Object.entries(tokens)) css[`--${token}`] = `${s[key]}${unit}`;
+    css["--stack-w"] = `${Math.max(s.barWidth,s.replyWidth)}px`;
+    css["--user-lines"] = String(s.userLines || 999);
+    css["--font-code"] = {cascadia:'"Cascadia Code", monospace',consolas:'Consolas, monospace',system:'ui-monospace, monospace',courier:'"Courier New", monospace'}[s.codeFont];
+    css["--text-2-a"] = String(.86 + .14*s.inkBoost/100);
+    css["--text-3-a"] = String(.72 + .28*s.inkBoost/100);
+    for (const [attr,key] of Object.entries({codewrap:"codeWrap",useralign:"userAlign",showprompt:"showPrompt",linkstyle:"linkStyle",quotestyle:"quoteStyle",softedges:"softEdges",streamstyle:"streamStyle",streamcaret:"streamCaret",enter:"enterStyle",tabstyle:"tabStyle",showattach:"showAttach",orbstyle:"orbStyle",sendstyle:"sendStyle",scrollbar:"scrollbarStyle"})) root.dataset[attr] = String(s[key]);
     for (const [name, value] of Object.entries(css)) root.style.setProperty(name, value);
     root.style.colorScheme = p.dark ? "dark" : "light";
     root.dataset.mode = p.dark ? "dark" : "light";
@@ -482,6 +568,7 @@
   apply();
 
   window.QSettings = {
+    PRESETS, APPEARANCE_KEYS, applyPreset, listPresets, savePreset, deletePreset, exportPreset, importPreset,
     STORAGE_KEY, VERSION, SCHEMA, DEFAULTS, LOOKS,
     get settings() { return state.settings; },
     get timings() { return state.timings; },

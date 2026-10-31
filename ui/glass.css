@@ -4,8 +4,8 @@
 
 :root {
   --text-1: rgb(var(--ink));
-  --text-2: rgb(var(--ink) / 0.86);
-  --text-3: rgb(var(--ink) / 0.72);
+  --text-2: rgb(var(--ink) / var(--text-2-a, 0.86));
+  --text-3: rgb(var(--ink) / var(--text-3-a, 0.72));
   --fill-1: rgb(var(--ink) / 0.06);
   --fill-2: rgb(var(--ink) / 0.11);
   --fill-3: rgb(var(--ink) / 0.17);
@@ -304,7 +304,7 @@ html[data-motion="on"][data-tabpop="true"] .tab.pop {
 .tab { box-shadow: none; height: 24px; flex: 1 1 0; }
 .tab.glass::after { border-bottom: 0; }
 
-.bar-input { font-size: 14px; line-height: 1.45; }
+.bar-input { font-size: var(--text-size); line-height: 1.45; }
 
 /* Concave feet join each tab to the bar without adding a second rim. */
 .tab-label::before, .tab-label::after { content: ""; position: absolute; bottom: 0; width: 8px; height: 8px; background: rgb(var(--tint-a) / var(--glass-a)); pointer-events: none; }

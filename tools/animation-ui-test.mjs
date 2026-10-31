@@ -73,7 +73,7 @@ try {
   await cdp('Runtime.enable');
   await cdp('Log.enable');
   await cdp('Emulation.setScrollbarsHidden', { hidden: false });
-  await cdp('Emulation.setDeviceMetricsOverride', { width: 516, height: 800, deviceScaleFactor: 1, mobile: false, screenWidth: 1920, screenHeight: 1080 });
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 760, height: 800, deviceScaleFactor: 1, mobile: false, screenWidth: 1920, screenHeight: 1080 });
 
   const until = async (expr, what = expr, tries = 400) => {
     for (let i = 0; i < tries; i++) { if (await evalJS(`!!(${expr})`)) return; await sleep(10); }
@@ -105,8 +105,8 @@ try {
 
   const plain = `document.querySelector('[data-role=assistant] .turn-content')?.textContent.trimEnd()||''`;
   const emit = (type, text) => evalJS(`__mock.emit('bridge',{type:${JSON.stringify(type)},id:__mock.last('chat_send').args.id,text:${JSON.stringify(text)},conversationId:'animation-fixture'})`);
-  const begin = async () => {
-    await open('/', {settings:{animations:'on',autoDismiss:0}});
+  const begin = async (style = 'type') => {
+    await open('/', {settings:{animations:'on',autoDismiss:0,streamStyle:style}});
     await evalJS(`__mock.hold=true`);
     await send('Animation fixture');
     await until(`__mock.last('chat_send')`);
@@ -204,6 +204,62 @@ try {
   check('Stop cancels the character queue and leaves a stable partial reply',await evalJS(`(${plain})===${JSON.stringify(stopped)} && document.getElementById('btn-send').dataset.mode==='send'`));
   await key('n',{ctrlKey:true});await until(`!document.querySelector('.turn-row')`);
   check('new chat cancels pending reveal frames',await evalJS(`!document.querySelector('.turn-row')`));
+
+  // Reading a long reply while it streams: the owner could not scroll up without a lot of effort.
+  const replyWords=Array.from({length:900},(_,i)=>`word${i}`).join(' ');
+  await begin('fade');
+  await emit('delta',replyWords.slice(0,3000));
+  await until(`document.querySelector('[data-role=assistant]')?.hasAttribute('data-capped')`,'reply reaches its cap',900);
+  await until(`(()=>{const s=document.querySelector('.bubble-scroll');return s.scrollHeight-s.scrollTop-s.clientHeight<3;})()`,'following the end',300);
+  const notch=await evalJS(`new Promise(done=>{const s=document.querySelector('.bubble-scroll');const from=s.scrollTop;
+    s.dispatchEvent(new WheelEvent('wheel',{deltaY:-12,bubbles:true}));s.scrollTop=from-12;
+    const after=s.scrollTop;let n=0;const look=()=>{if(++n<24)requestAnimationFrame(look);else done({from,after,now:s.scrollTop,height:s.scrollHeight});};requestAnimationFrame(look);})`);
+  check('one small wheel notch stops following at once',Math.abs(notch.now-notch.after)<2,JSON.stringify(notch));
+  check('the jump chip offers the way back',await evalJS(`!document.querySelector('.jump-chip').hidden`));
+  await emit('delta',replyWords);await sleep(500);
+  const held=await evalJS(`document.querySelector('.bubble-scroll').scrollTop`);
+  check('new text does not pull a reader back down',Math.abs(held-notch.after)<2,`${notch.after} -> ${held}`);
+  await evalJS(`(()=>{const s=document.querySelector('.bubble-scroll');s.scrollTop=s.scrollHeight;})()`);await sleep(60);
+  await emit('delta',replyWords+' more text arrives after the reader returned');await sleep(2600);
+  const resume=await evalJS(`(()=>{const s=document.querySelector('.bubble-scroll');return JSON.stringify({gap:s.scrollHeight-s.scrollTop-s.clientHeight,chip:document.querySelector('.jump-chip').hidden,text:document.querySelector('[data-role=assistant] .turn-content').textContent.length});})()`);
+  check('reaching the end resumes following',JSON.parse(resume).gap<80 && JSON.parse(resume).chip,resume);
+  await evalJS(`document.getElementById('prompt-input').dispatchEvent(new KeyboardEvent('keydown',{key:'PageUp',bubbles:true,cancelable:true}))`);await sleep(500);
+  check('Page Up reads the reply from the composer',await evalJS(`!document.querySelector('.jump-chip').hidden && (()=>{const s=document.querySelector('.bubble-scroll');return s.scrollHeight-s.scrollTop-s.clientHeight>40;})()`),await evalJS(`JSON.stringify({gap:(()=>{const s=document.querySelector('.bubble-scroll');return s.scrollHeight-s.scrollTop-s.clientHeight;})(),hidden:document.querySelector('.jump-chip').hidden})`));
+  await emit('done',replyWords);await finishReply();
+
+  // Whole words and stable Markdown.
+  await begin('fade');
+  const prose='The quick brown fox jumps over the lazy dog and keeps running through the long grass until evening falls.';
+  const wordFrames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(prose)}});`,900);
+  const proseWords=new Set(prose.split(/\s+/));
+  const partial=wordFrames.filter(f=>f.text && !proseWords.has(f.text.split(/\s+/).at(-1)));
+  check('reveal stops between words, never inside one',partial.length===0,JSON.stringify(partial.map(f=>f.text.slice(-14)).slice(0,6)));
+  const fading=await evalJS(`(async()=>{for(let i=0;i<40;i++){if(CSS.highlights.has('qchat-fade-0')&&CSS.highlights.get('qchat-fade-0').size)return true;await new Promise(requestAnimationFrame);}return false;})()`).catch(()=>false);
+  await emit('delta',prose+' And then one more sentence arrives so that something can fade in now.');
+  const fadeSeen=fading||await evalJS(`(async()=>{for(let i=0;i<60;i++){for(const n of ['qchat-fade-0','qchat-fade-1','qchat-fade-2'])if(CSS.highlights.get(n)?.size)return true;await new Promise(requestAnimationFrame);}return false;})()`);
+  check('new words surface through paint-only highlights',fadeSeen);
+  check('fade adds no wrapper elements',await evalJS(`!document.querySelector('.turn-content span')`));
+  await emit('done',prose);await finishReply();
+  check('highlights clear when the reply is done',await evalJS(`!CSS.highlights.has('qchat-fade-0')`));
+
+  const unit=(input)=>evalJS(`QStream.stabilize(${JSON.stringify(input)})`);
+  check('a half-typed bold closes immediately',await unit('Some **bold wo')==='Some **bold wo**');
+  check('half-typed inline code closes',await unit('Use `npm i')==='Use `npm i`');
+  check('a link in progress shows only its label',await unit('See [the docs](https://exa')==='See the docs');
+  check('a lone list marker waits for its first word',await unit('Items:\n\n- ')==='Items:\n\n');
+  check('a lone heading marker waits',await unit('Done.\n\n## ')==='Done.\n\n');
+  check('a table waits for its separator',await unit('Intro\n\n| a | b |')==='Intro\n\n');
+  check('whole table rows show, partial ones wait',await unit('| a | b |\n|---|---|\n| 1 | 2 |\n| 3 |')==='| a | b |\n|---|---|\n| 1 | 2 |\n');
+  check('an unfinished fence opener waits',await unit('Code:\n\n```py')==='Code:\n\n');
+  check('an open code block keeps flowing',await unit('```py\nprint(1')==='```py\nprint(1');
+  check('unfinished display maths waits',await unit('Then $$x^2')==='Then ');
+  check('unfinished citation tokens wait',await unit('Fact \uE200cite\uE202turn0')==='Fact ');
+  const boundary=(input)=>evalJS(`QStream.stableBoundary(${JSON.stringify(input)})`);
+  check('finished paragraphs are settled',await boundary('One.\n\nTwo.\n\nThr')===6,String(await boundary('One.\n\nTwo.\n\nThr')));
+  check('a list can still grow',await boundary('Intro.\n\n- a\n\n- b\n\n- c')===0 || await boundary('Intro.\n\n- a\n\n- b\n\n- c')===8,String(await boundary('Intro.\n\n- a\n\n- b\n\n- c')));
+  check('nothing inside an open fence settles',await boundary('```\na\n\nb\n\nc')===0);
+  const stops=await evalJS(`QStream.revealStops('Hello brave new world')`);
+  check('reveal stops carry their trailing space',JSON.stringify(stops)==='[6,12,16,21]',JSON.stringify(stops));
 
   await open('/',{settings:{animations:'off',autoDismiss:0}});
   await evalJS(`__mock.hold=true`);await send('Reduced motion');await until(`__mock.last('chat_send')`);

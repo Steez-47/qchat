@@ -11,7 +11,8 @@ One material everywhere. No neon, no marble, no competing highlights.
 - **Fill:** one vertical gradient between the look's two tints. The tints are low-chroma; colour belongs to the accent, not the glass.
 - **Rim:** a 1px hairline. Dark looks: `rgb(255 255 255 / .13)`. Light looks: `rgb(15 23 42 / .13)`. Inside it, one top specular line (`inset 0 1px 0`): dark `rgb(255 255 255 / .16)`, light `rgb(255 255 255 / .8)`.
 - **Shadow:** offset and soft, never a halo. `0 10px 26px -8px rgb(0 0 0 / .42), 0 1px 2px rgb(0 0 0 / .22)`. Light looks use `rgb(15 23 42)` at about half that alpha.
-- **Backdrop:** a native companion window really blurs the desktop behind each surface when `nativeBlur` is on. With it, fills may be clearer. Without it (`html[data-nativeblur="off"]`), fills rise until text holds 4.5:1 on any wallpaper. There is no inner scrim layer.
+- **Backdrop:** a native companion window really blurs the desktop behind each glass surface when `nativeBlur` is on, and it stays up and aligned while the window moves. The blur setting crossfades that fixed-radius system blur with the sharp desktop. There is no inner scrim layer.
+- **Opacity:** the glass setting is literal for the bar, tabs and chips. Message bubbles have their own opacity; with "Keep text readable" on, they never drop below 4.5:1 on any wallpaper. Without native blur, that guard also lifts the glass.
 - **Accent** appears only on: the send button, the focus ring, links, list markers, and the selected item in a menu.
 
 ## Geometry
@@ -22,7 +23,7 @@ One material everywhere. No neon, no marble, no competing highlights.
 | control size | 26 | 30 | 34 |
 
 - Bar padding equals `(bar height - control) / 2`, so controls sit concentrically inside the pill.
-- The default bar is 460px wide with fully round ends.
+- The default bar is 460px wide with fully round ends. Replies read in a wider column (640px default), centred over the bar; chips, tabs and the user's bubble line up with the bar.
 - Radii: bubble 20, menu 16, chip 12, tab 9.
 - Stack gap between objects: 8px.
 
@@ -33,15 +34,25 @@ One material everywhere. No neon, no marble, no competing highlights.
 - **Tabs:** sit flush on the bar's top edge and read as one shape with it: rounded top corners, no bottom rim, no shadow, concave 8px fillets where they meet the bar. 24px tall, 11.5px text, the clock glyph quiet at 10px. Title capped at 24 characters then the elapsed time.
 - **Bubbles:** the user's bubble is the only tinted one, and only lightly. Replies are plain glass.
 - **History pill and Latest chip:** small quiet glass chips that never cover reply text.
+- **History:** the whole conversation from the account's own record (the rendered page is the fallback), in the same bubbles as the live view. "All chats" lists this PC's chats, then every other chat on the account, searchable. A small clock tab beside the recent tabs opens it.
 - **Errors:** plain glass with a 1px critical-coloured hairline and critical-coloured title. No muddy red fill.
 
 ## Type
 
-Segoe UI Variable. Body 14.5/1.6 in replies, 14/1.45 in the bar. Secondary text `--text-2` at .86 alpha, tertiary `--text-3` at .72. Reply headings keep a clear hierarchy but fit the width: h1 1.4em, h2 1.22em, h3 1.05em semibold. Code is Cascadia. Numerals in timestamps are tabular.
+Segoe UI Variable. Body 15/1.65 in replies, measure capped at 72ch; the bar uses the same size at 1.45. Secondary text `--text-2` at .86 alpha, tertiary `--text-3` at .72. Reply headings keep a clear hierarchy without rules or extra colour: h1 1.45em, h2 1.25em, h3 1.08em semibold. Inline code is the text colour on a quiet fill; accent stays on links and list markers. Code is Cascadia. Numerals in timestamps are tabular.
 
 ## Motion
 
-One authored moment: a sent message rises out of the bar and becomes a bubble, and the reply grows in its place. Everything else is quiet: 120 to 200ms, exponential ease-out, transform and opacity. Reduced motion is respected. No sheen passes over text by default.
+One authored moment: a sent message rises out of the bar and becomes a bubble, and the reply grows in its place. Everything else is quiet: 120 to 200ms, exponential ease-out, transform and opacity. The default feel is calm, with no overshoot. Reduced motion is respected. No sheen passes over text by default. Scrolling is native: nothing moves, scales or fades messages as they scroll.
+
+### Streaming
+
+Text must read as a steady flow, never as a machine catching up.
+
+- Reveal by whole words, so nothing starts on one line and jumps to the next. Network bursts change the rate gradually.
+- New words surface from low contrast through the CSS Highlight API: paint only, so no DOM, layout or selection changes.
+- Unfinished Markdown is closed or held back, so markers, half tables and raw TeX never flash. Finished blocks are parsed once and left alone.
+- Following the end is the reader's choice. One wheel notch up stops it at once and new text never pulls them back; reaching the end resumes it.
 
 ## Settings window
 

@@ -42,6 +42,7 @@
     QSettings.apply(root, settings);
     refreshers.get(key)?.();
     syncDependents();
+    refreshPresets();
     if (!relayQueued) {
       relayQueued = true;
       requestAnimationFrame(relay);
@@ -54,6 +55,7 @@
     QSettings.apply(root, settings);
     for (const refresh of refreshers.values()) refresh();
     syncDependents();
+    refreshPresets();
     relay();
   }
 
@@ -82,7 +84,7 @@
     return `${Number(Number(value).toFixed(2))}${spec.unit}`;
   }
 
-  function rangeRow({ key, label, format }) {
+  function rangeRow({ key, label, hint, format }) {
     const spec = SCHEMA[key];
     const row = make("div", "row row-range");
     row.dataset.key = key;
@@ -93,6 +95,7 @@
     const value = make("output", "value");
     value.htmlFor = id;
     text.append(name, value);
+    if (hint) text.append(make("span", "row-hint", hint));
     const input = make("input");
     input.type = "range";
     input.id = id;
@@ -306,7 +309,7 @@
       id: "motion", title: "Motion", glyph: "", preview: true,
       groups: [[
         () => choiceRow({ key: "animations", label: "Animations", hint: "Auto follows your Windows setting", options: [["auto", "Auto"], ["on", "On"], ["off", "Off"]] }),
-        () => choiceRow({ key: "feel", label: "Feel", options: [["smooth", "Smooth"], ["springy", "Springy"], ["snappy", "Snappy"]] }),
+        () => choiceRow({ key: "feel", label: "Feel", options: [["calm", "Calm"], ["smooth", "Smooth"], ["springy", "Springy"], ["snappy", "Snappy"]] }),
         () => rangeRow({ key: "speed", label: "Speed", format: times }),
         () => rangeRow({ key: "riseDistance", label: "Bubble rise distance" }),
         () => switchRow({ key: "tabPop", label: "Tabs pop out of the bar" }),
@@ -386,13 +389,59 @@
     }
   ];
 
-  const appearance = SECTIONS.find(s => s.id === "appearance");
-  appearance.groups.push(...SECTIONS.splice(SECTIONS.findIndex(s => s.id === "shape"), 1)[0].groups);
-  const layout = SECTIONS.splice(SECTIONS.findIndex(s => s.id === "layout"), 1)[0];
-  const textSection = SECTIONS.find(s => s.id === "text");
-  textSection.title = "Text & size"; textSection.groups.push(...layout.groups);
+  SECTIONS.find(s => s.id === "shape").title = "Glass";
+  SECTIONS.find(s => s.id === "text").title = "Reading";
+  SECTIONS.find(s => s.id === "layout").title = "Bar & tabs";
   SECTIONS.find(s => s.id === "chats").title = "Chats";
   SECTIONS.find(s => s.id === "account").title = "Account";
+  function textRow({key,label,hint}) {
+    const row = make("div","row"); row.dataset.key = key;
+    const input = make("input","text-input"); input.type = "text"; input.maxLength = SCHEMA[key].max; input.setAttribute("aria-label",label);
+    input.addEventListener("input",() => setValue(key,input.value)); row.append(textBlock(label,hint),input,resetButton(key,label));
+    refreshers.set(key,() => { input.value = settings[key]; row.toggleAttribute("data-changed",settings[key] !== DEFAULTS[key]); }); return row;
+  }
+  const extra = {
+    appearance: "tintSource tintColor inkBoost",
+    shape: "replyOpacity readableGuard",
+    text: "replyWidth paragraphSpacing letterSpacing replyWeight headingScale replyPadding bubbleGap codeSize codeFont codeWrap userLines userAlign showPrompt linkStyle quoteStyle softEdges scrollbarStyle",
+    motion: "enterStyle",
+    layout: "tabCount tabStyle showAttach orbStyle sendStyle placeholderText",
+    streaming: "streamStyle streamSpeed followStream streamCaret"
+  };
+  const descriptions = {
+    tintSource:["Glass colour source","Use the look or a custom tint"],tintColor:["Custom glass colour","Automatically chooses light or dark ink"],inkBoost:["Secondary text strength","Sharpen quieter text"],
+    replyOpacity:["Reply opacity","Fill behind reply text"],readableGuard:["Keep text readable","Raise reply opacity for contrast"],
+    replyWidth:["Reply width","Independent of bar width"],paragraphSpacing:["Paragraph spacing","Space between paragraphs"],letterSpacing:["Letter spacing","Space between letters"],replyWeight:["Text weight","Thickness of body text"],headingScale:["Heading scale","Relative size of headings"],replyPadding:["Reply padding","Space around reply text"],bubbleGap:["Bubble spacing","Space between objects"],codeSize:["Code size","Relative to reply text"],codeFont:["Code font","Typeface for code blocks"],codeWrap:["Wrap code","Fit long lines inside the bubble"],userLines:["My message line limit","Zero shows every line"],userAlign:["My message alignment","Side of the reply stack"],showPrompt:["Keep my message above the reply","Keep the prompt visible after sending"],linkStyle:["Link style","How links stand out"],quoteStyle:["Quote style","How quoted text appears"],softEdges:["Fade scroller edges","Soften clipped text at the edges"],scrollbarStyle:["Scrollbar style","Width of reply scrollbars"],
+    enterStyle:["Reply entrance","How new replies arrive"],tabCount:["Recent tab count","Maximum tabs above the bar"],tabStyle:["Tab style","How tabs join the bar"],showAttach:["Attachment button","Show the paperclip"],orbStyle:["Orb style","Appearance of the brand mark"],sendStyle:["Send button style","Accent or quiet fill"],placeholderText:["Prompt placeholder","Shown when your message is empty"],streamStyle:["Streaming style","How incoming text appears"],streamSpeed:["Streaming speed","Pace of incoming text"],followStream:["Follow incoming text","Scroll as the reply grows"],streamCaret:["Streaming caret","Show a cursor while replying"]
+  };
+  SECTIONS.splice(SECTIONS.findIndex(s => s.id === "motion"),0,{id:"streaming",title:"Streaming",glyph:"",groups:[]});
+  for (const [id,keys] of Object.entries(extra)) SECTIONS.find(s => s.id === id).groups.push(keys.split(" ").map(key => () => {
+    const spec = SCHEMA[key], [label,hint] = descriptions[key];
+    return ({range:rangeRow,bool:switchRow,enum:choiceRow,color:colorRow,text:textRow})[spec.type]({key,label,hint,options:spec.options?.map(v => [v,v.charAt(0).toUpperCase()+v.slice(1)])});
+  }));
+  let refreshPresets = () => {};
+  function presetGallery() {
+    const wrap = make("div","preset-area"), gallery = make("div","preset-gallery"), status = make("p","section-note"); status.id = "preset-status";
+    const name = make("input","text-input"); name.placeholder = "Preset name"; name.maxLength = 60; name.setAttribute("aria-label","Preset name");
+    const transfer = make("textarea","preset-transfer"); transfer.setAttribute("aria-label","Preset JSON"); transfer.placeholder = "Paste or copy preset JSON";
+    const notice = make("p","section-note"); notice.setAttribute("role","status");
+    wrap.append(status,gallery,name,actionButton("preset-save","Save current as preset...",() => { notice.textContent = QSettings.savePreset(name.value,settings) ? "Preset saved" : "Enter a name (maximum 40 presets)"; refreshPresets(); }),transfer,
+      actionButton("preset-export","Export current",async () => { transfer.value = JSON.stringify({label:name.value.trim() || "My preset",values:Object.fromEntries(QSettings.APPEARANCE_KEYS.map(k => [k,settings[k]]))}); try { await navigator.clipboard.writeText(transfer.value); notice.textContent = "Copied preset"; } catch (_) { notice.textContent = "Copy the JSON below"; } }),
+      actionButton("preset-import","Import",() => { notice.textContent = QSettings.importPreset(transfer.value) ? "Preset imported" : "Invalid preset or preset list full"; refreshPresets(); }),notice);
+    refreshPresets = () => {
+      gallery.replaceChildren(); let active = "Modified";
+      for (const p of [...QSettings.PRESETS,...QSettings.listPresets()]) {
+        const target = QSettings.applyPreset(settings,p.id), on = QSettings.APPEARANCE_KEYS.every(k => target[k] === settings[k]); if (on) active = p.label;
+        const card = make("div","preset-entry"), button = make("button","preset-card"); button.dataset.preset = p.id; button.setAttribute("aria-pressed",String(on));
+        const swatch = make("span","preset-swatch"); const swatchColours = QSettings.swatch(target.look); swatch.style.background = `linear-gradient(135deg, ${swatchColours.tint[0]} 0 45%, ${swatchColours.orb[1]} 100%)`; swatch.style.borderRadius = `${Math.round(3 + target.cornerWeight / 10)}px`;
+        button.append(swatch,make("strong","",p.label),make("small","",p.blurb || "Saved look")); button.addEventListener("click",() => setAll(QSettings.applyPreset(settings,p.id))); card.append(button);
+        if (p.id.startsWith("user-")) card.append(actionButton("delete-"+p.id,"Delete",() => { QSettings.deletePreset(p.id); refreshPresets(); }));
+        gallery.append(card);
+      }
+      status.textContent = active;
+    }; refreshPresets(); return wrap;
+  }
+  SECTIONS.unshift({id:"presets",title:"Presets",glyph:"",groups:[[presetGallery]]});
   function desktopControl(kind) {
     const isHotkey = kind === "hotkey" || kind === "selection";
     const command = kind === "selection" ? "selection_hotkey" : "hotkey";
@@ -420,7 +469,10 @@
     });
     return row;
   }
-  SECTIONS.find(s => s.id === "behavior").groups.unshift([() => desktopControl("hotkey"), () => desktopControl("selection"), () => switchRow({key: "selectionClipboard", label: "Copy selection if needed", hint: "Briefly uses the clipboard when an app doesn't share its selection, then restores it"}), () => desktopControl("autostart"), () => switchRow({key: "nativeBlur", label: "Desktop blur"})]);
+  SECTIONS.find(s => s.id === "behavior").groups.unshift([() => desktopControl("hotkey"), () => desktopControl("selection"), () => switchRow({key: "selectionClipboard", label: "Copy selection if needed", hint: "Briefly uses the clipboard when an app doesn't share its selection, then restores it"}), () => desktopControl("autostart")]);
+  SECTIONS.find(s => s.id === "shape").groups.unshift([() => switchRow({key:"nativeBlur",label:"Desktop blur",hint:"Blur the desktop behind each surface"})]);
+  const sectionOrder = ["presets","appearance","shape","text","streaming","motion","layout","behavior","chats","account","about"];
+  SECTIONS.sort((a,b) => sectionOrder.indexOf(a.id)-sectionOrder.indexOf(b.id));
   const scrollEl = $("section-scroll");
   const nav = $("section-nav");
   const preview = $("preview");
@@ -445,7 +497,7 @@
       }
       if (group.childElementCount) node.append(group);
     });
-    const advanced = new Set(["rim", "sheen", "shadow", "border", "saturation", "bubbleTint", "riseDistance", "lineHeight"]);
+    const advanced = new Set(["rim", "sheen", "shadow", "border", "saturation", "bubbleTint", "riseDistance", "lineHeight", "letterSpacing", "replyWeight", "headingScale", "codeSize", "userLines"]);
     const rows = [...node.querySelectorAll(".row[data-key]")].filter(r => advanced.has(r.dataset.key));
     if (rows.length) { const detail = make("details", "fine-tune"); detail.append(make("summary", "", "Fine-tune"), ...rows); node.append(detail); }
     scrollEl.append(node);
@@ -468,6 +520,19 @@
   // ---------------------------------------------------------------------------
   // Section tracking and preview
   // ---------------------------------------------------------------------------
+  const search = $("settings-search");
+  search.addEventListener("input",() => {
+    const query = search.value.trim().toLowerCase(); let count = 0;
+    for (const {node,section} of sectionNodes) {
+      const rows = [...node.querySelectorAll(".row,.action-row,.preset-entry,.look-swatch")];
+      for (const row of rows) row.hidden = !!query && !row.textContent.toLowerCase().includes(query);
+      const visible = !query || rows.some(r => !r.hidden) || section.title.toLowerCase().includes(query);
+      node.hidden = !visible; links.get(section.id).hidden = !visible; if (visible) count++;
+      for (const detail of node.querySelectorAll("details")) if (query) detail.open = true;
+    }
+    $("search-empty").hidden = count > 0;
+  });
+  search.addEventListener("keydown",e => { if (e.key === "Escape" && search.value) { e.stopPropagation(); search.value = ""; search.dispatchEvent(new Event("input")); } });
   let activeId = null;
   let spyPausedUntil = 0;
   function setActive(section) {
@@ -507,6 +572,9 @@
       for (const c of row.querySelectorAll("input, .switch, .segmented button")) c.disabled = off;
     };
     const noMotion = !QSettings.motionOn;
+    dim("tintColor", settings.tintSource !== "custom");
+    dim("streamSpeed", settings.streamStyle === "instant");
+    dim("blur", !settings.nativeBlur);
     dim("accentColor", settings.accentSource !== "custom");
     for (const key of ["speed", "feel", "riseDistance", "tabPop", "shimmer"]) dim(key, noMotion);
     dim("showTabClock", !settings.showTabs);
@@ -568,6 +636,7 @@
     QSettings.apply(root, settings);
     for (const refresh of refreshers.values()) refresh();
     syncDependents();
+    refreshPresets();
   });
 
   QSettings.watchEnvironment(syncDependents);

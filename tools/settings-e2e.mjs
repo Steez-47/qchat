@@ -65,7 +65,7 @@ try {
   check('/settings consumes command', await evaluate(slash));
   const first = await until(settingsPage, 'native settings webview');
   let settings = await connect(first);
-  await until(() => settings(`document.querySelectorAll('.section').length===7`), 'settings content');
+  await until(() => settings(`document.querySelectorAll('.section').length===11`), 'settings content');
   await until(() => settings(`document.visibilityState==='visible'`), 'settings shown by native window');
   check('native settings window is shown', true);
   if (visible) {
@@ -83,7 +83,7 @@ try {
   check('/settings works after closing', await evaluate(slash));
   const reopened = await until(settingsPage, 'settings reopen');
   settings = await connect(reopened);
-  await until(() => settings(`document.querySelectorAll('.section').length===7`), 'reopened controls');
+  await until(() => settings(`document.querySelectorAll('.section').length===11`), 'reopened controls');
   check('settings reopens with functioning controls', await settings(`!!document.getElementById('btn-close') && !!QSettings.settings`));
   await settings(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
   await until(async () => !(await settingsPage()), 'Escape close');

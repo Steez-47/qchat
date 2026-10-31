@@ -8,7 +8,9 @@
       if (now-lastFrame < 1000/60) {scheduled=false;refresh();return;}
       lastFrame=now;
       scheduled = false;
-      const nodes = [...document.querySelectorAll('[data-surface], .glass, .thinking, button, textarea')];
+      const all = [...document.querySelectorAll('[data-surface], .glass, .thinking, button, textarea')];
+      // Anything inside a glass object is already covered by that object's rect.
+      const nodes = all.filter(n => !n.parentElement?.closest('.glass'));
       const membership = new Set(nodes);
       for (const n of observed) if (!membership.has(n)) { resize.unobserve(n); observed.delete(n); }
       const rects = [];
@@ -25,7 +27,7 @@
           if(/(auto|scroll|hidden|clip)/.test(style.overflowX)){left=Math.max(left,clip.left+parent.clientLeft);right=Math.min(right,clip.left+parent.clientLeft+parent.clientWidth);}
           if(/(auto|scroll|hidden|clip)/.test(style.overflowY)){top=Math.max(top,clip.top+parent.clientTop);bottom=Math.min(bottom,clip.top+parent.clientTop+parent.clientHeight);}
         }
-        if(right>left && bottom>top) rects.push({x:left,y:top,w:right-left,h:bottom-top,r:Math.min(radius||0,(right-left)/2,(bottom-top)/2)});
+        if(right>left && bottom>top) rects.push({x:left,y:top,w:right-left,h:bottom-top,r:Math.min(radius||0,(right-left)/2,(bottom-top)/2),b:n.matches('.glass, .thinking')});
       }
       const next = JSON.stringify(rects);
       if (next !== last) { last=next; Promise.resolve(invoke('surfaces_set', {rects:rects.slice(0,2048)})).catch(() => {}); }
@@ -36,7 +38,8 @@
   function start() {
     if (started || !window.__TAURI__?.core?.invoke) return;
     started = true;
-    new MutationObserver(refresh).observe(document.documentElement, {subtree:true,attributes:true,childList:true});
+    // Streamed text mutates constantly; its bubble's size changes reach us through the ResizeObserver.
+    new MutationObserver(records => { if (records.some(r => !r.target.closest?.('.turn-content'))) refresh(); }).observe(document.documentElement, {subtree:true,attributes:true,childList:true});
     for (const e of ['animationstart','animationend','animationcancel','transitionrun','transitionend','transitioncancel','scroll','resize']) window.addEventListener(e,refresh,true);
     setInterval(() => { last=""; refresh(); },1000);
     refresh();
@@ -48,5 +51,5 @@
     }
     start();
   });
-  window.QSurfaces = {start,refresh,setBlur(enabled,tintArgb) {return Promise.resolve(invoke('surfaces_set_blur',{enabled:!!enabled,tintArgb:tintArgb >>> 0}));}};
+  window.QSurfaces = {start,refresh,setBlur(enabled,tintArgb,strength=1) {return Promise.resolve(invoke('surfaces_set_blur',{enabled:!!enabled,tintArgb:tintArgb >>> 0,strength}));}};
 })();

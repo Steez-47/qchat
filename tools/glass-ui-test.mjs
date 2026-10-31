@@ -111,7 +111,7 @@ try {
   if (guestChip) await evalJS(`document.getElementById('btn-guest-dismiss').click()`);
   await settle();
   const idleFit = await evalJS(`__mock.fit`);
-  check('idle fit_window is bar plus gutters', idleFit.width === 460 + 56 && idleFit.height === 44 + 56, JSON.stringify(idleFit));
+  check('idle fit_window is the reading column plus gutters', idleFit.width === 640 + 56 && idleFit.height === 44 + 56, JSON.stringify(idleFit));
   check('no set_layout call or layout attribute', await count('set_layout') === 0 && await evalJS(`!document.documentElement.dataset.layout`));
   check('guest chip appears before first message', guestChip);
   check('window prefs sent on startup', await evalJS(`__mock.last('set_window_prefs')?.args.alwaysOnTop===true && __mock.last('set_window_prefs')?.args.rememberPosition===true`));
@@ -308,7 +308,7 @@ try {
   await evalJS(`__mock.hold=true`);
   await send('A really long prompt '.repeat(40));
   await sleep(30);
-  check('user bubble clamps to 3 lines', await evalJS(`(()=>{const c=document.querySelector('.bubble-user .turn-content');return c.clientHeight<=parseFloat(getComputedStyle(c).lineHeight)*3+1 && c.scrollHeight>c.clientHeight;})()`));
+  check('user bubble clamps to its line limit', await evalJS(`(()=>{const c=document.querySelector('.bubble-user .turn-content');return c.clientHeight<=parseFloat(getComputedStyle(c).lineHeight)*6+1 && c.scrollHeight>c.clientHeight;})()`));
   await key('.', { ctrlKey: true });
   await sleep(300);
   await evalJS(`__mock.hold=false`);
@@ -500,16 +500,16 @@ try {
   check('corrupt settings JSON falls back to defaults', await evalJS(`JSON.stringify(QSettings.settings)===JSON.stringify(QSettings.DEFAULTS)`));
   await open('/', { settings: { v: 2, cornerWeight: 900, glassOpacity: -4, blur: 'nope', look: 'hotdog', density: 12, speed: 0, unknownKey: 'x', accentColor: 'red', showTabs: 'yes', barWidth: 345 } });
   const clamped = await evalJS(`QSettings.settings`);
-  check('settings are validated and clamped', clamped.cornerWeight === 100 && clamped.glassOpacity === 20 && clamped.blur === 18 && clamped.look === 'aurora' && clamped.density === 'cozy' && clamped.speed === 0.4 && clamped.accentColor === '#7C5CFF' && clamped.showTabs === true && clamped.barWidth === 350 && !('unknownKey' in clamped), JSON.stringify(clamped));
+  check('settings are validated and clamped', clamped.cornerWeight === 100 && clamped.glassOpacity === 20 && clamped.blur === 40 && clamped.look === 'aurora' && clamped.density === 'cozy' && clamped.speed === 0.4 && clamped.accentColor === '#7C5CFF' && clamped.showTabs === true && clamped.barWidth === 350 && !('unknownKey' in clamped), JSON.stringify(clamped));
   check('saved settings apply before first paint', await evalJS(`document.documentElement.style.getPropertyValue('--r-bubble')==='32.0px'`));
   await open('/');
   const r0 = await cssVar('--r-bubble');
-  await evalJS(`__mock.emit('qchat://settings-changed', {...QSettings.DEFAULTS, cornerWeight:0, glassOpacity:40, animations:'off', barWidth:600, alwaysOnTop:false})`);
+  await evalJS(`__mock.emit('qchat://settings-changed', {...QSettings.DEFAULTS, cornerWeight:0, glassOpacity:40, animations:'off', barWidth:700, alwaysOnTop:false})`);
   await settle();
   check('live apply: corner weight changes radii', r0 !== await cssVar('--r-bubble') && await cssVar('--r-bubble') === '6.0px' && await cssVar('--r-bar') === '6.0px');
   check('live apply: opacity respects the legibility floor', await evalJS(`QSettings.settings.glassOpacity===40 && +document.documentElement.style.getPropertyValue('--glass-a')>=.4 && +document.documentElement.style.getPropertyValue('--glass-a')<1`));
   check('live apply: animations off zero the durations', await cssVar('--t4') === '1ms' && await evalJS(`document.documentElement.dataset.motion`) === 'off');
-  check('live apply: bar width reaches fit_window', await evalJS(`__mock.fit.width`) === 656);
+  check('live apply: bar width reaches fit_window', await evalJS(`__mock.fit.width`) === 756);
   check('live apply: window prefs follow', await evalJS(`__mock.last('set_window_prefs').args.alwaysOnTop`) === false);
   await evalJS(`localStorage.setItem('qchat.settings', JSON.stringify({v:1, cornerWeight:100}));window.dispatchEvent(new StorageEvent('storage',{key:'qchat.settings'}))`);
   await sleep(30);
@@ -559,8 +559,8 @@ try {
   // Settings window
   await open('/settings.html');
   await settle();
-  check('settings window loads in mock mode', await evalJS(`document.querySelectorAll('.section').length===7 && !!document.getElementById('sheet')`));
-  check('settings has the required sections', await evalJS(`['Appearance','Motion','Text & size','Behavior','Chats','Account','About'].every(t=>[...document.querySelectorAll('.section-title')].some(n=>n.textContent===t))`));
+  check('settings window loads in mock mode', await evalJS(`document.querySelectorAll('.section').length===11 && !!document.getElementById('sheet')`));
+  check('settings has the required sections', await evalJS(`['Presets','Appearance','Glass','Reading','Streaming','Motion','Bar & tabs','Behavior','Chats','Account','About'].every(t=>[...document.querySelectorAll('.section-title')].some(n=>n.textContent===t))`));
   const allKeys = await evalJS(`Object.keys(QSettings.SCHEMA).filter(k=>k!=='look'&&!document.querySelector('.row[data-key="'+k+'"]'))`);
   check('every setting has a control', allKeys.length === 0, allKeys.join());
   await evalJS(`document.getElementById('control-cornerWeight').value=10; document.getElementById('control-cornerWeight').dispatchEvent(new Event('input',{bubbles:true}))`);

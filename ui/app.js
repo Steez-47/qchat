@@ -136,11 +136,11 @@
     for (const code of root.querySelectorAll("pre code")) window.QHighlight?.highlightInto(code, code.textContent, code.className.replace("language-", ""));
   }
 
-  function syncMarkdownNodes(parent, next) {
+  function syncMarkdownNodes(parent, next, offset = 0) {
     const children = Array.from(next.childNodes);
     for (let i = 0; i < children.length; i++) {
       const incoming = children[i];
-      const current = parent.childNodes[i];
+      const current = parent.childNodes[i + offset];
       if (!current) { parent.append(incoming); continue; }
       if (current.isEqualNode(incoming)) continue;
       // Rendered maths is filled in after sync; keep the node and its output
@@ -161,7 +161,38 @@
         current.replaceWith(incoming);
       }
     }
-    while (parent.childNodes.length > children.length) parent.lastChild.remove();
+    while (parent.childNodes.length > children.length + offset) parent.lastChild.remove();
+  }
+
+  function parseReply(markdown, sources) {
+    const template = document.createElement("template");
+    template.innerHTML = renderMarkdownSafe(markdown, sources);
+    highlightCode(template.content);
+    return template.content;
+  }
+
+  // While streaming, finished blocks are parsed once and left alone; only the tail is
+  // reparsed, with its unfinished syntax closed so markers never flash and then jump.
+  function renderReply(entry, text, sources, streaming) {
+    if (!streaming) {
+      entry.stable = null;
+      syncMarkdownNodes(entry.contentEl, parseReply(text, sources));
+      return;
+    }
+    let stable = entry.stable;
+    if (!stable || !text.startsWith(stable.text)) stable = entry.stable = { text: "", nodes: 0 };
+    const boundary = window.QStream.stableBoundary(text);
+    const next = document.createDocumentFragment();
+    let settled = 0;
+    if (boundary > stable.text.length) {
+      const blocks = parseReply(text.slice(stable.text.length, boundary), sources);
+      settled = blocks.childNodes.length;
+      next.append(blocks);
+    }
+    const tail = text.slice(Math.max(boundary, stable.text.length));
+    next.append(parseReply(window.QStream.stabilize(tail), sources));
+    syncMarkdownNodes(entry.contentEl, next, stable.nodes);
+    if (settled) { stable.nodes += settled; stable.text = text.slice(0, boundary); }
   }
 
   // ---------------------------------------------------------------------------
@@ -199,6 +230,7 @@
     historyLabel: $("history-label"),
     historyStatus: $("history-status"),
     historyPanel: $("history-panel"),
+    btnAllChats: $("btn-all-chats"),
     bar: $("bar"),
     orb: $("orb"),
     statusDot: $("status-dot"),
@@ -243,6 +275,7 @@
   let historyOpen = false;
   let historyChatKey = null;
   let historyHideTimer = null;
+  let historyHeld = false;
   const backfilled = new WeakSet();
   let backfillTimer = null;
   const bridge = { ready: false, loggedIn: false, signedOut: false };
@@ -400,11 +433,16 @@
   }
 
   function renderHistory() {
+    if (!historyOpen) {
+      // Called on every streamed frame, so this path must not touch the message text.
+      const shown = el.zone.querySelectorAll(".turn-row:not(.leaving):not([hidden])").length;
+      const saved = chats.current.transcript.filter(item => item.text || item.hasMedia).length;
+      const moreOnPage = chats.current.conversationId && !backfilled.has(chats.current);
+      el.historyControls.hidden = saved <= shown && !moreOnPage;
+      return;
+    }
+    el.historyControls.hidden = false;
     const items = historyItems();
-    const shown = el.zone.querySelectorAll(".turn-row:not(.leaving):not([hidden])").length;
-    const moreOnPage = chats.current.conversationId && !backfilled.has(chats.current);
-    el.historyControls.hidden = !historyOpen && items.length <= shown && !moreOnPage;
-    if (!historyOpen) return;
     const panel = el.historyPanel;
     if (historyChatKey !== chats.current.key) {
       panel.replaceChildren();
@@ -413,8 +451,7 @@
     // Hold the reader's place: follow the end only if they are already there, and
     // keep the same message on screen when older ones arrive above it.
     const fromBottom = panel.scrollHeight - panel.scrollTop;
-    const atEnd = fromBottom - panel.clientHeight <= 28;
-    const scrollTop = panel.scrollTop;
+    const atEnd = fromBottom - panel.clientHeight <= 2 && !historyHeld;
     const prepended = panel.childElementCount > 0 && panel.firstElementChild.dataset.id !== items[0]?.id;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -449,11 +486,10 @@
       } else if (!item.hasMedia) media.replaceChildren();
     }
     while (panel.children.length > items.length) panel.lastElementChild.remove();
+    // Only write when following: any write would cancel a wheel scroll in progress.
     if (prepended) panel.scrollTop = panel.scrollHeight - fromBottom;
-    else panel.scrollTop = atEnd ? panel.scrollHeight : scrollTop;
-    motion.top = panel.scrollTop;
+    else if (atEnd) panel.scrollTop = panel.scrollHeight;
     syncHistoryEdge();
-    wakeHistoryMotion();
     queueSizes();
   }
 
@@ -468,12 +504,6 @@
     const last = panel.lastElementChild;
     const content = last ? last.offsetTop + last.offsetHeight + parseFloat(getComputedStyle(panel).paddingBottom) : 0;
     panel.style.height = `${Math.min(content, bubbleMax)}px`;
-    // Without motion nothing ticks, so the reading position is held here instead.
-    if (motion.pin && !QSettings.motionOn) {
-      panel.scrollTop = motion.pin.row.offsetTop - panel.offsetHeight + motion.pin.fromBottom;
-      motion.top = panel.scrollTop;
-      motion.pin = null;
-    }
   }
 
   function hideHistoryPanel() {
@@ -495,20 +525,22 @@
     el.historyLabel.textContent = open ? "Latest" : "History";
     if (open) {
       hideHistoryPanel();
-      // Start from the space already on screen; older messages then roll in above.
-      const zoneHeight = el.zone.hidden ? 0 : el.zone.offsetHeight + 8;
-      const start = el.historyControls.offsetHeight + zoneHeight + 8;
       // A long reply being read keeps its text exactly where it is on screen.
       const live = responseEntry();
       const reading = live?.row.hasAttribute("data-capped")
         ? { id: live.row.dataset.id, fromBottom: live.bubble.offsetHeight + 8 + live.scroller.scrollTop } : null;
       historyOpen = true;
+      historyHeld = false;
       el.stack.toggleAttribute("data-history", true);
       panel.hidden = false;
-      panel.style.height = `${start}px`;
       renderHistory();
+      updateBubbleMax();
+      syncHistoryHeight();
       panel.scrollTop = panel.scrollHeight;
-      startHistoryMotion(reading);
+      const held = reading && [...panel.children].find(row => row.dataset.id === reading.id);
+      if (held) panel.scrollTop = held.offsetTop - panel.offsetHeight + reading.fromBottom;
+      syncHistoryEdge();
+      fitNow();
       void panel.offsetHeight;
       clearTimeout(autoDismissTimer);
       panel.focus({ preventScroll: true });
@@ -518,7 +550,6 @@
       const bottom = el.stack.getBoundingClientRect().bottom - panel.getBoundingClientRect().bottom;
       historyOpen = false;
       el.stack.toggleAttribute("data-history", false);
-      stopHistoryMotion();
       setHistoryStatus("");
       if (QSettings.motionOn) {
         // Fades out where it stands while the live bubble returns beneath it.
@@ -541,150 +572,6 @@
       syncHistoryButton();
     }
     queueSizes();
-  }
-
-  // Latest glides down through the conversation before handing back to the live bubble.
-  function returnToLatest() {
-    if (!historyOpen) return;
-    const panel = el.historyPanel;
-    const from = panel.scrollTop;
-    const distance = panel.scrollHeight - panel.clientHeight - from;
-    if (!QSettings.motionOn || distance < 2) { setHistoryOpen(false); return; }
-    motion.pin = null;
-    motion.glide = { from, start: performance.now(), duration: Math.min(620, 240 + distance / 6) };
-    wakeHistoryMotion();
-  }
-
-  // The bubbles behave like they are on springs. Each lags behind the scroll in
-  // proportion to its distance from the pointer, so gaps open and close (push and
-  // pull), and each pops in or out as it crosses the panel's edges.
-  const POP_FROM = 0.8;
-  const motion = { frame: null, time: 0, top: 0, pointer: null, pin: null, glide: null, opening: null, active: new Map() };
-
-  function wakeHistoryMotion() {
-    if (motion.frame || !historyOpen || !QSettings.motionOn) return;
-    motion.time = performance.now();
-    motion.frame = requestAnimationFrame(tickHistoryMotion);
-  }
-
-  function clearRowMotion(row) {
-    row.style.removeProperty("transform");
-    row.style.removeProperty("opacity");
-  }
-
-  function stopHistoryMotion() {
-    if (motion.frame) cancelAnimationFrame(motion.frame);
-    motion.frame = null;
-    motion.pin = motion.glide = motion.opening = null;
-    // The panel fades out as it stands; only half-popped bubbles settle first.
-    for (const row of motion.active.keys()) clearRowMotion(row);
-    motion.active.clear();
-  }
-
-  function startHistoryMotion(reading) {
-    const panel = el.historyPanel;
-    const liveRow = reading ? [...panel.children].find(row => row.dataset.id === reading.id) : panel.lastElementChild;
-    if (reading && liveRow) {
-      motion.pin = { row: liveRow, fromBottom: reading.fromBottom, until: performance.now() + QSettings.timings.t3 + 80 };
-      panel.scrollTop = liveRow.offsetTop - panel.offsetHeight + reading.fromBottom;
-    }
-    motion.top = panel.scrollTop;
-    if (!QSettings.motionOn) return;
-    motion.pointer = null;
-    motion.opening = { liveRow };
-    wakeHistoryMotion();
-  }
-
-  function tickHistoryMotion(now) {
-    motion.frame = null;
-    if (!historyOpen) return;
-    if (!QSettings.motionOn) { stopHistoryMotion(); return; }
-    const panel = el.historyPanel;
-    const dt = Math.min(0.032, Math.max(0.001, (now - motion.time) / 1000));
-    motion.time = now;
-    if (motion.pin) {
-      if (now > motion.pin.until) motion.pin = null;
-      else { panel.scrollTop = motion.pin.row.offsetTop - panel.offsetHeight + motion.pin.fromBottom; motion.top = panel.scrollTop; }
-    }
-    if (motion.glide) {
-      const { from, start, duration } = motion.glide;
-      const t = Math.min(1, (now - start) / duration);
-      const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-      panel.scrollTop = from + (panel.scrollHeight - panel.clientHeight - from) * eased;
-      if (t === 1) { setHistoryOpen(false); return; }
-    }
-    const top = panel.scrollTop;
-    const height = panel.clientHeight;
-    const delta = top - motion.top;
-    motion.top = top;
-    const pointer = motion.pointer ?? height;
-
-    // Rows are in document order, so the on-screen ones are a contiguous run.
-    const rows = panel.children;
-    let low = 0, high = rows.length;
-    while (low < high) {
-      const mid = (low + high) >> 1;
-      if (rows[mid].offsetTop + rows[mid].offsetHeight > top - 120) high = mid; else low = mid + 1;
-    }
-    const seen = [];
-    for (let i = low; i < rows.length && rows[i].offsetTop - top < height + 120; i++) seen.push(rows[i]);
-
-    let moving = Boolean(motion.pin || motion.glide);
-    const opening = motion.opening;
-    seen.forEach((row, index) => {
-      const rowTop = row.offsetTop - top;
-      const rowHeight = row.offsetHeight;
-      let state = motion.active.get(row);
-      if (!state) {
-        const settled = opening && opening.liveRow === row;
-        state = { y: 0, vy: 0, scale: settled ? 1 : POP_FROM, vs: 0, alpha: settled ? 1 : 0, shown: settled, wait: opening ? (seen.length - 1 - index) * 0.05 : 0 };
-        motion.active.set(row, state);
-      }
-      const visible = Math.min(rowTop + rowHeight, height - 4) - Math.max(rowTop, 30);
-      const need = Math.min(rowHeight * 0.4, 30);
-      state.shown = visible >= (state.shown ? need * 0.4 : need);
-      if (delta) {
-        const centre = Math.max(rowTop, Math.min(pointer, rowTop + rowHeight));
-        const reach = Math.min(1, Math.abs(centre - pointer) / height);
-        state.y = Math.max(-30, Math.min(30, state.y + delta * reach * 0.24));
-      }
-      state.vy += (-240 * state.y - 24 * state.vy) * dt;
-      state.y += state.vy * dt;
-      if (state.wait > 0 && state.shown) state.wait -= dt;
-      const target = state.shown && state.wait <= 0 ? 1 : POP_FROM;
-      state.vs += (-320 * (state.scale - target) - 19 * state.vs) * dt;
-      state.scale += state.vs * dt;
-      const alphaTarget = target === 1 ? 1 : 0;
-      state.alpha += (alphaTarget - state.alpha) * Math.min(1, dt * (alphaTarget ? 17 : 24));
-      const resting = Math.abs(state.y) < 0.1 && Math.abs(state.vy) < 1 && Math.abs(state.scale - target) < 0.002 && Math.abs(state.vs) < 0.02 && Math.abs(state.alpha - alphaTarget) < 0.01;
-      if (resting && target === 1) { state.y = state.vy = state.vs = 0; state.scale = state.alpha = 1; clearRowMotion(row); return; }
-      if (!resting) moving = true;
-      // A tall bubble only needs a hint of the scale to read as the same pop.
-      const scale = 1 + (state.scale - 1) * Math.min(1, 220 / rowHeight);
-      row.style.transform = `translate3d(0, ${state.y.toFixed(2)}px, 0) scale(${scale.toFixed(4)})`;
-      row.style.opacity = state.alpha.toFixed(3);
-    });
-    const inView = new Set(seen);
-    for (const row of motion.active.keys()) if (!inView.has(row)) { clearRowMotion(row); motion.active.delete(row); }
-    motion.opening = null;
-    if (moving) wakeHistoryMotion();
-  }
-
-  // Overscrolling at either end stretches the column, then it springs back.
-  function pullHistory(event) {
-    const panel = el.historyPanel;
-    motion.pointer = event.clientY - panel.getBoundingClientRect().top;
-    motion.pin = motion.glide = null;
-    const atTop = panel.scrollTop <= 0 && event.deltaY < 0;
-    const atEnd = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 1 && event.deltaY > 0;
-    if (atTop || atEnd) {
-      for (const [row, state] of motion.active) {
-        const rowTop = row.offsetTop - panel.scrollTop;
-        const reach = 0.35 + 0.65 * Math.min(1, Math.abs(rowTop + row.offsetHeight / 2 - motion.pointer) / panel.clientHeight);
-        state.vy = Math.max(-340, Math.min(340, state.vy - event.deltaY * 1.5 * reach));
-      }
-    }
-    wakeHistoryMotion();
   }
 
   // For a long reply the control belongs to the top of the text: it steps aside
@@ -717,12 +604,16 @@
     if (!chat.conversationId || backfilled.has(chat) || isBusy()) return;
     backfilled.add(chat);
     setHistoryStatus("Loading earlier messages");
+    backfillTimer = setTimeout(() => backfillFailed(chat), 20000);
+    invoke("chat_read_transcript", { conversationId: chat.conversationId }).catch(() => backfillFailed(chat));
+  }
+
+  // No account record and a different chat on the page: open it once and read what renders.
+  function backfillFromPage(chat) {
     pageSync = pageSync.catch(() => {}).then(() => {
-      if (chats.current === chat && page.conv !== chat.conversationId) return openInPage(chat);
-    }).then(() => {
-      if (chats.current !== chat) { backfilled.delete(chat); return; }
-      backfillTimer = setTimeout(() => backfillFailed(chat), 20000);
-      return invoke("chat_read_transcript", { conversationId: chat.conversationId });
+      if (chats.current !== chat || isBusy()) { backfillFailed(chat); return; }
+      chat.readFromPage = true;
+      return openInPage(chat).then(() => invoke("chat_read_transcript", { conversationId: chat.conversationId }));
     }).catch(() => backfillFailed(chat));
   }
 
@@ -730,13 +621,27 @@
 
   // Adds only what comes before the oldest local prompt; local turns keep their
   // original markdown and sources. Repeat reads find nothing new to add.
-  function mergePageTranscript(chat, messages) {
+  function mergePageTranscript(chat, messages, complete = false) {
     if (!Array.isArray(messages)) { backfillFailed(chat); return; }
     clearTimeout(backfillTimer);
     backfillTimer = null;
     setHistoryStatus("");
     const older = cleanTranscript({ transcript: messages.map(item => ({ ...item, id: crypto.randomUUID() })) }).filter(item => item.text || item.hasMedia);
     const local = chat.transcript.filter(item => item.text || item.hasMedia);
+    if (complete && older.length >= local.length) {
+      // The account's record is the whole conversation, in order, including anything
+      // said on the website. Messages this PC already has keep their markdown and sources.
+      const known = new Map();
+      for (const item of local) {
+        const key = `${item.role}:${comparable(item.text)}`;
+        if (!known.has(key)) known.set(key, []);
+        known.get(key).push(item);
+      }
+      chat.transcript = older.map(item => known.get(`${item.role}:${comparable(item.text)}`)?.shift() || item);
+      saveChats();
+      renderHistory();
+      return;
+    }
     let end = older.length;
     if (local.length) {
       const anchor = local.find(item => item.role === "user" && comparable(item.text));
@@ -822,7 +727,7 @@
     }
     const source = chats.current.temporary ? freshChat() : chats.current;
     let current = storedChat(source);
-    let recent = chats.recent.map((chat, i) => i < 7 ? storedChat(chat) : { ...storedChat(chat), transcript: [], draft: "" });
+    let recent = chats.recent.map(chat => storedChat(chat));
     const write = () => localStorage.setItem(CHATS_KEY, JSON.stringify({ v: CHATS_VERSION, current, recent }));
     try { write(); return; } catch (_) {}
     // Drop oldest transcripts before trimming metadata; preserve full current text.
@@ -1210,7 +1115,8 @@
   };
 
   function updateBubbleMax() {
-    const chrome = el.stack.offsetHeight - (historyOpen ? el.historyPanel.offsetHeight : (el.zone.hidden ? 0 : el.zone.offsetHeight));
+    const kept = [...el.zone.querySelectorAll('.turn-row[data-role="user"]:not(.leaving)')].reduce((sum, row) => sum + row.offsetHeight + 8, 0);
+    const chrome = el.stack.offsetHeight - (historyOpen ? el.historyPanel.offsetHeight : (el.zone.hidden ? 0 : el.zone.offsetHeight)) + kept;
     const pct = QSettings.settings.maxHeightPct / 100;
     bubbleMax = Math.max(120, Math.round(pct * window.screen.availHeight) - chrome - 2 * GUTTER);
   }
@@ -1220,9 +1126,9 @@
     if (!entry?.bubble || entry.row.hidden || historyOpen) return;
     const capped = entry.inner.offsetHeight > bubbleMax;
     if (capped !== entry.row.hasAttribute("data-capped")) entry.row.toggleAttribute("data-capped", capped);
-    const barWidth = el.stack.offsetWidth;
+    const column = Math.min(el.stack.offsetWidth, QSettings.settings.replyWidth || Infinity);
     const width = capped || entry.row.dataset.status === "streaming" || entry.row.hasAttribute("data-wide")
-      ? barWidth : Math.min(entry.inner.offsetWidth, barWidth);
+      ? column : Math.min(entry.inner.offsetWidth, column);
     const target = Math.min(entry.inner.offsetHeight, bubbleMax);
     entry.targetHeight = target;
     entry.bubble.style.width = `${width}px`;
@@ -1231,15 +1137,47 @@
     syncHistoryButton();
   }
 
+  const scrollGap = (scroller) => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+
+  function syncScrollState(entry) {
+    const { scroller, row, jump } = entry;
+    const capped = row.hasAttribute("data-capped");
+    jump.hidden = !capped || scrollGap(scroller) <= 2 || (!userScrolledUp && QSettings.settings.followStream !== false);
+    scroller.toggleAttribute("data-above", capped && scroller.scrollTop > 2);
+    scroller.toggleAttribute("data-below", capped && scrollGap(scroller) > 2);
+  }
+
+  // The reader's intent decides, not their distance from the end: one wheel notch upward
+  // stops following at once. Only reaching the very end again resumes it.
+  function holdStream(entry) {
+    if (!entry.row.hasAttribute("data-capped")) return;
+    userScrolledUp = true;
+    entry.heldAt = performance.now();
+    syncScrollState(entry);
+  }
+
+  // Eases towards the end instead of snapping a whole line per frame.
   function followStream(entry) {
-    if (!entry.row.hasAttribute("data-capped")) {
-      if (entry.jump) entry.jump.hidden = true;
-      return;
-    }
-    if (!userScrolledUp) {
-      entry.scroller.scrollTop = entry.scroller.scrollHeight;
-      entry.followTop = entry.scroller.scrollTop;
-    }
+    syncScrollState(entry);
+    if (!entry.row.hasAttribute("data-capped") || userScrolledUp || QSettings.settings.followStream === false || entry.following) return;
+    entry.following = true;
+    let last = performance.now();
+    const step = () => {
+      const now = performance.now();
+      const { scroller } = entry;
+      const gap = scrollGap(scroller);
+      if (userScrolledUp || turnNodes.get(entry.row.dataset.id) !== entry || gap <= 0.5) {
+        entry.following = false;
+        syncScrollState(entry);
+        return;
+      }
+      const eased = gap * (1 - Math.exp(-Math.max(1, now - last) / 90));
+      last = now;
+      scroller.scrollTop = !QSettings.motionOn || gap > 600 ? scroller.scrollHeight : scroller.scrollTop + Math.max(1, eased);
+      entry.followTop = scroller.scrollTop;
+      nextFrame(step);
+    };
+    step();
   }
 
   const scrollToBottom = () => { const entry = responseEntry(); if (entry) followStream(entry); };
@@ -1393,10 +1331,12 @@
     closeBtn.title = "Dismiss (Esc)";
     closeBtn.setAttribute("aria-label", "Dismiss reply");
     closeBtn.append(makeIcon(GLYPH.close));
-    const retryBtn = make("button", "tool-btn", "↻");
+    const retryBtn = make("button", "tool-btn");
+    retryBtn.append(makeIcon("\uE72C"));
     retryBtn.type = "button"; retryBtn.dataset.action = "retry-reply"; retryBtn.dataset.id = turn.id;
     retryBtn.title = "Retry"; retryBtn.setAttribute("aria-label", "Retry");
-    const openBtn = make("button", "tool-btn", "↗");
+    const openBtn = make("button", "tool-btn");
+    openBtn.append(makeIcon("\uE8A7"));
     openBtn.type = "button"; openBtn.title = "Open in ChatGPT"; openBtn.setAttribute("aria-label", openBtn.title);
     openBtn.addEventListener("click", () => { if (chats.current.conversationId) invoke("open_external", { url: `https://chatgpt.com/c/${chats.current.conversationId}` }).catch(() => {}); });
     tools.append(copyBtn, retryBtn, openBtn, closeBtn);
@@ -1411,22 +1351,39 @@
       jump.hidden = true;
       scroller.scrollTop = scroller.scrollHeight;
       const entry = turnNodes.get(turn.id);
-      if (entry) entry.followTop = scroller.scrollTop;
+      if (entry) { entry.followTop = scroller.scrollTop; syncScrollState(entry); }
     });
 
+    scroller.addEventListener("wheel", (e) => {
+      if (e.deltaY < 0) { const entry = turnNodes.get(turn.id); if (entry) holdStream(entry); }
+    }, { passive: true });
+    // The scrollbar, or a text selection that following would drag along.
+    scroller.addEventListener("pointerdown", () => {
+      const entry = turnNodes.get(turn.id);
+      if (entry && row.dataset.status === "streaming") holdStream(entry);
+    });
     scroller.addEventListener("scroll", () => {
       syncHistoryButton();
-      const nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 28;
       const entry = turnNodes.get(turn.id);
-      if (!nearBottom && !userScrolledUp && scroller.scrollTop === entry?.followTop) return;
-      userScrolledUp = !nearBottom;
-      jump.hidden = nearBottom || !row.hasAttribute("data-capped");
-    });
+      if (!entry) return;
+      // Text keeps arriving, so a reader heading down counts as back once they are close.
+      const heading = scroller.scrollTop > (entry.lastTop ?? 0);
+      entry.lastTop = scroller.scrollTop;
+      // A scroll event from following's last write may still be in flight when the reader
+      // takes over; it must not count as them returning, or the wheel feels stuck again.
+      const settled = performance.now() - (entry.heldAt ?? -Infinity) > 150;
+      if (settled && (scrollGap(scroller) <= 2 || (heading && scrollGap(scroller) <= 48))) userScrolledUp = false;
+      else if (scroller.scrollTop < (entry.followTop ?? 0) - 1) userScrolledUp = true;
+      if (!userScrolledUp) { entry.followTop = scroller.scrollTop; followStream(entry); }
+      syncScrollState(entry);
+    }, { passive: true });
 
     row.append(bubble, tools, jump);
     const entry = { row, bubble, scroller, inner, contentEl, errorWrap, mediaEl, generation, activity, jump, mediaItems: new Map(), targetHeight: 0 };
     turnNodes.set(turn.id, entry);
     sizeObserver.observe(inner);
+    // The viewport can shrink after following has caught up, reopening a small gap.
+    sizeObserver.observe(scroller);
     return row;
   }
 
@@ -1489,14 +1446,16 @@
     generation.querySelector(".image-generation-label").textContent = turn.imageProgress?.phase === "preparing" ? "Preparing image…" : "Creating image…";
 
     const visibleText = entry.reveal ? entry.reveal.visible : turn.text;
+    const streaming = turn.status === "streaming";
+    // The stream's patched-up tail gives way to one full parse of the finished text.
+    if (!streaming && entry.stable) entry.renderedText = null;
     if (entry.renderedText !== visibleText) {
-      const template = document.createElement("template");
-      template.innerHTML = renderMarkdownSafe(visibleText, turn.sources);
-      highlightCode(template.content);
-      syncMarkdownNodes(entry.contentEl, template.content);
+      renderReply(entry, visibleText, turn.sources, streaming);
       window.QMath?.renderInto(entry.contentEl);
       entry.renderedText = visibleText;
+      if (streaming) noteRevealed(entry);
     }
+    if (!streaming) clearFade(entry);
     if (turn.status === "error") {
       entry.errorWrap.replaceChildren(buildTurnError(turn));
       entry.errorWrap.hidden = false;
@@ -1513,6 +1472,60 @@
   // Keep transport snapshots separate from their paced presentation. The full
   // text remains on the turn for history/copy even while the visible tail drains.
   const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  const streamStyle = () => QSettings.motionOn ? QSettings.settings.streamStyle || "fade" : "instant";
+
+  // New words surface from low contrast. This is paint only (the CSS Highlight API), so it
+  // adds no DOM, keeps selections intact and cannot change the layout of the text around it.
+  const FADE_STEPS = [70, 150, 240];
+  const fadeHighlights = typeof Highlight === "function" && window.CSS?.highlights;
+
+  function clearFade(entry) {
+    if (!entry?.fade) return;
+    entry.fade = null;
+    if (fadeHighlights) FADE_STEPS.forEach((_, i) => CSS.highlights.delete(`qchat-fade-${i}`));
+  }
+
+  function noteRevealed(entry) {
+    if (!fadeHighlights || streamStyle() !== "fade") return;
+    const length = entry.contentEl.textContent.length;
+    const fade = entry.fade ||= { length: 0, recent: [], running: false };
+    if (length > fade.length) fade.recent.push({ count: Math.min(length - fade.length, 800), at: performance.now() });
+    fade.length = length;
+    if (!fade.running) { fade.running = true; paintFade(entry, fade); }
+  }
+
+  function paintFade(entry, fade) {
+    if (entry.fade !== fade) return;
+    const now = performance.now();
+    fade.recent = fade.recent.filter(item => now - item.at < FADE_STEPS.at(-1));
+    const sets = FADE_STEPS.map(() => new Highlight());
+    let node = entry.contentEl;
+    while (node.lastChild) node = node.lastChild;
+    const walker = document.createTreeWalker(entry.contentEl, NodeFilter.SHOW_TEXT);
+    walker.currentNode = node;
+    let text = node.nodeType === Node.TEXT_NODE ? node : walker.previousNode();
+    let end = text ? text.length : 0;
+    for (let i = fade.recent.length - 1; i >= 0 && text; i--) {
+      const age = now - fade.recent[i].at;
+      const set = sets[FADE_STEPS.findIndex(limit => age < limit)];
+      let left = fade.recent[i].count;
+      while (left > 0 && text) {
+        const take = Math.min(left, end);
+        if (take) {
+          const range = new Range();
+          range.setStart(text, end - take);
+          range.setEnd(text, end);
+          set.add(range);
+        }
+        left -= take;
+        end -= take;
+        if (end === 0) { text = walker.previousNode(); end = text ? text.length : 0; }
+      }
+    }
+    sets.forEach((set, i) => CSS.highlights.set(`qchat-fade-${i}`, set));
+    if (fade.recent.length) requestAnimationFrame(() => paintFade(entry, fade));
+    else fade.running = false;
+  }
 
   function cancelReveal(entry) {
     entry?.reveal?.cancel?.();
@@ -1528,33 +1541,60 @@
     renderTurnNow(turn.id);
     updateComposerMode();
     armAutoDismiss();
+    if (historyOpen) backfillHistory(chats.current);
     queueSizes();
   }
 
   function flushReveal(turn) {
     const entry = turnNodes.get(turn.id);
     cancelReveal(entry);
+    clearTimeout(entry?.reveal?.holdTimer);
     if (entry?.reveal) entry.reveal.visible = turn.text;
     if (entry) finishReveal(turn, entry);
+  }
+
+  // Where the reveal may pause. Whole words by default, so a word never starts on one line
+  // and jumps to the next as it grows; the last word waits briefly in case it is unfinished.
+  function revealPlan(turn, state) {
+    const style = streamStyle();
+    if (style === "type") {
+      const stops = [];
+      for (const part of graphemes.segment(turn.text)) stops.push(part.index + part.segment.length);
+      return stops;
+    }
+    const stops = window.QStream.revealStops(turn.text);
+    clearTimeout(state.holdTimer);
+    state.holdTimer = null;
+    if (!turn.backendDone && stops.length && !/\s$/.test(turn.text)) {
+      stops.pop();
+      const target = turn.text;
+      state.holdTimer = setTimeout(() => {
+        if (state.target !== target || turn.status !== "streaming") return;
+        state.stops.push(target.length);
+        paceTurn(turn);
+      }, 220);
+    }
+    return stops;
   }
 
   function paceTurn(turn) {
     const entry = turnNodes.get(turn.id);
     if (!entry || turn.status !== "streaming") return;
     let state = entry.reveal;
-    if (!state) state = entry.reveal = { visible: "", target: "", ends: [], index: 0, last: Date.now(), credit: 0, cancel: null };
-    if (state.target !== turn.text) {
-      const parts = Array.from(graphemes.segment(turn.text));
-      // Only unseen tails are paced. A correction to visible text (including
-      // an extended final grapheme) replaces the snapshot once, without replay.
-      const shown = Array.from(graphemes.segment(state.visible));
-      let common = 0;
-      while (common < shown.length && common < parts.length && shown[common].segment === parts[common].segment) common++;
-      state.ends = parts.map(part => part.index + part.segment.length);
+    if (!state) state = entry.reveal = { visible: "", target: null, stops: [], index: 0, last: Date.now(), credit: 0, rate: 0, cancel: null, sawDone: false };
+    if (state.target !== turn.text || state.sawDone !== Boolean(turn.backendDone)) {
+      // Only unseen tails are paced. A correction to visible text (including an
+      // extended final grapheme) replaces the snapshot once, without replay.
+      const shown = state.visible.length;
+      const intact = turn.text.startsWith(state.visible) && (!shown || shown === turn.text.length ||
+        (() => { const g = graphemes.segment(turn.text).containing(shown - 1); return g.index + g.segment.length === shown; })());
       state.target = turn.text;
-      if (common < shown.length) {
+      state.sawDone = Boolean(turn.backendDone);
+      state.stops = revealPlan(turn, state);
+      if (!intact) {
         cancelReveal(entry);
-        state.index = state.ends.length;
+        clearTimeout(state.holdTimer);
+        state.index = state.stops.length;
         state.visible = turn.text;
         state.credit = 0;
         state.last = Date.now();
@@ -1563,41 +1603,50 @@
         finishReveal(turn, entry);
         return;
       }
-      state.index = common;
-      state.visible = turn.text.slice(0, state.ends[common - 1] || 0);
+      state.index = state.stops.findIndex(stop => stop > shown);
+      if (state.index < 0) state.index = state.stops.length;
     }
-    if (!QSettings.motionOn) {
+    if (streamStyle() === "instant") {
       flushReveal(turn);
       if (turn.text) revealResponse(turn);
       renderTurnNow(turn.id);
       return;
     }
     if (state.cancel) return;
-    if (state.index === state.ends.length) {
-      renderTurnNow(turn.id);
+    if (state.index >= state.stops.length) {
+      if (turn.backendDone || !state.holdTimer) renderTurnNow(turn.id);
       finishReveal(turn, entry);
       return;
     }
     const tick = () => {
       state.cancel = null;
       if (turnNodes.get(turn.id) !== entry || turn.status !== "streaming") return;
-      if (!QSettings.motionOn) { flushReveal(turn); renderTurnNow(turn.id); return; }
+      if (streamStyle() === "instant") { flushReveal(turn); renderTurnNow(turn.id); return; }
       const now = Date.now();
-      const remaining = state.ends.length - state.index;
-      const seconds = turn.backendDone ? Math.max(0.04, (state.deadline - now) / 1000) : 1.5;
-      const rate = Math.max(65, remaining / seconds);
-      state.credit += Math.min(64, Math.max(0, now - state.last)) * rate / 1000;
+      const elapsed = Math.min(64, Math.max(0, now - state.last));
       state.last = now;
-      const count = Math.min(remaining, Math.floor(state.credit));
-      if (count) {
-        state.credit -= count;
-        state.index += count;
-        state.visible = state.target.slice(0, state.ends[state.index - 1] || 0);
+      const remaining = state.target.length - state.visible.length;
+      const base = 95 * (QSettings.settings.streamSpeed || 1);
+      // Drain a backlog gradually: the rate glides, so a burst from the network reads as
+      // a slightly faster flow rather than a lurch.
+      const wanted = turn.backendDone
+        ? Math.max(base, remaining / Math.max(0.04, ((state.deadline ?? now + 1200) - now) / 1000))
+        : Math.max(base, remaining / 1.4);
+      state.rate = !state.rate || turn.backendDone ? wanted : state.rate + (wanted - state.rate) * Math.min(1, elapsed / 280);
+      state.credit += elapsed * state.rate / 1000;
+      let moved = false;
+      while (state.index < state.stops.length && state.stops[state.index] - state.visible.length <= state.credit) {
+        const stop = state.stops[state.index++];
+        state.credit -= stop - state.visible.length;
+        state.visible = state.target.slice(0, stop);
+        moved = true;
+      }
+      if (moved) {
         revealResponse(turn);
         renderTurnNow(turn.id);
       }
-      if (state.index < state.ends.length) state.cancel = nextFrame(tick);
-      else finishReveal(turn, entry);
+      if (state.index < state.stops.length) state.cancel = nextFrame(tick);
+      else { state.credit = 0; finishReveal(turn, entry); }
     };
     state.last = Date.now();
     state.cancel = nextFrame(tick);
@@ -1634,7 +1683,7 @@
     entry.row.classList.add(entrance);
     entry.row.addEventListener("animationend", () => entry.row.classList.remove(entrance), { once: true });
 
-    for (const other of turns.slice()) if (other.role === "user") retireTurn(other);
+    if (!QSettings.settings.showPrompt) for (const other of turns.slice()) if (other.role === "user") retireTurn(other);
     queueSizes();
     fitNow();
   }
@@ -1646,13 +1695,15 @@
     for (const file of turn.attachments || []) releasePreview(file.previewURL);
     const entry = turnNodes.get(turn.id);
     cancelReveal(entry);
+    clearTimeout(entry?.reveal?.holdTimer);
+    clearFade(entry);
     const sched = renderSchedule.get(turn.id);
     sched?.cancelFrame?.();
     if (sched) sched.queued = false;
     renderSchedule.delete(turn.id);
     turnNodes.delete(turn.id);
     if (!entry) return;
-    if (entry.inner) sizeObserver.unobserve(entry.inner);
+    if (entry.inner) { sizeObserver.unobserve(entry.inner); sizeObserver.unobserve(entry.scroller); }
     const { row } = entry;
     if (immediate || row.hidden || !QSettings.motionOn) {
       row.remove();
@@ -1727,7 +1778,8 @@
   function updateComposerMode() {
     const active = isStreaming();
     const sendKey = QSettings.settings.sendKey === "ctrl" ? "Ctrl+Enter" : "Enter";
-    el.promptInput.placeholder = bridge.ready ? (firstRunHint ? "Ask anything, or type / for commands" : "Ask anything") : "Connecting…";
+    const placeholder = QSettings.settings.placeholderText || "Ask anything";
+    el.promptInput.placeholder = bridge.ready ? (firstRunHint ? `${placeholder}, or type / for commands` : placeholder) : "Connecting…";
     el.btnSend.dataset.mode = active ? "stop" : "send";
     el.btnSend.firstElementChild.textContent = active ? GLYPH.stop : GLYPH.send;
     el.btnSend.title = active ? "Stop generating (Ctrl+.)" : `Send (${sendKey})`;
@@ -1770,7 +1822,7 @@
     if (isBusy() || pendingFiles.some((f) => f.state === "staging") || (!prompt && !files.length)) return;
     prompts.push(prompt); recallIndex = -1; firstRunHint = false;
     try { localStorage.setItem("qchat.introduced", "1"); } catch (_) {}
-    el.promptInput.placeholder = "Ask anything";
+    el.promptInput.placeholder = QSettings.settings.placeholderText || "Ask anything";
     sending = true;
     const generation = chatGeneration;
     const chat = chats.current;
@@ -1928,6 +1980,13 @@
     return `${Math.floor(hours / 24)}d`;
   };
 
+  const allChatsTab = make("button", "tab-all glass glass-tiny");
+  allChatsTab.type = "button";
+  allChatsTab.title = "All chats (Ctrl+P)";
+  allChatsTab.setAttribute("aria-label", "All chats");
+  allChatsTab.append(makeIcon("\uE81C"));
+  allChatsTab.addEventListener("click", () => showChatList());
+
   function tabsVisible() {
     const s = QSettings.settings;
     return s.showTabs && s.keepHistory && chats.recent.length > 0;
@@ -1945,7 +2004,7 @@
 
     const existing = new Map([...el.tabs.children].map((node) => [node.dataset.key, node]));
     let fresh = 0;
-    const nodes = chats.recent.slice(0, 3).map((chat) => {
+    const nodes = chats.recent.slice(0, QSettings.settings.tabCount || 3).map((chat) => {
       let tab = existing.get(chat.key);
       if (!tab) {
         tab = make("button", "tab glass glass-tiny pop");
@@ -1967,7 +2026,7 @@
       tab.setAttribute("aria-label", `Switch to chat: ${title}, last active ${when}`);
       return tab;
     });
-    el.tabs.replaceChildren(...nodes);
+    el.tabs.replaceChildren(...nodes, allChatsTab);
     syncTabsDisabled();
     queueSizes();
   }
@@ -2042,9 +2101,10 @@
   function closeFeatureList() { featureList.hidden = true; queueSizes(); el.promptInput.focus(); }
   function showFeatureList(title, rows, searchable = false) {
     closeSlashMenu();
-    const keysCard = rows.some(row => row.keys);
+    const keysCard = typeof rows !== "function" && rows.some(row => row.keys);
     featureList.classList.toggle("feature-keys", keysCard);
     featureList.replaceChildren(); featureList.hidden = false;
+    const getRows = typeof rows === "function" ? rows : () => rows;
     const field = make("input", "feature-search"); field.placeholder = "Search chats"; field.setAttribute("aria-label", "Search chats");
     if (searchable) featureList.append(field); else featureList.append(make("div", "feature-heading", title));
     const results = make("div", "feature-results"); featureList.append(results);
@@ -2053,7 +2113,7 @@
     const paint = () => {
       results.replaceChildren(); lines = []; selected = 0;
       const query = `${field.value}`.toLowerCase();
-      for (const row of rows.filter(row => `${row.title} ${row.prompt || ""}`.toLowerCase().includes(query))) {
+      for (const row of getRows().filter(row => `${row.title} ${row.prompt || ""}`.toLowerCase().includes(query))) {
         const line = make("div", "feature-row");
         if (row.selected !== undefined) {
           const check = makeIcon(GLYPH.check, "icon feature-check");
@@ -2072,8 +2132,9 @@
         results.append(line);
       }
       mark();
-      if (title === "Chats" && !lines.length) results.append(make("p", "feature-heading", "No chats yet"));
+      if (title === "Chats" && !lines.length) results.append(make("p", "feature-heading", accountChats.loading ? "Loading your chats…" : query ? "No chats match" : "No chats yet"));
     };
+    featureList._repaint = searchable ? () => { const scroll = results.scrollTop; paint(); results.scrollTop = scroll; } : null;
     field.oninput = paint;
     featureList.onkeydown = e => {
       if (e.key === "Escape") { e.stopPropagation(); closeFeatureList(); }
@@ -2088,8 +2149,43 @@
     showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? models.map(model => ({ title: model.label, selected: Boolean(model.selected), run: () => invoke("chat_model_choose", { id: model.id }).catch(() => {}) })) : [{ title: event.error ? "Open ChatGPT" : "Sign in", run: openSignin }]);
   }
   listen("bridge", ({ payload }) => { if (payload.type === "models") showModels(payload); else if (payload.type === "model-chosen") setModelLabel(payload.model.label); });
+  // Every chat on the account, read through the signed-in page, with this PC's chats first.
+  const accountChats = { items: [], loading: false, loaded: false };
+
+  function loadAccountChats() {
+    if (accountChats.loading || !bridge.loggedIn) return;
+    accountChats.loading = true;
+    accountChats.items = [];
+    invoke("chat_list_conversations", { offset: 0 }).catch(() => { accountChats.loading = false; });
+  }
+
+  function receiveAccountChats(event) {
+    const seen = new Set(accountChats.items.map(item => item.id));
+    for (const item of Array.isArray(event.items) ? event.items : []) if (!seen.has(item.id)) accountChats.items.push(item);
+    const more = !event.error && event.items?.length && accountChats.items.length < Math.min(event.total || 0, 600);
+    if (more) invoke("chat_list_conversations", { offset: accountChats.items.length }).catch(() => { accountChats.loading = false; });
+    else { accountChats.loading = false; accountChats.loaded = !event.error; }
+    if (!featureList.hidden) featureList._repaint?.();
+  }
+
+  function openAccountChat(item) {
+    if (isBusy()) return;
+    const chat = { ...freshChat(), conversationId: item.id, title: (item.title || "Untitled chat").slice(0, 40), lastActive: item.updated || Date.now() };
+    chats.recent.unshift(chat);
+    switchToChat(chat.key);
+    setHistoryOpen(true);
+  }
+
+  function chatRows() {
+    const local = chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { chats.recent = chats.recent.filter(c => c.key !== chat.key); saveChats(); renderTabs(); featureList._repaint?.(); } }));
+    const known = new Set([chats.current.conversationId, ...chats.recent.map(chat => chat.conversationId)]);
+    const account = accountChats.items.filter(item => !known.has(item.id)).map(item => ({ title: item.title || "Untitled chat", meta: item.updated ? elapsedLabel(item.updated) : "", run: () => openAccountChat(item) }));
+    return [...local, ...account];
+  }
+
   function showChatList() {
-    showFeatureList("Chats", chats.recent.map(chat => ({ title: chat.title || "Untitled chat", meta: elapsedLabel(chat.lastActive), prompt: chat.lastPrompt, run: () => switchToChat(chat.key), remove: () => { chats.recent = chats.recent.filter(c => c.key !== chat.key); saveChats(); renderTabs(); showChatList(); } })), true);
+    loadAccountChats();
+    showFeatureList("Chats", chatRows, true);
   }
   document.addEventListener("pointerdown", e => { if (!featureList.hidden && !featureList.contains(e.target)) closeFeatureList(); });
   window.addEventListener("keydown", e => {
@@ -2346,10 +2442,14 @@
   // Announcement is handled by the polite status label; the log itself would
   // otherwise repeat every streamed snapshot.
   el.zone.setAttribute("aria-live", "off");
-  el.historyButton.addEventListener("click", () => { if (historyOpen) returnToLatest(); else setHistoryOpen(true); });
-  el.historyPanel.addEventListener("scroll", () => { syncHistoryEdge(); wakeHistoryMotion(); }, { passive: true });
-  el.historyPanel.addEventListener("wheel", pullHistory, { passive: true });
-  el.historyPanel.addEventListener("pointerdown", () => { motion.pin = motion.glide = null; });
+  el.historyButton.addEventListener("click", () => setHistoryOpen(!historyOpen));
+  el.btnAllChats.addEventListener("click", () => showChatList());
+  el.historyPanel.addEventListener("scroll", () => {
+    syncHistoryEdge();
+    if (el.historyPanel.scrollHeight - el.historyPanel.scrollTop - el.historyPanel.clientHeight <= 2) historyHeld = false;
+  }, { passive: true });
+  el.historyPanel.addEventListener("wheel", (e) => { if (e.deltaY < 0) historyHeld = true; }, { passive: true });
+  el.historyPanel.addEventListener("pointerdown", () => { historyHeld = true; });
   el.historyPanel.addEventListener("click", (e) => {
     const anchor = e.target.closest("a");
     if (anchor) {
@@ -2538,7 +2638,7 @@
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") {
       e.preventDefault();
-      if (historyOpen) { returnToLatest(); return; }
+      if (historyOpen) { setHistoryOpen(false); return; }
       if (slashOpen()) { closeSlashMenu(); return; }
       if (!el.clearConfirm.hidden) { hideClearConfirm(); el.promptInput.focus(); return; }
       if (!isBusy() && (turns.length || !el.globalError.hidden)) {
@@ -2548,6 +2648,14 @@
         return;
       }
       invoke("hide_main").catch(() => {});
+    } else if ((e.key === "PageUp" || e.key === "PageDown") && !slashOpen()) {
+      // Read from the keyboard while the cursor stays in the composer.
+      const entry = historyOpen ? null : responseEntry();
+      const target = historyOpen ? el.historyPanel : entry?.row.hasAttribute("data-capped") ? entry.scroller : null;
+      if (!target) return;
+      e.preventDefault();
+      if (e.key === "PageUp") { if (entry) holdStream(entry); else historyHeld = true; }
+      target.scrollBy({ top: (e.key === "PageUp" ? -0.85 : 0.85) * target.clientHeight, behavior: QSettings.motionOn ? "smooth" : "auto" });
     } else if ((e.ctrlKey || e.metaKey) && e.key === ".") {
       e.preventDefault();
       stopStreaming();
@@ -2585,7 +2693,13 @@
         settleReadyWaiters(evt);
         break;
       case "transcript":
-        if (evt.conversationId && evt.conversationId === chats.current.conversationId) mergePageTranscript(chats.current, evt.messages);
+        if (evt.conversationId && evt.conversationId === chats.current.conversationId) {
+          if (evt.notOnPage && !chats.current.readFromPage) backfillFromPage(chats.current);
+          else mergePageTranscript(chats.current, evt.messages, evt.complete === true);
+        }
+        break;
+      case "conversations":
+        receiveAccountChats(evt);
         break;
       case "start": {
         // A late "start" must not reopen a turn that already finished or was stopped.

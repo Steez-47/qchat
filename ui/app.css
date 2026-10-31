@@ -13,15 +13,21 @@
 }
 
 .stack {
-  --stack-gap: 8px;
+  --stack-gap: var(--stack-gap-setting, 8px);
+  /* The reading column can be wider than the bar; the bar stays centred under it. */
+  --stack-width: var(--stack-w, var(--bar-w));
+  --reply-col: min(var(--reply-w, var(--bar-w)), var(--stack-width));
+  --bar-inset: calc((var(--stack-width) - var(--bar-w)) / 2);
+  --pad: var(--reply-pad, 18px);
   flex: none;
   position: relative;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   gap: var(--stack-gap);
-  width: var(--bar-w);
+  width: var(--stack-width);
 }
+.bar { width: var(--bar-w); align-self: center; }
 
 /* ---------------------------------------------------------------------------
    Bubble zone
@@ -39,15 +45,24 @@
   flex: none;
   max-width: 100%;
 }
-.turn-row[data-role="user"] { align-self: flex-end; max-width: 84%; transform-origin: 100% 100%; }
+.turn-row[data-role="user"] { align-self: flex-end; max-width: min(84%, var(--bar-w)); margin-right: var(--bar-inset); transform-origin: 100% 100%; }
+.turn-row[data-role="user"] + .turn-row[data-role="assistant"]:not([hidden]) { margin-top: var(--stack-gap); }
+html[data-useralign="left"] .turn-row[data-role="user"] { align-self: flex-start; margin-right: 0; margin-left: var(--bar-inset); transform-origin: 0% 100%; }
 .turn-row[data-role="assistant"] { align-self: flex-start; transform-origin: 0% 100%; }
 
 .turn-row.rising { animation: rise-in var(--t4) var(--ease-move) both, fade-in var(--t2) linear both; }
 .turn-row.swapping { animation: swap-in var(--t3) var(--ease-out) both, fade-in var(--t2) linear both; }
 @keyframes rise-in {
-  from { transform: translateY(var(--rise)) scale(0.9); }
+  from { transform: translateY(var(--rise)) scale(0.97); }
   to { transform: none; }
 }
+@keyframes scale-in {
+  from { transform: scale(0.94); }
+  to { transform: none; }
+}
+html[data-enter="fade"] .turn-row.rising, html[data-enter="fade"] .turn-row.swapping { animation: fade-in var(--t2) linear both; }
+html[data-enter="scale"] .turn-row.rising, html[data-enter="scale"] .turn-row.swapping { animation: scale-in var(--t3) var(--ease-out) both, fade-in var(--t2) linear both; }
+html[data-enter="none"] .turn-row.rising, html[data-enter="none"] .turn-row.swapping { animation: none; }
 @keyframes swap-in {
   from { transform: translateY(8px) scale(0.965); }
   to { transform: none; }
@@ -74,7 +89,7 @@
 .bubble-user .turn-content {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: var(--user-lines, 6);
   overflow: hidden;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -127,25 +142,37 @@ html[data-motion="off"] .thinking span { animation: none; opacity: 0.75; }
     height var(--t3) var(--ease-out);
   contain: layout paint style;
 }
-.turn-row[data-status="streaming"] .bubble-response { transition: height 140ms linear; }
+.turn-row[data-status="streaming"] .bubble-response { transition: height 160ms linear; }
 .turn-row.no-size-ease .bubble-response { transition: none; }
 
 .bubble-scroll { width: 100%; height: 100%; overflow: hidden; }
-.turn-row[data-capped] .bubble-scroll { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.turn-row[data-capped] .bubble-scroll {
+  --mask-top: 0px;
+  --mask-bottom: 0px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+/* Text dissolves at a scroller's edge instead of being sliced by it. */
+html[data-softedges="true"] .turn-row[data-capped] .bubble-scroll {
+  mask-image: linear-gradient(to bottom, transparent, #000 var(--mask-top), #000 calc(100% - var(--mask-bottom)), transparent);
+}
+.bubble-scroll[data-above] { --mask-top: 22px; }
+.bubble-scroll[data-below] { --mask-bottom: 26px; }
 
 .bubble-inner {
   width: max-content;
-  max-width: var(--bar-w);
-  padding: 12px 17px 13px;
+  max-width: var(--reply-col);
+  padding: calc(var(--pad) * 0.72) var(--pad) calc(var(--pad) * 0.78);
   user-select: text;
   cursor: auto;
 }
 /* Leave scrollbar room from the outset so reaching the cap never rewraps text. */
 .turn-row[data-status="streaming"] .bubble-inner,
-.turn-row[data-wide] .bubble-inner { width: calc(var(--bar-w) - 8px); max-width: calc(var(--bar-w) - 8px); padding-right: 11px; }
-.turn-row[data-capped] .bubble-inner { width: calc(var(--bar-w) - 8px); max-width: calc(var(--bar-w) - 8px); padding-right: 11px; }
-.turn-row:has(.code-block, table) .bubble-inner { width: calc(var(--bar-w) - 8px); }
-.turn-row[data-capped]:has(.code-block, table) .bubble-inner { width: calc(var(--bar-w) - 8px); }
+.turn-row[data-wide] .bubble-inner { width: calc(var(--reply-col) - 8px); max-width: calc(var(--reply-col) - 8px); padding-right: calc(var(--pad) - 6px); }
+.turn-row[data-capped] .bubble-inner { width: calc(var(--reply-col) - 8px); max-width: calc(var(--reply-col) - 8px); padding-right: calc(var(--pad) - 6px); }
+.turn-row:has(.code-block, table) .bubble-inner { width: calc(var(--reply-col) - 8px); }
+.turn-row[data-capped]:has(.code-block, table) .bubble-inner { width: calc(var(--reply-col) - 8px); }
 
 /* Soft light passing over the glass while text streams */
 .stream-sheen {
@@ -261,7 +288,7 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 10px;
-  max-width: calc(var(--bar-w) - 34px);
+  max-width: calc(var(--reply-col) - 34px);
 }
 .error-line .icon { flex: none; font-size: 15px; color: var(--critical-text); }
 .error-text { flex: 1 1 auto; min-width: 0; max-width: 40ch; font-size: 0.93em; }
@@ -273,7 +300,8 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
   align-items: center;
   gap: 8px;
   align-self: flex-start;
-  max-width: 100%;
+  margin-left: var(--bar-inset);
+  max-width: var(--bar-w);
   min-height: 36px;
   padding: 2px 3px 2px 13px;
   border-radius: var(--r-chip);
@@ -348,7 +376,7 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
 .hyperlink-btn:hover { background: var(--fill-2); }
 
 /* Suggestion chips (optional) */
-.suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
+.suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-inline: var(--bar-inset); }
 .suggestion {
   display: inline-flex;
   align-items: center;
@@ -370,9 +398,9 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
    --------------------------------------------------------------------------- */
 .slash-menu {
   align-self: flex-start;
-  width: min(300px, 100%);
+  width: min(300px, var(--bar-w));
   padding: 5px;
-  margin-left: 6px;
+  margin-left: calc(var(--bar-inset) + 6px);
   border-radius: min(var(--r-bubble), 20px);
   animation: rise-in var(--t3) var(--ease-out) both, fade-in var(--t1) linear both;
   transform-origin: 20% 100%;
@@ -406,7 +434,7 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
   max-height: 104px;
   overflow-y: auto;
   padding: 2px;
-  margin: -2px;
+  margin: -2px calc(var(--bar-inset) - 2px);
 }
 .attachment-chip {
   display: inline-flex;
@@ -433,14 +461,24 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
    Response content
    --------------------------------------------------------------------------- */
 .turn-content { overflow-wrap: anywhere; }
-.bubble-response .turn-content { font-size: calc(var(--text-size) + .5px); line-height: var(--line-h); }
+.bubble-response .turn-content {
+  font-size: var(--text-size);
+  line-height: var(--line-h);
+  font-weight: var(--reply-weight, 400);
+  letter-spacing: var(--tracking, 0);
+  font-feature-settings: "kern", "liga", "calt";
+  text-rendering: optimizeLegibility;
+}
+.turn-content > p, .turn-content > ul, .turn-content > ol, .turn-content > blockquote,
+.turn-content > h1, .turn-content > h2, .turn-content > h3, .turn-content > h4 { max-width: 72ch; }
+.turn-content p, .turn-content li { text-wrap: pretty; }
 html[data-justify="true"] .bubble-response .turn-content p { text-align: justify; }
 .turn-content > :first-child { margin-top: 0; }
 .turn-content > :last-child { margin-bottom: 0; }
 .turn-content p, .turn-content ul, .turn-content ol,
-.turn-content blockquote, .turn-content .code-block, .turn-content table { margin: 0 0 1em; }
+.turn-content blockquote, .turn-content .code-block, .turn-content table { margin: 0 0 var(--para-gap, 1em); }
 .turn-content ul, .turn-content ol { padding-left: 1.7em; }
-.turn-content li { margin: 0.45em 0; padding-left: 0.15em; }
+.turn-content li { margin: calc(var(--para-gap, 1em) * 0.42) 0; padding-left: 0.15em; }
 .turn-content li > p { margin: 0.4em 0; }
 .turn-content li > :first-child { margin-top: 0; }
 .turn-content li > :last-child { margin-bottom: 0; }
@@ -448,39 +486,42 @@ html[data-justify="true"] .bubble-response .turn-content p { text-align: justify
 .turn-content li::marker { color: var(--accent-text); font-weight: 650; }
 .turn-content h1, .turn-content h2, .turn-content h3,
 .turn-content h4, .turn-content h5, .turn-content h6 {
-  margin: 1.5em 0 0.6em;
+  margin: 1.45em 0 0.5em;
   font-family: var(--font-display);
-  font-weight: 750;
-  line-height: 1.25;
+  font-weight: 650;
+  line-height: 1.28;
   letter-spacing: -0.015em;
   text-wrap: pretty;
 }
-.turn-content h1 { font-size: 1.4em; }
-.turn-content h2 { font-size: 1.22em; padding-bottom: 0.35em; border-bottom: 1px solid var(--stroke-2); }
-.turn-content h3 { font-size: 1.05em; color: var(--text-1); }
-.turn-content h4 { font-size: 1.1em; }
-.turn-content h5, .turn-content h6 { font-size: 1em; color: var(--text-2); }
-.turn-content strong { font-weight: 750; }
+.turn-content h1 { font-size: calc(1.45em * var(--heading-scale, 1)); }
+.turn-content h2 { font-size: calc(1.25em * var(--heading-scale, 1)); }
+.turn-content h3 { font-size: calc(1.08em * var(--heading-scale, 1)); }
+.turn-content h4 { font-size: 1em; }
+.turn-content h5, .turn-content h6 { font-size: 0.94em; color: var(--text-2); }
+.turn-content strong { font-weight: 640; }
 .turn-content a {
   color: var(--accent-text);
   text-decoration: underline;
   font-weight: 550;
-  text-decoration-color: currentColor;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
   cursor: pointer;
 }
-.turn-content a:hover { text-decoration-thickness: 2px; }
+html[data-linkstyle="color"] .turn-content a { text-decoration: none; }
+html[data-linkstyle="bold"] .turn-content a { text-decoration: none; font-weight: 650; }
+.turn-content a:hover { text-decoration: underline; text-decoration-color: currentColor; }
 .turn-content blockquote { padding: 10px 14px; border-left: 0; border-radius: 0 8px 8px 0; background: var(--fill-1); color: var(--text-2); }
 .turn-content blockquote > :last-child { margin-bottom: 0; }
+html[data-quotestyle="plain"] .turn-content blockquote { padding: 0 0 0 1em; background: none; }
+html[data-quotestyle="italic"] .turn-content blockquote { padding: 0 0 0 1em; background: none; font-style: italic; }
 .turn-content hr { border: 0; border-top: 1px solid var(--stroke-2); margin: 1.5em 0; }
 .turn-content :not(pre) > code {
   padding: 2px 5px;
   border-radius: 5px;
   background: var(--code-fill);
-  color: var(--accent-text);
   box-shadow: inset 0 0 0 1px var(--stroke-1);
-  font: 500 0.9em/1.45 var(--font-code);
+  font: 450 var(--code-size, 0.9em)/1.45 var(--font-code);
 }
 .code-block {
   max-width: 100%;
@@ -517,9 +558,10 @@ html[data-justify="true"] .bubble-response .turn-content p { text-align: justify
   margin: 0;
   padding: 12px 14px;
   overflow-x: auto;
-  font: 0.9em/1.65 var(--font-code);
+  font: var(--code-size, 0.9em)/1.6 var(--font-code);
   tab-size: 2;
 }
+html[data-codewrap="true"] .code-block pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .turn-content table {
   display: block;
   width: fit-content;
@@ -542,7 +584,7 @@ html[data-justify="true"] .bubble-response .turn-content p { text-align: justify
 .turn-media:not(:empty) { margin-top: 10px; }
 .turn-content:empty + .turn-media:not(:empty) { margin-top: 0; }
 .media-card {
-  width: calc(var(--bar-w) - 34px);
+  width: calc(var(--reply-col) - 34px);
   max-width: 100%;
   padding: 8px 10px 8px 12px;
   border-radius: var(--r-inner);
@@ -567,7 +609,7 @@ html[data-justify="true"] .bubble-response .turn-content p { text-align: justify
   align-items: center;
   gap: 10px;
   margin-top: 8px;
-  width: calc(var(--bar-w) - 34px);
+  width: calc(var(--reply-col) - 34px);
   max-width: 100%;
   min-height: 72px;
   padding: 14px;
@@ -611,9 +653,9 @@ html[data-motion="off"] .jump-chip { animation: none !important; }
 html[data-motion="off"] .bubble-response { transition: none; }
 
 /* History: the live bubbles, continued upwards. The panel bleeds into the window
-   gutters so shadows are never clipped and bubbles keep their exact live position;
-   messages pop in and out at its soft edges instead of meeting a cutoff. */
-.history-controls { position: relative; z-index: 3; display: flex; justify-content: center; pointer-events: none; }
+   gutters so shadows are never clipped and bubbles keep their exact live position. */
+.history-controls { position: relative; z-index: 3; display: flex; justify-content: center; gap: 6px; pointer-events: none; }
+.stack:not([data-history]) #btn-all-chats { display: none; }
 .stack[data-history] > .history-controls { position: absolute; top: 4px; left: 0; right: 0; }
 .history-button {
   display: inline-flex;
@@ -656,7 +698,8 @@ html[data-motion="off"] .bubble-response { transition: none; }
   scrollbar-gutter: stable;
   outline: none;
   mask-image: linear-gradient(to bottom, transparent 6px, #000 38px, #000 calc(100% - var(--edge-bottom)), transparent);
-  transition: height var(--t3) var(--ease-out), --edge-bottom var(--t2) linear;
+  transition: --edge-bottom var(--t2) linear;
+  animation: fade-in var(--t2) linear both;
 }
 .history-panel[data-below] { --edge-bottom: 34px; }
 html[data-motion="off"] .history-panel { transition: none; }
@@ -676,9 +719,12 @@ html[data-motion="off"] .history-panel { transition: none; }
 .history-row .glass { backdrop-filter: none; }
 .history-row .bubble-response { width: fit-content; max-width: 100%; }
 /* Same text column as a long live reply, so nothing rewraps when the views swap. */
-.history-row .bubble-inner { width: max-content; max-width: 100%; padding: 12px 19px 13px 17px; }
+.history-row .bubble-inner { width: max-content; max-width: 100%; padding: calc(var(--pad) * 0.72) calc(var(--pad) + 2px) calc(var(--pad) * 0.78) var(--pad); }
+.history-row[data-role="assistant"] { align-self: flex-start; max-width: var(--reply-col); }
+.history-row .bubble-response { --fill-alpha: var(--reply-a, var(--glass-a)); }
+.history-row .bubble-tools { top: 6px; bottom: auto; right: 6px; --fill-alpha: 1; }
 .history-row[data-wide] .bubble-inner,
-.history-row:has(.code-block, table) .bubble-inner { width: var(--bar-w); max-width: 100%; }
+.history-row:has(.code-block, table) .bubble-inner { width: var(--reply-col); max-width: 100%; }
 .history-row .bubble-user .turn-content { display: block; overflow: visible; }
 
 .slash-menu { border-radius: 16px; }
@@ -686,12 +732,12 @@ html[data-motion="off"] .history-panel { transition: none; }
 .turn-row[data-status="error"] .bubble-response::after, .notice-error::after { border-color: rgb(var(--critical-rgb) / .65); }
 .error-text { color: var(--critical-text); }
 .stack[data-history] > .history-controls { position: relative; top: auto; }
-.bubble-scroll:has(~ .jump-chip:not([hidden])) .bubble-inner { padding-bottom: 52px; }
 
 .attachments .attachment-chip { height: 28px; min-height: 28px; padding-block: 0; font-size: 11.5px; }
 .attachments .attachment-thumbnail { width: 22px; height: 22px; }
 
-.feature-list { border-radius: 16px; padding: 8px; margin-bottom: 8px; max-height: 320px; overflow: auto; }
+.feature-list { border-radius: 16px; padding: 8px; margin: 0 var(--bar-inset) 8px; max-height: 340px; display: flex; flex-direction: column; }
+.feature-results { flex: 1; min-height: 0; overflow-y: auto; }
 .feature-heading { padding: 8px 8px 6px; color: var(--text-2); font-size: 12px; font-weight: 600; }
 .feature-row { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 8px; border-radius: 10px; }
 .feature-row:hover, .feature-row[data-selected] { background: var(--fill-2); }
@@ -733,7 +779,7 @@ html[data-motion="off"] .history-panel { transition: none; }
 .turn-content .qmath .katex { line-height: 1.15; }
 .qmath .katex-display { margin: 0.15em 0; }
 .qmath .katex-display > .katex { white-space: nowrap; }
-.history-row:has(.math-block) .bubble-inner { width: var(--bar-w); max-width: 100%; }
+.history-row:has(.math-block) .bubble-inner { width: var(--reply-col); max-width: 100%; }
 .math-raw {
   font-family: var(--font-code, ui-monospace, monospace);
   font-size: 0.92em;
@@ -742,5 +788,62 @@ html[data-motion="off"] .history-panel { transition: none; }
   padding: 1px 4px;
 }
 
-.mode-chips { display: flex; gap: 6px; align-self: flex-start; }
+.mode-chips { display: flex; gap: 6px; align-self: flex-start; margin-left: var(--bar-inset); }
 .mode-chips:has(> [hidden]):not(:has(> :not([hidden]))) { display: none; }
+
+/* Replies use their own opacity, so a clear bar never costs readable text. */
+.bubble-response { --fill-alpha: var(--reply-a, var(--glass-a)); }
+
+/* Newly revealed words surface from low contrast. Paint only: see paintFade. */
+::highlight(qchat-fade-0) { color: rgb(var(--ink) / 0.14); }
+::highlight(qchat-fade-1) { color: rgb(var(--ink) / 0.42); }
+::highlight(qchat-fade-2) { color: rgb(var(--ink) / 0.74); }
+
+html[data-streamcaret="true"] .turn-row[data-status="streaming"] .turn-content > :is(p, h1, h2, h3, h4):last-child::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.12em;
+  border-radius: 1px;
+  background: var(--accent-text);
+  animation: caret-pulse calc(1100ms / var(--speed)) ease-in-out infinite;
+}
+@keyframes caret-pulse { 50% { opacity: 0.3; } }
+html[data-motion="off"] .turn-content ::after { animation: none; }
+
+/* Bar and tab variations */
+.tabs { margin-inline: var(--bar-inset); }
+.tab-all {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-tab) var(--r-tab) 0 0;
+  box-shadow: none;
+  color: var(--text-2);
+  transition: color var(--t1) linear;
+}
+.tab-all.glass::after { border-bottom: 0; }
+.tab-all .icon { font-size: 11px; }
+.tab-all:hover { color: var(--accent-text); }
+html[data-tabstyle="floating"] .tabs { margin-bottom: 0; }
+html[data-tabstyle="floating"] :is(.tab, .tab-all) { border-radius: var(--r-chip); height: 26px; }
+html[data-tabstyle="floating"] :is(.tab, .tab-all).glass::after { border-bottom: min(var(--bw), 1.5px) solid rgb(var(--rim-ink) / var(--rim-alpha)); }
+html[data-tabstyle="text"] .tabs { margin-bottom: 0; }
+html[data-tabstyle="text"] :is(.tab, .tab-all) { background: none; backdrop-filter: none; }
+html[data-tabstyle="text"] :is(.tab, .tab-all).glass::after { display: none; }
+html[data-showattach="false"] #btn-attach { display: none; }
+html[data-orbstyle="solid"] .orb { background: var(--accent-2); }
+html[data-orbstyle="ring"] .orb { background: none; box-shadow: inset 0 0 0 2px var(--accent-2); }
+html[data-orbstyle="hidden"] .orb { background: none; width: 8px; margin-inline: 2px; }
+html[data-sendstyle="quiet"] .send-btn:not(:disabled)[data-mode="send"] { background: var(--fill-3); color: var(--text-1); }
+html[data-scrollbar="wide"] :is(.scroll, .history-panel)::-webkit-scrollbar { width: 12px; }
+html[data-scrollbar="hidden"] :is(.scroll, .history-panel, .feature-results)::-webkit-scrollbar { display: none; }
+
+/* These block margins outrank the generic last-child reset above. */
+.turn-content > :is(.code-block, table, blockquote, ul, ol):last-child { margin-bottom: 0; }

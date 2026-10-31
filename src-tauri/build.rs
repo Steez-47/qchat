@@ -7,7 +7,7 @@ fn main() {
             "chat_new",
             "chat_status",
             "hide_main",
-            "fit_window", "open_settings", "close_settings", "reset_position", "set_window_prefs", "chat_open", "chat_read_transcript",
+            "fit_window", "open_settings", "close_settings", "reset_position", "set_window_prefs", "chat_open", "chat_read_transcript", "chat_list_conversations",
             "open_external",
             "show_signin",
             "quit_app",

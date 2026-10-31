@@ -169,7 +169,7 @@ try {
   check('inline maths does not raise the line height', line.kh<=line.lh+1 && line.p<=line.lh+2, JSON.stringify(line));
   const geo = await evalJS(`(()=>{const blocks=[...document.querySelectorAll('.bubble-zone .math-block')];const wide=blocks.map(b=>({sw:b.scrollWidth,cw:b.clientWidth})).sort((a,b)=>b.sw-a.sw)[0];const bubble=document.querySelector('.bubble-zone .bubble-response').getBoundingClientRect();const bar=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bar-w'));return {blocks:blocks.length,wide,overflow:getComputedStyle(blocks[0]).overflowX,bubble:bubble.width,bar};})()`);
   check('long display maths scrolls inside its own wrapper', geo.wide.sw>geo.wide.cw+2 && geo.overflow==='auto', JSON.stringify(geo));
-  check('display maths does not widen the reply bubble', geo.bubble<=geo.bar+2, JSON.stringify(geo));
+  check('display maths does not widen the reply bubble', geo.bubble<=640+2, JSON.stringify(geo));
   const copied = await evalJS(`(async()=>{let value=null;Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async t=>{value=String(t)}}});document.querySelector('.bubble-zone [data-action="copy-turn"]').click();await new Promise(r=>setTimeout(r,40));return value;})()`);
   check('Copy reply keeps the original TeX source', typeof copied==='string' && copied.includes('\\(x^2+y^2=z^2\\)') && copied.includes('$$ \\sum_{i=1}^{n}') && copied.includes('\\int_0^1'), String(copied).slice(0, 120));
 
@@ -193,8 +193,8 @@ try {
   await evalJS(`window.__katexCalls=0`);
   const partial = 'Euler wrote \\(e^{i\\pi}';
   await emitDelta(partial);
-  await visible('e^{i');
-  check('incomplete formula stays plain text mid-stream', await evalJS(`(()=>{const c=document.querySelector('.bubble-zone .turn-content');return document.querySelectorAll('.bubble-zone .katex').length===0 && c.textContent.includes('\\\\(e^{i');})()`));
+  await visible('Euler wrote');
+  check('incomplete formula waits instead of flashing as raw TeX', await evalJS(`(()=>{const c=document.querySelector('.bubble-zone .turn-content');return document.querySelectorAll('.bubble-zone .katex').length===0 && !c.textContent.includes('e^{i');})()`));
   const complete = 'Euler wrote \\(e^{i\\pi} + 1 = 0\\) and moved on.';
   await emitDelta(complete);
   await until(`document.querySelector('.bubble-zone .katex')`, 'completed formula', 1200);
