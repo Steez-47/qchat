@@ -901,13 +901,14 @@
 
   function showReasoningPicker() {
     if (isBusy()) return;
+    if (featureListAnchor === el.btnReasoning) { closeFeatureList(); return; }
     const selected = effectiveReasoning();
     showFeatureList("Reasoning", REASONING_LEVELS.map((value) => ({
       title: REASONING_LABELS[value],
       meta: value === "low" ? "Instant / Light" : value === "medium" ? "Standard" : "Extended",
       selected: value === selected,
       run: () => chooseReasoning(value)
-    })));
+    })), false, el.btnReasoning);
   }
 
   function storedChat(chat, capped = false) {
@@ -2279,7 +2280,7 @@
   allChatsTab.title = "All chats (Ctrl+P)";
   allChatsTab.setAttribute("aria-label", "All chats");
   allChatsTab.append(makeIcon("\uE81C"));
-  allChatsTab.addEventListener("click", () => showChatList());
+  allChatsTab.addEventListener("click", () => showChatList(allChatsTab));
 
   function tabsVisible() {
     const s = QSettings.settings;
@@ -2394,9 +2395,40 @@
   );
   const featureList = make("section", "feature-list glass");
   featureList.hidden = true; featureList.tabIndex = -1; el.slashMenu.before(featureList);
-  function closeFeatureList() { featureList.hidden = true; queueSizes(); el.promptInput.focus(); }
-  function showFeatureList(title, rows, searchable = false) {
+  // The control that opened the list. A pointer-down on it must not close the
+  // list, or its click would reopen it and the panel would flash.
+  let featureListAnchor = null;
+  let featureListHideTimer = null;
+  function hideFeatureList() {
+    clearTimeout(featureListHideTimer);
+    featureListHideTimer = null;
+    featureList.hidden = true;
+    featureList.removeAttribute("data-leaving");
+    featureList.style.removeProperty("--leave-height");
+    featureListAnchor = null;
+    queueSizes();
+  }
+  function closeFeatureList() {
+    featureListAnchor = null;
+    if (featureList.hidden || featureList.hasAttribute("data-leaving")) return;
+    clearTimeout(featureListHideTimer);
+    featureListHideTimer = null;
+    if (QSettings.motionOn) {
+      // Fade and collapse first; the list leaves the layout only once it is gone.
+      featureList.style.setProperty("--leave-height", `${featureList.offsetHeight}px`);
+      featureList.setAttribute("data-leaving", "");
+      featureListHideTimer = setTimeout(hideFeatureList, QSettings.timings.t2 + 30);
+    } else hideFeatureList();
+    queueSizes();
+    el.promptInput.focus();
+  }
+  function showFeatureList(title, rows, searchable = false, anchor = null) {
     closeSlashMenu();
+    clearTimeout(featureListHideTimer);
+    featureListHideTimer = null;
+    featureList.removeAttribute("data-leaving");
+    featureList.style.removeProperty("--leave-height");
+    featureListAnchor = anchor;
     const keysCard = typeof rows !== "function" && rows.some(row => row.keys);
     featureList.classList.toggle("feature-keys", keysCard);
     featureList.replaceChildren(); featureList.hidden = false;
@@ -2481,11 +2513,16 @@
     return [...local, ...account];
   }
 
-  function showChatList() {
+  function showChatList(anchor = null) {
     loadAccountChats();
-    showFeatureList("Chats", chatRows, true);
+    showFeatureList("Chats", chatRows, true, anchor);
   }
-  document.addEventListener("pointerdown", e => { if (!featureList.hidden && !featureList.contains(e.target)) closeFeatureList(); });
+  document.addEventListener("pointerdown", e => {
+    if (featureList.hidden || featureList.contains(e.target)) return;
+    // Let the opener's click decide; closing here would flash before it runs.
+    if (featureListAnchor?.contains(e.target)) return;
+    closeFeatureList();
+  });
   window.addEventListener("keydown", e => {
     if (e.key === "Escape" && !featureList.hidden) { e.stopImmediatePropagation(); e.preventDefault(); closeFeatureList(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); showChatList(); }
@@ -2746,7 +2783,7 @@
   // otherwise repeat every streamed snapshot.
   el.zone.setAttribute("aria-live", "off");
   el.historyButton.addEventListener("click", () => setHistoryOpen(!historyOpen));
-  el.btnAllChats.addEventListener("click", () => showChatList());
+  el.btnAllChats.addEventListener("click", () => showChatList(el.btnAllChats));
   el.historyPanel.addEventListener("scroll", () => {
     syncHistoryEdge();
     if (el.historyPanel.scrollHeight - el.historyPanel.scrollTop - el.historyPanel.clientHeight <= 2) historyHeld = false;

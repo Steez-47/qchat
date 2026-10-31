@@ -1,3 +1,9 @@
+## Reasoning picker close animation (2026-10-31)
+
+Owner reported the reasoning picker flashing closed and staying open on a second click. Cause: the document pointer-down closed the shared feature list before the button's click reopened it. The list now remembers its opener, so pointer-down on the opener is left to its click; the reasoning button toggles its own picker closed. Closing (button toggle, pointer away, Escape, choosing a row) now fades and collapses the panel over `--t2` before it leaves the layout, while motion-off hides immediately. All chats triggers register as openers so they cannot flash either.
+
+Verified: reasoning UI 31 checks (5 new toggle and close-animation checks), feature UI, history UI and animation UI ALL PASS; JavaScript syntax checks pass. Release build PASS: `dist/QChat.exe` (SHA256 `2773EB51…`, v0.1.1) launched from this worktree as PID 33096 with the saved profile; the previous instance was already closed.
+
 ## Main consolidation (2026-10-31)
 
 Owner requested merging all work into main and reopening QChat. Snapshot and reasoning are the only unmerged feature branches; older feature and polish branches are already ancestors. Preserved both composer state updates and made the icon controls/picker padding compact at narrow widths so the 340px bar still leaves at least 150px for the prompt. The narrow-layout regression covers Snapshot alongside reasoning.

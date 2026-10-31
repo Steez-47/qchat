@@ -96,6 +96,7 @@ try {
   const label = () => evalJS(`document.getElementById('btn-reasoning').querySelector('.reasoning-label').textContent`);
   const aria = () => evalJS(`document.getElementById('btn-reasoning').getAttribute('aria-label')`);
   const openPicker = () => evalJS(`document.getElementById('btn-reasoning').click()`);
+  const press = (id) => evalJS(`(()=>{const n=document.getElementById(${JSON.stringify(id)});n.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));n.click();})()`);
   const pick = (title) => evalJS(`[...document.querySelectorAll('.feature-list .feature-choice')].find(n=>n.querySelector('.feature-title').textContent===${JSON.stringify(title)}).click()`);
   const lastSend = (keyName) => evalJS(`__mock.last('chat_send')?.args?.${keyName}`) ;
   const waitDone = () => waitFor(`(()=>{const rows=[...document.querySelectorAll('.turn-row[data-role=assistant]')];return rows.length>0&&rows.at(-1).dataset.status==='done'&&document.getElementById('btn-send').dataset.mode==='send';})()`, 8000);
@@ -224,6 +225,22 @@ try {
   await sleep(30);
   check('Escape closes the picker, keeps the value and returns focus to the prompt',
     await evalJS(`document.querySelector('.feature-list').hidden && document.activeElement===document.getElementById('prompt-input')`) && (await label()) === 'Medium');
+
+  // Toggle and close animation: a second press on the reasoning button closes
+  // the open picker, and a pointer away fades it out instead of hiding it.
+  await open('/', { settings: { ...baseSettings, animations: 'on' } });
+  await press('btn-reasoning');
+  check('the reasoning button opens the picker', await evalJS(`!document.querySelector('.feature-list').hidden`));
+  await press('btn-reasoning');
+  check('a pointer press on the open reasoning button starts a close instead of reopening it',
+    await evalJS(`(()=>{const list=document.querySelector('.feature-list');return !list.hidden&&list.hasAttribute('data-leaving')&&list.getAnimations().length>0;})()`));
+  check('the toggled picker finishes closing', await waitFor(`document.querySelector('.feature-list').hidden`, 1500));
+
+  await openPicker();
+  await evalJS(`document.getElementById('prompt-input').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);
+  check('a pointer away starts the picker close animation',
+    await evalJS(`(()=>{const list=document.querySelector('.feature-list');return !list.hidden&&list.hasAttribute('data-leaving');})()`));
+  check('the pointer-away close finishes', await waitFor(`document.querySelector('.feature-list').hidden`, 1500));
 
   check('appearance presets exclude and preserve the behavioural default', await evalJS(`(()=>{
     const before={...QSettings.DEFAULTS,defaultReasoning:'high'};
