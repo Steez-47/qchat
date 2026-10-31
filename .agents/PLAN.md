@@ -1,3 +1,19 @@
+## Snapshot prompt ordering repair (2026-11-01)
+
+Goal: send a captured screenshot and its intended prompt together, preserving newer composer drafts. Keep the owner's running app and profile untouched.
+
+| task | model | owns | status |
+|---|---|---|---|
+| Reproduce and fix provider attachment/composer timing | Claude Sonnet medium + parent integration | provider bridges and focused bridge tests | done: f3da5ad |
+| Verify snapshot/draft UI, provider regressions and native build | parent | acceptance, integration, logs | done: stream87/Gemini35/auth17/reasoning/temporary33, snapshot31/media48/draft30/retry28/provider-draft25, native snapshot8/Rust34 |
+| Independent review, local commit and isolated production artifact | GPT-6 Luna high + parent | review and closeout | done: isolated archive build and staged executable verified |
+
+Baseline: five failures reproduced on the original ChatGPT bridge, including text-only submission before delayed image registration and an empty prompt after composer remount. Final readiness requires the entire attachment count, watches resumed uploads until Send, reacquires the composer and restores text after resets. Screenshot-only sends remain supported. Luna identified the upload-start/count shortcut; parent removed it and added batch and resumed-upload regressions. Parent also retained immediate Temporary-mode refusal and the reasoning-order assertion. The implementation delegate was stopped after handing over its changes; parent finished acceptance findings.
+
+Verification boundary: synthetic bridge fixtures and isolated headless/native checks only for the screenshot fix; signed-in attachment sending remains manual. One mistakenly launched legacy bridge test opened a browser and sent a synthetic anonymous guest prompt; its own Node process was stopped and the browser/debug port confirmed closed. Running QChat PID42228 and its v1.3.0 executable remain intact. No release publication or push.
+
+Production artifact: `dist/fixes/snapshot-prompt-order-f3da5ad/QChat.exe`, built from archived commit `f3da5ad` with the existing generated third-party notices. ProductVersion 1.3.0, 6,167,040 bytes, SHA256 `7d55e27bcd90964da213c0c4242f0d9f5f47c4ae4414d4c37480c99d91655dc2`; compiled/staged/checksum/manifest agree. Archive snapshot31/media48 UI checks pass. This includes the already committed Gemini model fix, excludes the unfinished concurrent streaming work, and was not launched. Running release hash still matches `6e1c48a3f32d192cfa554554271c7e30783632c86106625fc25d6a9593b27222`.
+
 ## v1.3.0 closeout (2026-11-01)
 
 Status: finished. The owner ended feature iteration and requested a build, merge and release. O1 to O32 are committed and integrated. No feature or verification job remains claimed. The absent orchestrator playbook was read from git commit 37b5396.
