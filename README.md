@@ -7,6 +7,8 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - **Alt+Q** toggles the popup. The tray icon has New chat, Sign in and Quit.
 - Type `/` for commands, or press **Ctrl+K** for the menu. Drag the orb to move QChat.
 - **Ctrl+P** or `/chats` searches every saved chat. Up to 3 recent chats sit as tabs on the bar.
+- Focus a recent tab and use Left/Right or Home/End to move between tabs, Enter or Space to open one, and Escape to return to the composer.
+- Switching chats remembers your reading position for the current app session, including in History.
 - `/copy` copies the current conversation as Markdown, including quoted selections and source links. Ctrl+K opens commands while keeping your draft.
 - **Ctrl+Shift+C** copies the latest reply or selected composer/reply text. **Ctrl+Shift+X** copies its last code block.
 - **Ctrl+F** or `/find` searches the whole open conversation. Enter or F3 moves to the next match; add Shift to move back. Escape closes search and keeps the conversation open.
@@ -61,6 +63,7 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/edit-prompt-ui-test.mjs`, `node tools/paste-anywhere-ui-test.mjs` and `node tools/chat-undo-ui-test.mjs`: prompt reuse, pasting around the popup and reversible local chat removal.
 - `node tools/find-text-test.mjs` and `node tools/find-ui-test.mjs`: literal Unicode search, inline/code ranges, keyboard navigation, streaming and menu/undo interactions.
 - `node tools/find-native-test.mjs`: search, highlight rendering and native prompt-edit undo in an isolated hidden app. Requires a debug build.
+- `node tools/navigation-native-test.mjs`: reading-position restore, history backfill and keyboard tab navigation in an isolated hidden app. Add `--reading-only` for reading checks. Requires a debug build.
 - `node tools/math-ui-test.mjs`: maths rendering in replies.
 - `node tools/highlight-test.mjs`: code highlighting round trip, token typing and speed. Plain Node, no browser.
 - `node tools/surfaces-native-test.mjs`: blur and click-through surfaces, shortcut validation and autostart. Requires a debug build.
