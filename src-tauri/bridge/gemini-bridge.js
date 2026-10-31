@@ -1094,23 +1094,33 @@
         if (!composer) { fail(job, 'not_ready', 'Composer did not appear within 15 seconds.'); return; }
         if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
         dismissNudges();
-        composer.focus?.();
-        if (composer.tagName === 'TEXTAREA') {
-          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(composer, prompt);
-          composer.dispatchEvent?.(new Event('input', { bubbles: true }));
-        } else {
-          document.execCommand?.('selectAll', false);
-          document.execCommand?.('insertText', false, prompt);
-        }
-        let uploadQuietAt = Date.now();
-        const attempts = attachmentCount > 0 ? 1200 : 100;
-        for (let i = 0; i < attempts && active === job && !job.started && !job.cancelled; i++) {
+        const fill = composer => {
+          composer.focus?.();
+          if (composer.tagName === 'TEXTAREA') {
+            Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(composer, prompt);
+            composer.dispatchEvent?.(new Event('input', { bubbles: true }));
+          } else {
+            document.execCommand?.('selectAll', false);
+            document.execCommand?.('insertText', false, prompt);
+          }
+        };
+        const typed = node => String(node.tagName === 'TEXTAREA' ? node.value : node.innerText ?? node.textContent ?? '').trim();
+        let uploadQuietAt = Date.now(), filledComposer = null, held = false;
+        for (let i = 0; i < (attachmentCount > 0 ? 1200 : 100) && active === job && !job.started && !job.cancelled; i++) {
+          if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
+          // Recheck the complete attachment batch until Send, then fill the current composer.
           if (attachmentCount > 0) {
             const pending = uploads > 0 || !!document.querySelector('input-container [role="progressbar"], input-area-v2 [role="progressbar"], mat-progress-spinner');
-            if (pending) uploadQuietAt = Date.now();
-            if (pending || Date.now() - uploadQuietAt < 800) { await sleep(100); continue; }
+            const present = attachmentRemovers(job.attachmentNames, true).length >= attachmentCount;
+            if (pending || !present) uploadQuietAt = Date.now();
+            if (pending || !present || Date.now() - uploadQuietAt < 800) { await sleep(100); continue; }
           }
-        if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
+          composer = find('composer');
+          if (!composer) { await sleep(100); continue; }
+          if (composer !== filledComposer || (held && !typed(composer))) {
+            fill(composer); filledComposer = composer; held = !!typed(composer);
+          }
+          if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           const button = find('send');
           if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
             job.startTimer = setTimeout(() => fail(job, 'send_failed', 'No conversation request started within 20 seconds.'), 20000);
@@ -1127,7 +1137,8 @@
         if (active === job && !job.started && !job.cancelled) {
           if (attachmentCount > 0) { fail(job, 'attachment_failed', 'Attachments did not become ready within two minutes. Check them in Gemini.'); return; }
           job.startTimer = setTimeout(() => fail(job, 'send_failed', 'No conversation request started within 20 seconds.'), 20000);
-        if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
+          if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
+          if (!composer) { fail(job, 'not_ready', 'Gemini composer changed. Please try again.'); return; }
           job.submitted = true;
           composer.dispatchEvent?.(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
           sampleDOM(job);

@@ -876,7 +876,7 @@
       if (node.disabled || node.getAttribute('aria-disabled') === 'true') return false;
       const label = (node.getAttribute('aria-label') || '').trim();
       const testid = node.getAttribute('data-testid') || '';
-      return /^remove (?:file|attachment)(?:\b|$)/i.test(label) || /^remove-(?:file|attachment)(?:-|$)/i.test(testid) ||
+      return /^remove (?:file|attachment|image)(?:\b|$)/i.test(label) || /^remove-(?:file|attachment|image)(?:-|$)/i.test(testid) ||
         names.some(name => label.toLowerCase() === `remove ${name}`.toLowerCase());
     });
   }
@@ -1336,16 +1336,21 @@
         composer = find('composer');
         if (!composer) { fail(job, 'not_ready', 'ChatGPT composer changed. Please try again.'); return; }
         if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
-        composer.focus();
-        if (composer.tagName === 'TEXTAREA') {
-          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(composer, prompt);
-          composer.dispatchEvent(new Event('input', { bubbles: true }));
-        } else {
-          document.execCommand('selectAll', false); document.execCommand('insertText', false, prompt);
-        }
-        let uploadQuietAt = Date.now();
-        const attempts = attachmentCount > 0 ? 1200 : 100;
-        for (let i = 0; i < attempts && active === job && !job.started && !job.cancelled; i++) {
+        const fill = composer => {
+          composer.focus();
+          if (composer.tagName === 'TEXTAREA') {
+            Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(composer, prompt);
+            composer.dispatchEvent(new Event('input', { bubbles: true }));
+          } else {
+            document.execCommand('selectAll', false); document.execCommand('insertText', false, prompt);
+          }
+        };
+        const typed = node => String(node.tagName === 'TEXTAREA' ? node.value : node.innerText ?? node.textContent ?? '').trim();
+        let uploadQuietAt = Date.now(), filledComposer = null, held = false;
+        for (let i = 0; i < (attachmentCount > 0 ? 1200 : 100) && active === job && !job.started && !job.cancelled; i++) {
+          if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
+          // File selection can register late and replace the composer. Require every attachment
+          // and a quiet upload window before typing, and recheck until the actual Send click.
           if (attachmentCount > 0) {
             if (uploadFailureAt >= attachmentSelectionAt && Number.isFinite(uploadFailureAt)) {
               fail(job, 'attachment_failed', 'ChatGPT could not upload an attachment. Check it in ChatGPT.'); return;
@@ -1356,10 +1361,16 @@
               fail(job, 'attachment_failed', 'ChatGPT rejected an attachment. Check the attachment in ChatGPT.'); return;
             }
             const pending = uploads > 0 || !!area?.querySelector('[role="progressbar"], [aria-busy="true"], [data-testid*="uploading"], [data-state="uploading"]');
-            if (pending) uploadQuietAt = Date.now();
-            if (pending || Date.now() - uploadQuietAt < 800) { await sleep(100); continue; }
+            const present = attachmentRemovers(job.attachmentNames).length >= attachmentCount;
+            if (pending || !present) uploadQuietAt = Date.now();
+            if (pending || !present || Date.now() - uploadQuietAt < 800) { await sleep(100); continue; }
           }
-        if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
+          composer = find('composer');
+          if (!composer) { await sleep(100); continue; }
+          if (composer !== filledComposer || (held && !typed(composer))) {
+            fill(composer); filledComposer = composer; held = !!typed(composer);
+          }
+          if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           const button = find('send');
           if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
             job.startTimer = setTimeout(() => fail(job, 'send_failed', 'No conversation request started within 20 seconds.'), 20000);
@@ -1370,7 +1381,8 @@
         }
         if (active === job && !job.started && !job.cancelled) {
           if (attachmentCount > 0) { fail(job, 'attachment_failed', 'Attachments did not become ready within two minutes. Check them in ChatGPT.'); return; }
-        if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
+          if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
+          if (!composer) { fail(job, 'not_ready', 'ChatGPT composer changed. Please try again.'); return; }
           job.startTimer = setTimeout(() => fail(job, 'send_failed', 'No conversation request started within 20 seconds.'), 20000);
           job.submitted = true; composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
         }

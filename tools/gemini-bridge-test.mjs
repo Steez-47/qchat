@@ -342,7 +342,7 @@ function createBrowser({ hostname = 'gemini.google.com', pathname = '/app', read
     activeElement: composer,
     execCommand(cmd, _, val) {
       if (cmd === 'selectAll') composerText = '';
-      if (cmd === 'insertText') { composerText += val; composer.textContent = composerText; }
+      if (cmd === 'insertText') { composerText += val; (this.activeElement || composer).textContent = composerText; }
       return true;
     },
     querySelector(sel) { return body.querySelector(sel); },
@@ -504,12 +504,90 @@ test('unsent upload failure clears one copy before retry, including delayed remo
 test('missing, partial and throwing upload removal block another selection honestly',async()=>{
   for(const options of [{controls:0},{controls:1},{controls:2,throws:true}]){
     const b=createBrowser({loggedIn:true});uploadFixture(b,2,options);
-    const sent=b.api.send({id:'blocked-upload',prompt:'hello',attachmentCount:2});await b.tick(1000);await sent;await b.tick(20200);
+    const sent=b.api.send({id:'blocked-upload',prompt:'hello',attachmentCount:2});await b.tick(121000);await sent;await b.tick(20200);
     assert.equal(b.events.find(event=>event.id==='blocked-upload'&&event.type==='error')?.code,'attachment_pending');
     await assert.rejects(b.api.attachmentInput(),/attachment_pending:/);
     await b.api.send({id:'blocked-retry',prompt:'hello',attachmentCount:2});
     assert.equal(b.events.find(event=>event.id==='blocked-retry'&&event.type==='error')?.code,'attachment_pending');
   }
+});
+const GPROMPT = 'Line one\n\n  indented “quotes” <b>&amp;</b> héllo 🌸 日本語\nlast';
+function submissionFixture(b) {
+  const submissions = [];
+  b.sendButton.onClick = () => {
+    submissions.push({ text: b.composerText, attachments: b.body.querySelectorAll('button').filter(x => /^Remove file/.test(x.getAttribute('aria-label') || '')).length });
+    b.addTurn({ userText: b.composerText, replyHtml: '<p>ok</p>' });
+  };
+  return submissions;
+}
+const gland = (b, at, { reset = false, remount = false, settle = 0 } = {}) => b.later(() => {
+  const button = makeEl('button', { 'aria-label': 'Remove file shot.png' }); b.body.append(button);
+  if (reset) { b.document.execCommand('selectAll', false); b.document.activeElement.textContent = ''; }
+  if (remount) {
+    const fresh = makeEl('div', { class: 'ql-editor textarea new-input-ui', contenteditable: 'true', role: 'textbox', 'aria-label': 'Enter a prompt for Gemini' });
+    fresh.focus = () => { b.document.activeElement = fresh; };
+    const parent = b.composer.parentElement; b.composer.remove(); parent.append(fresh); b.document.execCommand('selectAll', false);
+  }
+}, at);
+test('delayed attachment registration never submits text alone and sends one message with the exact prompt', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  gland(b, 3000);
+  const sent = b.api.send({ id: 'delayed', prompt: GPROMPT, attachmentCount: 1 });
+  await b.tick(2900); assert.deepEqual(submissions, []); assert.equal(b.composerText, '');
+  await b.tick(2500); await sent;
+  assert.deepEqual(submissions, [{ text: GPROMPT, attachments: 1 }]);
+});
+test('upload completion that resets or remounts the composer cannot lose the prompt', async () => {
+  for (const options of [{ reset: true }, { remount: true }, { reset: true, remount: true }]) {
+    const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+    gland(b, 1500, options);
+    const sent = b.api.send({ id: 'reset', prompt: GPROMPT, attachmentCount: 1 });
+    await b.tick(6000); await sent;
+    assert.deepEqual(submissions, [{ text: GPROMPT, attachments: 1 }], JSON.stringify(options));
+  }
+});
+test('a composer remounted after the prompt was typed is refilled and never submitted empty', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  b.body.append(makeEl('button', { 'aria-label': 'Remove file shot.png' })); b.sendButton.setAttribute('aria-disabled', 'true');
+  b.later(() => gland(b, 0, { remount: true }), 1500); b.later(() => b.sendButton.setAttribute('aria-disabled', 'false'), 2500);
+  const sent = b.api.send({ id: 'remount', prompt: GPROMPT, attachmentCount: 1 });
+  await b.tick(5000); await sent;
+  assert.deepEqual(submissions.map(x => x.text), [GPROMPT]);
+});
+test('screenshot-only Send waits for the delayed attachment and submits once', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  gland(b, 2500);
+  const sent = b.api.send({ id: 'shot', prompt: '', attachmentCount: 1 });
+  await b.tick(2400); assert.deepEqual(submissions, []);
+  await b.tick(2500); await sent;
+  assert.deepEqual(submissions.map(x => [x.text, x.attachments]), [['', 1]]);
+});
+
+test('every selected attachment must register before Gemini can submit', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  gland(b, 0); gland(b, 3500);
+  const sent = b.api.send({ id: 'batch', prompt: GPROMPT, attachmentCount: 2 });
+  await b.tick(3000); assert.deepEqual(submissions, []);
+  await b.tick(2500); await sent;
+  assert.deepEqual(submissions, [{ text: GPROMPT, attachments: 2 }]);
+});
+
+test('upload activity resuming while Send is disabled delays Gemini submission again', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  gland(b, 0); b.sendButton.setAttribute('aria-disabled', 'true');
+  const progress = makeEl('mat-progress-spinner');
+  b.later(() => { b.body.append(progress); b.document.execCommand('selectAll', false); b.document.activeElement.textContent = ''; }, 1500);
+  b.later(() => b.sendButton.setAttribute('aria-disabled', 'false'), 1700);
+  b.later(() => progress.remove(), 3000);
+  const sent = b.api.send({ id: 'resumed', prompt: GPROMPT, attachmentCount: 1 });
+  await b.tick(2900); assert.deepEqual(submissions, []);
+  await b.tick(1500); await sent;
+  assert.deepEqual(submissions, [{ text: GPROMPT, attachments: 1 }]);
+});
+test('an attachment that never registers fails without submitting text alone', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  const sent = b.api.send({ id: 'never', prompt: GPROMPT, attachmentCount: 1 }); await b.tick(121000); await sent;
+  assert.deepEqual(submissions, []); assert.ok(b.events.some(e => e.id === 'never' && e.type === 'error'));
 });
 test('started upload failure keeps submitted attachments',async()=>{
   const b=createBrowser({loggedIn:true});const copies=uploadFixture(b);
