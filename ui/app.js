@@ -517,7 +517,7 @@
       remove.append(makeIcon(GLYPH.close));
       remove.addEventListener("click", () => {
         if (sending) return;
-        chats.current.selectionTexts.splice(index, 1);
+        chats.current.selectionTexts.splice(chip._selectionIndex, 1);
         saveChats(); renderAttachments(); updateIdleChips(); queueSizes();
       });
       chip.append(remove);
@@ -1411,34 +1411,56 @@
     });
     return button;
   }
+  const attachmentNodes = new Map();
+  let selectionNodes = [], selectionChat = null;
   function renderAttachments() {
-    el.attachments.replaceChildren();
     const selections = chats.current.selectionTexts;
     el.attachments.hidden = !pendingFiles.length && !selections.length;
-    selections.forEach((_, index) => el.attachments.append(selectionChip(true, index)));
+    if (selectionChat !== chats.current) { selectionNodes = []; selectionChat = chats.current; }
+    const unused = selectionNodes.slice();
+    selectionNodes = selections.map((text, index) => {
+      const match = unused.findIndex(entry => entry.text === text);
+      const entry = match < 0 ? { text, chip: selectionChip(true, index) } : unused.splice(match, 1)[0];
+      entry.chip._selectionIndex = index;
+      entry.chip.querySelector("button").disabled = sending;
+      return entry;
+    });
+    for (const item of attachmentNodes.keys()) if (!pendingFiles.includes(item)) attachmentNodes.delete(item);
+    const desired = selectionNodes.map(entry => entry.chip);
     for (const item of pendingFiles) {
-      const chip = make("div", "attachment-chip glass glass-tiny");
-      chip.dataset.state = item.state;
-      const label = make("span", "attachment-name", item.file.name);
-      const status = item.state === "error" ? "Failed" : item.state === "ready" ? fileSize(item.file.size) : `${Math.floor(item.offset / Math.max(1, item.file.size) * 100)}%`;
-      const remove = make("button", "icon-btn"); remove.append(makeIcon(GLYPH.close));
-      remove.type = "button";
-      remove.setAttribute("aria-label", `Remove ${item.file.name}`);
-      remove.disabled = sending;
-      remove.addEventListener("click", () => removeAttachment(item));
-      if (item.previewURL) chip.append(previewImage(item.previewURL, item.file.name, "attachment-thumbnail"));
-      chip.append(label, make("span", "attachment-status", status));
-      if (item.state === "error") {
+      let node = attachmentNodes.get(item);
+      if (!node) {
+        const chip = make("div", "attachment-chip glass glass-tiny");
+        const label = make("span", "attachment-name", item.file.name);
+        const status = make("span", "attachment-status");
+        const remove = make("button", "icon-btn"); remove.append(makeIcon(GLYPH.close));
+        remove.type = "button";
+        remove.setAttribute("aria-label", `Remove ${item.file.name}`);
+        remove.addEventListener("click", () => removeAttachment(item));
+        if (item.previewURL) chip.append(previewImage(item.previewURL, item.file.name, "attachment-thumbnail"));
+        chip.append(label, status, remove);
+        if (item.previewURL) chip.append(imageCopyButton(() => previewImage(item.previewURL, item.file.name)));
+        node = { chip, status, remove, retry: null };
+        attachmentNodes.set(item, node);
+      }
+      node.chip.dataset.state = item.state;
+      node.status.textContent = item.state === "error" ? "Failed" : item.state === "ready" ? fileSize(item.file.size) : `${Math.floor(item.offset / Math.max(1, item.file.size) * 100)}%`;
+      node.remove.disabled = sending;
+      if (item.state === "error" && !node.retry) {
         const retry = make("button", "btn btn-compact", "Retry");
-        retry.type = "button";
-        retry.dataset.action = "retry-attachment";
+        retry.type = "button"; retry.dataset.action = "retry-attachment";
         retry.setAttribute("aria-label", `Retry ${item.file.name}`);
         retry.addEventListener("click", () => retryAttachment(item));
-        chip.append(retry);
-      }
-      chip.append(remove);
-      if (item.previewURL) chip.append(imageCopyButton(() => previewImage(item.previewURL, item.file.name)));
-      el.attachments.append(chip);
+        node.chip.insertBefore(retry, node.remove); node.retry = retry;
+      } else if (item.state !== "error" && node.retry) { node.retry.remove(); node.retry = null; }
+      desired.push(node.chip);
+    }
+    const wanted = new Set(desired);
+    for (const child of Array.from(el.attachments.children)) if (!wanted.has(child)) child.remove();
+    let cursor = el.attachments.firstElementChild;
+    for (const child of desired) {
+      if (child === cursor) cursor = cursor.nextElementSibling;
+      else el.attachments.insertBefore(child, cursor);
     }
     updateComposerMode();
   }
