@@ -175,6 +175,7 @@
             emitMock("bridge", { type: "models", levels:mock.provider === "gemini" ? mock.levels : undefined, models: mock.models[mock.provider] || (params.get("mock") === "no-models" ? [] : [{ id: "0", label: "Mock model", selected: true }, { id: "1", label: "Mock alternate", selected: false }]) }); return null;
           case "chat_model_choose":
             if (mock.failModel) throw new Error("unavailable");
+            if (mock.modelHold) await new Promise(resolve => { mock.releaseModel = resolve; });
             if (mock.provider === "gemini") { mock.model = mock.models.gemini.find(m=>m.id===args.id)?.label || args.id; emitMock("bridge",{type:"model-chosen",short:mock.model,model:{id:args.id,label:mock.model}}); return null; }
             emitMock("bridge", { type: "model-chosen", model: { id: args.id, label: args.id === "0" ? "Mock model" : "Mock alternate" } }); return null;
           case "chat_status":

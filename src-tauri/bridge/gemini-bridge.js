@@ -751,6 +751,127 @@
     }
   }
 
+  // Gemini has one real model menu, so its operations run strictly one at a time.
+  let modelQueue = Promise.resolve(), modelOps = 0, modelChoice = 0, modelListing = null;
+  function enqueueModelOp(task) {
+    modelOps++;
+    modelQueue = modelQueue.then(task).catch(() => {}).finally(() => { modelOps--; });
+    return modelQueue;
+  }
+  const modelSwitcher = () => {
+    const node = document.querySelector('bard-mode-switcher button, button[data-test-id="bard-mode-menu-button"], button[aria-label*="mode picker" i]');
+    return node && !node.hidden ? node : null;
+  };
+  function modelMenuItems(switcher) {
+    const controlledId = switcher.getAttribute('aria-controls');
+    const menu = (controlledId && document.getElementById?.(controlledId)) ||
+      document.querySelector('gem-menu[role="menu"], .cdk-overlay-container [role="menu"], .cdk-overlay-container [role="listbox"]');
+    if (!menu || menu.hidden) return [];
+    return [...menu.querySelectorAll('gem-menu-item[role="menuitem"], [role="menuitemradio"], [role="menuitem"], [role="option"]')]
+      .filter(n => !n.hidden && n.getAttribute('aria-hidden') !== 'true');
+  }
+  async function openModelMenu(switcher) {
+    // The menu opens a moment after the click, and a second click would toggle it shut.
+    if (switcher.getAttribute('aria-expanded') !== 'true') dispatchClickSequence(switcher, true);
+    for (let i = 0; i < 60; i++) {
+      const nodes = modelMenuItems(switcher);
+      if (nodes.length) return nodes;
+      if (switcher.getAttribute('aria-expanded') !== 'true') {
+        if (i === 20) {
+          switcher.focus?.();
+          switcher.dispatchEvent?.(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true, cancelable: true }));
+        } else if (i === 40) {
+          switcher.click?.();
+        }
+      }
+      await sleep(25);
+    }
+    return [];
+  }
+  // Waits for the menu to finish closing, so the next operation starts from a known state.
+  async function closeModelMenu(switcher) {
+    const escape = node => node?.dispatchEvent?.(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+    const open = () => (modelSwitcher() || switcher).getAttribute('aria-expanded') === 'true';
+    if (!open()) return;
+    escape(document.activeElement || switcher);
+    document.querySelector('.cdk-overlay-backdrop')?.click?.();
+    for (let i = 0; i < 16 && open(); i++) {
+      await sleep(25);
+      if (i === 4) escape(modelSwitcher() || switcher);
+    }
+  }
+  function parseModelItem(node) {
+    const labelEl = node.querySelector?.('.label, .title, [data-test-id*="label"]');
+    const rawText = (labelEl ? (labelEl.innerText || labelEl.textContent) : (node.innerText || node.textContent) || '').trim();
+    const label = rawText.split('\n')[0].trim();
+    const content = node.querySelector?.('gem-menu-item-content');
+    const disabled = !!(node.disabled || node.getAttribute('aria-disabled') === 'true' ||
+      /\bdisabled\b/.test(String(node.className || '')) || /\bdisabled\b/.test(String(content?.className || '')));
+    const selected = !!(node.getAttribute('aria-checked') === 'true' || node.getAttribute('aria-selected') === 'true' ||
+      /\bselected\b/.test(String(node.className || '')) || /\bselected\b/.test(String(content?.className || '')) ||
+      node.querySelector?.('[aria-label="Selected"]'));
+    const meta = (node.querySelector?.('.sublabel')?.textContent || '').trim();
+    const group = node.closest?.('[role="group"], [role="listbox"], section');
+    const heading = group?.querySelector?.('[role="heading"], h2, h3, .group-title')?.textContent || group?.getAttribute?.('aria-label') || '';
+    return { id: label, label, selected, disabled, meta, level: /think|reason|effort/i.test(heading), node };
+  }
+  // Whole words only: "Flash" must not match a switcher that still reads "Flash-Lite".
+  function switcherShows(switcher, label) {
+    const words = text => ' ' + String(text || '').toLowerCase().replace(/\s+/g, ' ').trim() + ' ';
+    const current = words(switcher.innerText || switcher.textContent) + words(switcher.getAttribute('aria-label'));
+    const full = label.toLowerCase(), short = full.replace(/^\d+(?:\.\d+)?\s+/, '');
+    return current.includes(' ' + full + ' ') || (!!short && current.includes(' ' + short + ' '));
+  }
+  async function runModelMenu(chooseId, choice) {
+    let switcher, opened = false;
+    const unavailable = () => {
+      if (chooseId === undefined) emit({ type: 'models', models: [], error: 'unavailable' });
+      else if (choice === modelChoice) error(undefined, 'model_unavailable', 'Could not switch Gemini model.');
+    };
+    try {
+      if (active) { unavailable(); return; }
+      for (let i = 0; i < 30 && !(switcher = modelSwitcher()); i++) await sleep(100);
+      if (!switcher) { unavailable(); return; }
+      opened = true;
+      const nodes = await openModelMenu(switcher);
+      if (!nodes.length) { unavailable(); return; }
+      const parsed = nodes.map(parseModelItem).filter(item => item.label && !/^sign in\b/i.test(item.label));
+      if (!parsed.length) { unavailable(); return; }
+      if (chooseId === undefined) {
+        const pack = ({ id, label, selected, disabled, meta }) => ({ id, label, selected, disabled, meta });
+        emit({ type: 'models', models: parsed.filter(p => !p.level).map(pack), levels: parsed.filter(p => p.level).map(pack) });
+        return;
+      }
+      const wanted = String(chooseId).toLowerCase();
+      const target = parsed.find(m => m.id === chooseId || m.label === chooseId) || parsed.find(m => m.label.toLowerCase().includes(wanted));
+      if (!target || target.disabled) { unavailable(); return; }
+      const applied = () => (!target.level && switcherShows(modelSwitcher() || switcher, target.label)) ||
+        (target.node.isConnected && parseModelItem(target.node).selected);
+      let verified = target.selected;
+      if (!verified) {
+        dispatchClickSequence(target.node, true);
+        for (let i = 0; i < 40 && !verified; i++) {
+          await sleep(25);
+          verified = applied();
+          if (!verified && i === 12 && target.node.isConnected) target.node.click?.();
+        }
+      }
+      if (!verified) {
+        // The menu may have closed on its choice, and only its rows record a reasoning level.
+        await closeModelMenu(switcher);
+        switcher = modelSwitcher() || switcher;
+        verified = (await openModelMenu(switcher)).map(parseModelItem).some(m => m.label === target.label && m.selected);
+      }
+      if (!verified) { unavailable(); return; }
+      await status();
+      emit({ type: 'model-chosen', short: modelShort(), model: { id: target.id, label: target.label, selected: true } });
+    } catch (_) {
+      unavailable();
+    } finally {
+      if (opened) await closeModelMenu(switcher).catch(() => {});
+    }
+  }
+
   function dispatchClickSequence(node, once = false) {
     if (!node) return;
     const wasExpanded = node.getAttribute?.('aria-expanded');
@@ -924,6 +1045,8 @@
     mediaDownloadAction,
     resolveMedia,
     async send({ id, prompt = '', attachmentCount = 0, temporary = false }) {
+      // A message sent right after a pick must go out on that model, with the menu closed.
+      while (modelOps) await modelQueue;
       if (temporary && !temporaryReady()) { error(id, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
       if (active) { error(id, 'busy', 'A request is already in progress.'); return; }
       if (attachmentCount > 0 && !detectLoggedIn()) {
@@ -1128,109 +1251,16 @@
       await sleep(200);
       await status();
     },
-    async listModels(chooseId) {
-      let switcher, opened = false;
-      const unavailable = () => {
-        if (chooseId === undefined) emit({ type: 'models', models: [], error: 'unavailable' });
-        else error(undefined, 'model_unavailable', 'Could not switch Gemini model.');
-      };
-      try {
-        if (active) { unavailable(); return; }
-        for (let i = 0; i < 30; i++) {
-          switcher = document.querySelector('bard-mode-switcher button, button[data-test-id="bard-mode-menu-button"], button[aria-label*="mode picker" i]');
-          if (switcher && !switcher.hidden) break;
-          await sleep(100);
-        }
-        if (!switcher || switcher.hidden) { unavailable(); return; }
-        if (switcher.getAttribute('aria-expanded') !== 'true') {
-          dispatchClickSequence(switcher);
-          for (let i = 0; i < 20 && switcher.getAttribute('aria-expanded') !== 'true'; i++) {
-            await sleep(50);
-          }
-          if (switcher.getAttribute('aria-expanded') !== 'true') {
-            switcher.focus?.();
-            switcher.dispatchEvent?.(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true, cancelable: true }));
-          }
-        }
-        opened = true;
-        let nodes = [];
-        for (let i = 0; i < 30; i++) {
-          if (i === 10 && switcher.getAttribute('aria-expanded') !== 'true') {
-            dispatchClickSequence(switcher);
-          }
-          const controlledId = switcher.getAttribute('aria-controls');
-          const menu = (controlledId && document.getElementById?.(controlledId)) ||
-            document.querySelector('gem-menu[role="menu"], .cdk-overlay-container [role="menu"], .cdk-overlay-container [role="listbox"]');
-          if (menu && !menu.hidden) {
-            nodes = [...menu.querySelectorAll('gem-menu-item[role="menuitem"], [role="menuitemradio"], [role="menuitem"], [role="option"]')]
-              .filter(n => !n.hidden && n.getAttribute('aria-hidden') !== 'true');
-            if (nodes.length) break;
-          }
-          await sleep(50);
-        }
-        if (!nodes.length) { unavailable(); return; }
-        const parseItem = node => {
-          const labelEl = node.querySelector?.('.label, .title, [data-test-id*="label"]');
-          const rawText = (labelEl ? (labelEl.innerText || labelEl.textContent) : (node.innerText || node.textContent) || '').trim();
-          const label = rawText.split('\n')[0].trim();
-          const content = node.querySelector?.('gem-menu-item-content');
-          const disabled = !!(node.disabled || node.getAttribute('aria-disabled') === 'true' ||
-            /\bdisabled\b/.test(String(node.className || '')) || /\bdisabled\b/.test(String(content?.className || '')));
-          const selected = !!(node.getAttribute('aria-checked') === 'true' || node.getAttribute('aria-selected') === 'true' ||
-            /\bselected\b/.test(String(node.className || '')) || /\bselected\b/.test(String(content?.className || '')) ||
-            node.querySelector?.('[aria-label="Selected"]'));
-          const meta = (node.querySelector?.('.sublabel')?.textContent || '').trim();
-          const group = node.closest?.('[role="group"], [role="listbox"], section');
-          const heading = group?.querySelector?.('[role="heading"], h2, h3, .group-title')?.textContent || group?.getAttribute?.('aria-label') || '';
-          return { id: label, label, selected, disabled, meta, level: /think|reason|effort/i.test(heading), node };
-        };
-        const parsed = nodes.map(parseItem).filter(item => item.label && !/^sign in\b/i.test(item.label));
-        if (!parsed.length) { unavailable(); return; }
-        const pack = ({ id, label, selected, disabled, meta }) => ({ id, label, selected, disabled, meta });
-        const models = parsed.filter(p => !p.level).map(pack);
-        const levels = parsed.filter(p => p.level).map(pack);
-        if (chooseId !== undefined) {
-          const target = parsed.find(m => m.id === chooseId || m.label === chooseId || m.label.toLowerCase().includes(String(chooseId).toLowerCase()));
-          if (!target || target.disabled) {
-            unavailable();
-            return;
-          }
-          if (!target.selected) {
-            dispatchClickSequence(target.node);
-          }
-          let verified = target.selected;
-          for (let i = 0; i < 20 && !verified; i++) {
-            await sleep(50);
-            const currentSwitcherText = ((switcher.innerText || switcher.textContent || '') + ' ' + (switcher.getAttribute('aria-label') || '')).toLowerCase();
-            const shortLabel = target.label.replace(/^\d+(?:\.\d+)?\s+/, '').toLowerCase();
-            if (currentSwitcherText.includes(target.label.toLowerCase()) || (shortLabel && currentSwitcherText.includes(shortLabel))) {
-              verified = true;
-              break;
-            }
-            if (target.node.isConnected && parseItem(target.node).selected) {
-              verified = true;
-              break;
-            }
-          }
-          if (!verified) {
-            unavailable();
-            return;
-          }
-          await status();
-          emit({ type: 'model-chosen', short: modelShort(), model: { id: target.id, label: target.label, selected: true } });
-        } else {
-          emit({ type: 'models', models, levels });
-        }
-      } catch (_) {
-        unavailable();
-      } finally {
-        if (opened && switcher?.getAttribute('aria-expanded') === 'true') {
-          (document.activeElement || switcher)?.dispatchEvent?.(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
-          document.querySelector('.cdk-overlay-backdrop')?.click?.();
-        }
-      }
+    listModels() {
+      // Reads still waiting in line share one answer.
+      if (!modelListing) modelListing = enqueueModelOp(() => { modelListing = null; return runModelMenu(); });
+      return modelListing;
     },
-    async chooseModel(id) { return window.__qchat.listModels(id); },
+    chooseModel(id) {
+      // Only the newest pick matters: earlier ones still waiting are dropped.
+      const choice = ++modelChoice;
+      return enqueueModelOp(() => choice === modelChoice ? runModelMenu(id, choice) : undefined);
+    },
     async newChat(options = {}) {
       currentSetupId = options.temporary ? options.setupId || null : null;
       clearTemporaryStage();

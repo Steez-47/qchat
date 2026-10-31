@@ -816,6 +816,122 @@ test('listModels and chooseModel read mode picker and verify selection', async (
   assert.equal(b.events.filter(e => e.type === 'models').at(-1).levels[0].label, 'High');
 });
 
+// The real menu's behaviour: a click toggles it, opening and closing take a moment,
+// and picking a row closes it.
+function asyncModelMenu(b, { current = 'Flash-Lite', levelRow = false, broken = '' } = {}) {
+  const state = { clicks: 0, open: false, picks: [] };
+  const button = makeEl('button', { 'data-test-id': 'bard-mode-menu-button', 'aria-expanded': 'false', 'aria-controls': 'async-menu' }, [makeText(current)]);
+  const menu = makeEl('gem-menu', { id: 'async-menu', role: 'menu' });
+  menu.hidden = true;
+  const setOpen = open => b.later(() => { state.open = open; menu.hidden = !open; button.setAttribute('aria-expanded', String(open)); }, 20);
+  const row = (label, sublabel) => {
+    const item = makeEl('gem-menu-item', { role: 'menuitem' }, [makeEl('span', { class: 'label' }, [makeText(label)]), makeEl('div', { class: 'sublabel' }, [makeText(sublabel)])]);
+    item.onClick = () => {
+      state.picks.push(label);
+      if (label === broken) return;
+      for (const other of menu.querySelectorAll('gem-menu-item')) if (other.parentNode === item.parentNode) other.classList.remove('selected');
+      item.classList.add('selected');
+      if (!item.level) button.textContent = label.replace(/^\d+(?:\.\d+)?\s+/, '');
+      setOpen(false);
+    };
+    menu.append(item);
+    return item;
+  };
+  const lite = row('3.5 Flash-Lite', 'Fastest'), flash = row('3.6 Flash', 'All-round');
+  row('3.1 Pro', 'Deep');
+  (current === 'Flash-Lite' ? lite : flash).classList.add('selected');
+  if (levelRow) {
+    const high = makeEl('gem-menu-item', { role: 'menuitem' }, [makeEl('span', { class: 'label' }, [makeText('High')])]);
+    high.level = true;
+    high.onClick = () => { state.picks.push('High'); high.classList.add('selected'); setOpen(false); };
+    menu.append(makeEl('section', { role: 'group', 'aria-label': 'Thinking effort' }, [high]));
+  }
+  button.onClick = () => { state.clicks++; setOpen(button.getAttribute('aria-expanded') !== 'true'); };
+  button.onEvent = e => { if (e?.key === 'Escape') setOpen(false); };
+  b.body.append(makeEl('bard-mode-switcher', {}, [button]), menu);
+  state.button = button;
+  return state;
+}
+const modelErrors = b => b.events.filter(e => e.type === 'error' && e.code === 'model_unavailable');
+
+test('model menu opens with one click and answers quickly', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  const menu = asyncModelMenu(b);
+  const listed = b.api.listModels();
+  await b.tick(150);
+  assert.equal(b.events.filter(e => e.type === 'models').at(-1)?.models.length, 3, 'list arrives well under a second');
+  await b.tick(300); await listed;
+  assert.equal(menu.open, false, 'menu is closed afterwards');
+  assert.equal(menu.clicks, 1, 'closing uses Escape, opening a single click');
+});
+
+test('overlapping model reads and picks never collide', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  const menu = asyncModelMenu(b);
+  const work = Promise.all([b.api.listModels(), b.api.chooseModel('3.6 Flash'), b.api.listModels(), b.api.listModels()]);
+  await b.tick(3000); await work;
+  assert.deepEqual(modelErrors(b), []);
+  assert.equal(b.events.filter(e => e.type === 'models' && !e.models.length).length, 0, 'no empty lists');
+  assert.equal(b.events.filter(e => e.type === 'models').length, 1, 'reads waiting in line share one answer');
+  assert.equal(b.events.find(e => e.type === 'model-chosen').short, 'Flash');
+  assert.equal(menu.open, false);
+});
+
+test('rapid model picks settle on the newest one', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  const menu = asyncModelMenu(b);
+  const work = Promise.all(['3.6 Flash', '3.1 Pro', '3.6 Flash', '3.1 Pro'].map(id => b.api.chooseModel(id)));
+  await b.tick(3000); await work;
+  assert.deepEqual(modelErrors(b), []);
+  assert.equal(b.events.filter(e => e.type === 'model-chosen').at(-1).model.label, '3.1 Pro');
+  assert.equal(menu.button.textContent, 'Pro');
+  assert.ok(menu.picks.length <= 2, 'picks still waiting are dropped');
+});
+
+test('a short model name is not confirmed by a longer one', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  const menu = asyncModelMenu(b, { broken: '3.6 Flash' });
+  const work = b.api.chooseModel('3.6 Flash');
+  await b.tick(4000); await work;
+  assert.equal(menu.button.textContent, 'Flash-Lite');
+  assert.equal(b.events.filter(e => e.type === 'model-chosen').length, 0);
+  assert.equal(modelErrors(b).length, 1);
+  assert.equal(menu.open, false);
+});
+
+test('exact model name wins over a partial match listed first', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  const menu = asyncModelMenu(b);
+  const work = b.api.chooseModel('3.1 Pro');
+  await b.tick(1000); await work;
+  assert.deepEqual(menu.picks, ['3.1 Pro']);
+});
+
+test('reasoning level that closes the menu is confirmed by reading it again', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  const menu = asyncModelMenu(b, { levelRow: true });
+  const work = b.api.chooseModel('High');
+  await b.tick(3000); await work;
+  assert.deepEqual(modelErrors(b), []);
+  assert.equal(b.events.find(e => e.type === 'model-chosen').model.label, 'High');
+  assert.equal(menu.button.textContent, 'Flash-Lite', 'the model itself is unchanged');
+  assert.equal(menu.open, false);
+});
+
+test('a send right after a model pick waits for the pick', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  asyncModelMenu(b);
+  const pick = b.api.chooseModel('3.6 Flash');
+  const sent = b.api.send({ id: 'after-pick', prompt: 'hello' });
+  await b.tick(10);
+  assert.equal(b.composerText, '', 'nothing typed while the menu is working');
+  await b.tick(1000); await pick;
+  assert.ok(b.events.some(e => e.type === 'model-chosen'));
+  await b.tick(1000);
+  assert.equal(b.composerText, 'hello');
+  b.api.stop?.(); await b.tick(25000); await sent;
+});
+
 test('listConversations returns empty list without error for guests and reads side nav links when signed in', async () => {
   const b = createBrowser({ ready: true, loggedIn: false });
   await b.api.listConversations(0);

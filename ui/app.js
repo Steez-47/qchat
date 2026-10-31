@@ -1121,6 +1121,8 @@
   const savedReasoning = () => validReasoning(QSettings.settings.defaultReasoning) || "medium";
   const effectiveReasoning = (chat = chats.current) => validReasoning(chat?.reasoningEffort) || savedReasoning();
   let sentReasoning = null;
+  // A Gemini pick still being applied in its hidden page. The composer shows it straight away.
+  let geminiChoice = null;
 
   function syncReasoningButton() {
     el.btnReasoning.hidden = false;
@@ -1128,7 +1130,7 @@
     const busy = isBusy();
     if (!busy) sentReasoning = null;
     const value = busy && sentReasoning ? sentReasoning : effectiveReasoning();
-    const label = activeProvider === "gemini" ? providerStates.gemini?.model || "Model" : REASONING_LABELS[value];
+    const label = activeProvider === "gemini" ? geminiChoice?.short || providerStates.gemini?.model || "Model" : REASONING_LABELS[value];
     el.btnReasoning.querySelector(".reasoning-label").textContent = label;
     el.btnReasoning.setAttribute("aria-label", `${activeProvider === "gemini" ? "Model" : "Reasoning"}: ${label}`);
     el.btnReasoning.dataset.value = value;
@@ -3082,11 +3084,19 @@
   const modelCache = {};
   function requestModels() {
     if (isBusy()) return;
-    if (activeProvider === "gemini") showModels(modelCache.gemini || {loading:true});
-    else showFeatureList("Loading models…", []);
+    if (activeProvider === "gemini") {
+      showModels(modelCache.gemini || {loading:true});
+      // A pick is being applied, and the list on screen already shows it.
+      if (geminiChoice && modelCache.gemini) return;
+    } else showFeatureList("Loading models…", []);
     const request = { provider: activeProvider };
     modelRequest = request;
-    const finish = event => { if (modelRequest !== request) return; cancelModelRequest(); showModels(event); };
+    const finish = event => {
+      if (modelRequest !== request) return;
+      cancelModelRequest();
+      // A failed refresh leaves a usable list in place.
+      if (!(request.provider === "gemini" && modelCache.gemini)) showModels(event);
+    };
     request.timer = setTimeout(() => finish({ error: "unavailable" }), 6000);
     invoke("chat_models").catch(() => finish({ error: "unavailable" }));
   }
@@ -3222,13 +3232,45 @@
     };
     paint(); queueSizes(); (searchable ? field : featureList).focus();
   }
+  function withGeminiChoice(list, choice) {
+    const key = choice.level ? "levels" : "models";
+    return list[key] ? {...list, [key]:list[key].map(model => ({...model, selected:model.id === choice.id}))} : list;
+  }
+  function settleGeminiChoice(choice = geminiChoice) {
+    if (!choice || geminiChoice !== choice) return false;
+    clearTimeout(choice.timer);
+    geminiChoice = null;
+    return true;
+  }
+  function failGeminiChoice(choice = geminiChoice) {
+    if (!settleGeminiChoice(choice)) return false;
+    // The saved list claims the failed pick, so read the real one next time.
+    delete modelCache.gemini;
+    syncReasoningButton();
+    queueSizes();
+    return true;
+  }
+  function chooseGeminiModel(model, level) {
+    settleGeminiChoice();
+    const choice = {id:model.id, level, short:level ? null : String(model.label).replace(/^\d+(?:\.\d+)?\s+/, "")};
+    geminiChoice = choice;
+    if (modelCache.gemini) modelCache.gemini = withGeminiChoice(modelCache.gemini, choice);
+    syncReasoningButton();
+    queueSizes();
+    const failed = () => { if (failGeminiChoice(choice)) showGlobalError(null, "Couldn't change the model. Try again in a moment."); };
+    choice.timer = setTimeout(failed, 8000);
+    invoke("chat_model_choose", {id:model.id}).catch(failed);
+  }
   function showModels(event) {
     const models = event.models || [];
-    const choose = id => invoke("chat_model_choose", {id}).catch(() => showGlobalError(null, "Couldn't change the model. Try again in a moment."));
-    const rows = items => items.map(model => ({title:model.label, meta:[model.meta, model.disabled && !providerStates[activeProvider]?.loggedIn ? "Sign in" : ""].filter(Boolean).join(" · "), selected:Boolean(model.selected), disabled:model.disabled, run:() => choose(model.id)}));
+    const choose = (model, level) => {
+      if (activeProvider === "gemini") { chooseGeminiModel(model, level); return; }
+      invoke("chat_model_choose", {id:model.id}).catch(() => showGlobalError(null, "Couldn't change the model. Try again in a moment."));
+    };
+    const rows = (items, level = false) => items.map(model => ({title:model.label, meta:[model.meta, model.disabled && !providerStates[activeProvider]?.loggedIn ? "Sign in" : ""].filter(Boolean).join(" · "), selected:Boolean(model.selected), disabled:model.disabled, run:() => choose(model, level)}));
     if (activeProvider === "gemini") {
       const items = models.length ? rows(models) : [{title:event.loading ? "Loading models…" : "Couldn't read the model list", disabled:true, run:() => {}}];
-      if (event.levels?.length) items.push({divider:true}, {heading:"Reasoning"}, ...rows(event.levels));
+      if (event.levels?.length) items.push({divider:true}, {heading:"Reasoning"}, ...rows(event.levels, true));
       showFeatureList("Model", items.concat(switchProviderRows()), false, el.btnReasoning);
     } else showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? rows(models) : [{title:event.error ? `Open ${providerName()}` : "Sign in", run:openSignin}]);
   }
@@ -3238,16 +3280,31 @@
     if (provider !== activeProvider) return;
     if (payload.type === "models") {
       const previous = modelCache[provider];
-      modelCache[provider] = {...payload, _loggedIn:providerStates[provider]?.loggedIn};
+      if (provider === "gemini" && payload.error && previous) {
+        if (modelRequest?.provider === provider) cancelModelRequest();
+        return;
+      }
+      const list = {...payload, _loggedIn:providerStates[provider]?.loggedIn};
+      // A list read before a pick took effect must not undo it.
+      modelCache[provider] = provider === "gemini" && geminiChoice ? withGeminiChoice(list, geminiChoice) : list;
       if (modelRequest?.provider === provider) {
         cancelModelRequest();
         if (provider !== "gemini" || featureListAnchor === el.btnReasoning && !featureList.hasAttribute("data-leaving")) {
-          if (provider !== "gemini" || JSON.stringify(previous) !== JSON.stringify(modelCache[provider])) showModels(payload);
+          if (provider !== "gemini" || JSON.stringify(previous) !== JSON.stringify(modelCache[provider])) showModels(modelCache[provider]);
         }
       }
     } else if (payload.type === "model-chosen") {
-      if (provider === "gemini") { providerStates.gemini = {...providerStates.gemini, model:payload.short || payload.model.label}; syncReasoningButton(); }
-      else setModelLabel(payload.model.label);
+      if (provider === "gemini") {
+        providerStates.gemini = {...providerStates.gemini, model:payload.short || payload.model.label};
+        if (geminiChoice?.id === payload.model.id) {
+          if (modelCache.gemini) modelCache.gemini = withGeminiChoice(modelCache.gemini, geminiChoice);
+          settleGeminiChoice();
+        }
+        syncReasoningButton();
+        queueSizes();
+      } else setModelLabel(payload.model.label);
+    } else if (payload.type === "error" && payload.code === "model_unavailable" && provider === "gemini") {
+      failGeminiChoice();
     }
   });
   // Every chat on the account, read through the signed-in page, with this PC's chats first.
