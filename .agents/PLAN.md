@@ -486,3 +486,9 @@ Selection release: npm run build PASS; dist/QChat.exe SHA256 DBDEFC4A6A6A9FF581D
 Owner asked this thread to work with the Overnight App Feature Polishing thread under the same rules. That thread keeps O4 and O5 in the root checkout; this one uses worktrees and fast-forwards feat/overnight-iteration.
 O6 undo for chat removal and /clear: done (6e84bdb). O7 audit bug fixes: done; stop before first token, Retry on attachment turns (the dead button is no longer shown), multiline recall, History media, reply after DOM fallback open, settings section search. Headless browser suites only; live WebView2 not exercised. Suites flake when several Edge instances run at once, so run them one at a time.
 Next: O8 paste anywhere; O9 edit and resend.
+
+## Handoff (2026-11-01, Claude thread)
+
+Companion thread stopped on Codex's usage limit (resets 2026-11-07 19:18). Free OpenCode models were also out at last try; Gemini reported out earlier. All work O1 to O27 is committed on feat/overnight-iteration; latest portable build dist/overnight/20261101-084009-fdcf928. Nothing pushed or published. No feature is in progress; no uncommitted source.
+Open: unexplained live guest failure (one run; diagnostics now capture code and message). Not verified: any signed-in use (Temporary chat, attachments, export on real chats), real clipboard, real keypresses of Ctrl+Shift+N and Ctrl+Shift+C, this release exe launched. Leftover unused branches: t3/keyboard-copy-latest-reply, t3/retry-failed-attachment-turns, plus idle worktrees under .t3/worktrees.
+Next when workers return: signed-in check of Temporary first, then the live guest intermittent, then a fresh audit.
