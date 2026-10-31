@@ -16,7 +16,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - Unsent drafts recover after a reload or restart when local history is enabled. Temporary chats keep their drafts out of saved history.
 - `/rename` changes the current chat's name in QChat. Enter saves, Escape cancels, and your draft stays intact.
 - A connection error retries when the network returns or QChat regains focus, keeping the draft, staged files and current conversation. Try again is available for manual recovery.
-- `/model` picks a ChatGPT model on a signed-in account. `/temp` starts a temporary chat that isn't saved.
+- `/model` picks a ChatGPT model on a signed-in account. `/temp` starts a temporary chat kept out of QChat's saved history. Sending requires confirmation of the provider's Temporary mode; a refusal preserves the draft and files.
 - Hover a reply to copy it, retry it or open it in ChatGPT. Up arrow recalls earlier prompts.
 - Your prompts have Copy and Edit in composer actions. Editing loads the prompt and quoted selections so you can revise and send it; reattach files when needed. Ctrl+Z recovers a draft replaced by an edit.
 - Removing recent chats or clearing local chats offers Undo for six seconds.
@@ -30,12 +30,14 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - **Sign in:** Settings or the tray -> Sign in. Log in once in the window that opens, and you stay signed in.
 - Without signing in it chats as a ChatGPT guest.
 - Attach files with the paperclip, paste from the clipboard, or drop them onto the chat. Pasting text or files outside an editing field sends them to the composer. Attachments can be sent with or without text.
-- Failed attachment messages offer Retry for ten minutes, keeping newer drafts and files intact. Expired files ask you to attach them again.
+- Failed attachment messages offer Retry for ten minutes, keeping newer drafts and files intact. If a staged file expires, Retry on its chip prepares the selected file again without sending it.
 - If a file fails to prepare, Retry on its chip reuses the selected file. Provider switches preserve the latest draft, caret, quoted context, files and temporary-chat mode, including edits made while the switch is loading.
 - Replies support image previews, audio/video controls, and files saved to Downloads without overwriting existing files. Unsupported previews can be opened in ChatGPT.
 - Images show thumbnails before sending and previews in the chat. **Copy image** copies pixels to the Windows clipboard. Image requests show a preparation/generation graphic, with ChatGPT's percentage when the site supplies one.
 
 QChat accepts up to 10 attachments totalling 512 MB. ChatGPT's own account, upload and format limits still apply; audio/video playback also depends on WebView2's codecs. Live voice/camera sessions are not implemented. Files are staged in bounded chunks and reply media is cached on disk, then cleared on New chat or Quit. Normal sign-in stays saved.
+
+Temporary mode can be refused on guest, localized or changed provider interfaces. ChatGPT currently requires its English active control; readonly indicators are not yet supported. Signed-in live Temporary chats and uploads have not been verified by these tests.
 
 ## Install
 
@@ -67,6 +69,9 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/draft-ui-test.mjs`: draft recovery, send failures, privacy and pending writes across chat/provider changes.
 - `node tools/provider-draft-ui-test.mjs`: edits, clears, quoted context, files and privacy while a provider change or startup fallback is pending.
 - `node tools/provider-draft-native-test.mjs`: the same provider-change lifecycle in an isolated hidden WebView, including real image bytes and reload persistence. Requires a debug build.
+- `node tools/temporary-chat-ui-test.mjs` and `node tools/temporary-chat-bridge-test.mjs`: provider privacy confirmation, refusal recovery and guarded file staging on local fixtures.
+- `node tools/temporary-chat-native-test.mjs`: native preflight, explicit privacy intent, retained bytes and stale-send races with provider submission stubbed.
+- `node tools/temporary-attachment-native-test.mjs`: real WebView reloads and exact-byte guarded handoffs for both providers; all provider requests are fulfilled locally. Both native suites require a debug build.
 - `node tools/edit-prompt-ui-test.mjs`, `node tools/paste-anywhere-ui-test.mjs` and `node tools/chat-undo-ui-test.mjs`: prompt reuse, pasting around the popup and reversible local chat removal.
 - `node tools/find-text-test.mjs` and `node tools/find-ui-test.mjs`: literal Unicode search, inline/code ranges, keyboard navigation, streaming and menu/undo interactions.
 - `node tools/find-native-test.mjs`: search, highlight rendering and native prompt-edit undo in an isolated hidden app. Requires a debug build.

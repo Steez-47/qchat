@@ -1,6 +1,7 @@
 // Drive the real composer and observe a clone of its fetch stream; never call the chat API.
 (() => {
   if (!/(^|\.)chatgpt\.com$/.test(location.hostname) || window.top !== window || window.__qchat) return;
+  const documentSetupId = (/^#qchat-setup=([a-zA-Z0-9-]+)$/.exec(location.hash || '') || [])[1] || null;
   const selectors = {
     composer: ['#prompt-textarea', '#mobile-composer-prompt', 'textarea[name="prompt-textarea"]', '[contenteditable="true"][id*="prompt"]', 'form .ProseMirror[contenteditable="true"][role="textbox"]'],
     send: ['[data-testid="send-button"]', 'button[aria-label*="Send"]'],
@@ -1179,7 +1180,7 @@
     }
     const probe = loginProbe;
     if (probe) { await probe; if (loginProbe === probe) loginProbe = null; }
-    emit({ type: 'status', setupId: (/^#qchat-setup=([a-zA-Z0-9-]+)$/.exec(location.hash || '') || [])[1] || null, temporary: temporaryReady(), ready: !!find('composer'), loggedIn: !!loginCache, authPending: loginUnknown, url: location.href });
+    emit({ type: 'status', setupId: documentSetupId, temporary: temporaryReady(), ready: !!find('composer'), loggedIn: !!loginCache, authPending: loginUnknown, url: location.href });
   }
   // Select only explicitly labelled thinking controls, never model entries.
   let reasoningSelection = false;
@@ -1485,7 +1486,13 @@
     async chooseModel(id) { return window.__qchat.listModels(id); },
     async newChat(options = {}) {
       clearTemporaryStage();
-      if (options.temporary) { await window.__qchat.stop(); media.clear(); location.assign('https://chatgpt.com/?temporary-chat=true' + (options.setupId ? '#qchat-setup=' + encodeURIComponent(options.setupId) : '')); return; }
+      if (options.temporary) {
+        await window.__qchat.stop(); media.clear();
+        const target = new URL('https://chatgpt.com/?temporary-chat=true' + (options.setupId ? '#qchat-setup=' + encodeURIComponent(options.setupId) : ''));
+        if (location.origin === target.origin && location.pathname === target.pathname && location.search === target.search) { location.hash = target.hash; location.reload(); }
+        else location.assign(target.href);
+        return;
+      }
       await window.__qchat.stop();
       media.clear(); cancelledAttachments = null; downloadActivation = null;
       const button = find('fresh');

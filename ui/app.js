@@ -348,6 +348,8 @@
     timeout: "ChatGPT took too long to respond.",
     open_timeout: "That chat is taking too long to open. Try sending again.",
     temporary_unavailable: "Temporary chat could not be confirmed. Your draft is safe; try again or check the provider.",
+    attachment_pending: "The provider still has pending files. Start a new chat or remove them there before sending again.",
+    attachment_expired: "This file is no longer available. Use Retry on the file or attach it again.",
     invalid_id: "That chat can't be reopened. Start a new one with /new.",
     offline: "Can't reach ChatGPT. Check your connection, then try again."
   };
@@ -2651,17 +2653,19 @@
         return;
       }
       if (assistantTurn.status !== "streaming") return;
-      const code = errorCode(err);
-      if (retryFiles && /Attachment (is unavailable|was removed|unavailable)/i.test(String(err))) {
-        releaseTurnFiles(assistantTurn);
+      const unavailable = /Attachment (is unavailable|was removed|unavailable)/i.test(String(err));
+      const code = unavailable ? "attachment_expired" : errorCode(err);
+      if (unavailable) for (const file of files) if (pendingFiles.includes(file)) file.state = "error";
+      if (retryFiles && unavailable) {
+        releaseTurnFiles(assistantTurn, pendingFiles.map(file => file.id));
         if (!el.promptInput.value) { el.promptInput.value = prompt; autoResizePrompt(); updateDraft(); }
-        assistantTurn.error = "This file is no longer available. Attach it again.";
+        assistantTurn.error = files.some(file => pendingFiles.includes(file)) ? ERROR_MESSAGES.attachment_expired : "This file is no longer available. Attach it again.";
       }
       flushReveal(assistantTurn);
       assistantTurn.status = "error";
       assistantTurn.code = code;
       if (attachmentRetryCodes.has(code)) retainTurnFiles(assistantTurn);
-      else releaseTurnFiles(assistantTurn);
+      else releaseTurnFiles(assistantTurn, unavailable || code === "attachment_pending" ? pendingFiles.map(file => file.id) : []);
       assistantTurn.error = assistantTurn.error || formatErrorCopy(code);
       revealResponse(assistantTurn);
       scheduleTurnRender(assistantTurn.id, true);

@@ -590,6 +590,9 @@ pub async fn attach_temporary(app: &tauri::AppHandle, ids: &[String], turn_id: &
             if let Some(object) = stage["result"]["objectId"].as_str() {
                 let _ = cdp_provider(app, "Runtime.releaseObject", json!({"objectId":object}), None, provider.clone()).await;
             }
+            if stage["exceptionDetails"]["exception"]["description"].as_str().is_some_and(|message| message.contains("attachment_pending:")) {
+                return Err("attachment_pending: Clear pending attachments in the provider or start a new chat.".into());
+            }
             return Err("temporary_unavailable: Temporary attachment preparation failed".into());
         }
         let object = stage["result"]["objectId"].as_str().ok_or("temporary_unavailable: Temporary attachment preparation failed")?.to_owned();

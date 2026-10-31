@@ -751,7 +751,7 @@
     }
   }
 
-  function dispatchClickSequence(node) {
+  function dispatchClickSequence(node, once = false) {
     if (!node) return;
     const wasExpanded = node.getAttribute?.('aria-expanded');
     if (typeof node.dispatchEvent === 'function' && typeof MouseEvent === 'function') {
@@ -761,6 +761,7 @@
         if (wasExpanded === 'false' && node.getAttribute?.('aria-expanded') === 'true') return;
       }
     }
+    if (once) return;
     if (wasExpanded === 'false' && node.getAttribute?.('aria-expanded') === 'true') return;
     if (typeof node.click === 'function') {
       try { node.click(); } catch (_) {}
@@ -1243,13 +1244,21 @@
           emit({type:'error', code:'temporary_unavailable', message:'Sign in to Gemini to use temporary chats.', setupId:options.setupId || null});
           return;
         }
+        if (temporaryReady()) {
+          const fresh = find('fresh');
+          if (!fresh || fresh.disabled || fresh.getAttribute('aria-disabled') === 'true') { emit({type:'error', code:'temporary_unavailable', message:'Could not start a fresh temporary chat in Gemini.', setupId:options.setupId || null}); return; }
+          dispatchClickSequence(fresh, true);
+          for (let i = 0; i < 15 && (location.pathname !== '/app' || assistantNodes().length || userNodes().length); i++) await sleep(100);
+          if (location.pathname !== '/app' || assistantNodes().length || userNodes().length) { emit({type:'error', code:'temporary_unavailable', message:'Could not start a fresh temporary chat in Gemini.', setupId:options.setupId || null}); return; }
+          if (temporaryReady()) { await status(); return; }
+        }
         const tempBtn = [...document.querySelectorAll('button, a, [role="button"], gem-nav-list-item')].find(node =>
           shown(node) && /temp(?:orary)? chat/i.test(`${node.innerText || ''} ${node.getAttribute('aria-label') || ''} ${node.getAttribute('data-test-id') || ''}`));
         if (!tempBtn || tempBtn.disabled || tempBtn.getAttribute('aria-disabled') === 'true') {
           emit({type:'error', code:'temporary_unavailable', message:'Temporary chat is unavailable in Gemini.', setupId:options.setupId || null});
           return;
         }
-        dispatchClickSequence(tempBtn);
+        dispatchClickSequence(tempBtn, true);
         await sleep(300);
         await status();
         return;

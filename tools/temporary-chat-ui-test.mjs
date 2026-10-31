@@ -153,6 +153,20 @@ try {
   await type('later private draft'); await evalJS(`document.getElementById('prompt-input').setSelectionRange(2,9,'backward')`); await key('Enter'); await sleep(300);
   check('late bridge rejection restores draft and backward selection', await evalJS(`(()=>{const i=document.getElementById('prompt-input');return i.value==='later private draft'&&i.selectionStart===2&&i.selectionEnd===9&&i.selectionDirection==='backward'})()`));
   check('late bridge rejection restores quote and retains file', await evalJS(`!!document.querySelector('#attachments .selection-chip')&&!!document.querySelector('#attachments [data-state="ready"]')`));
+  await setup(); await type('/temp'); await key('Enter'); await sleep(100); await add('expired-private.bin',31); await wait(ready);
+  const expiredId=await evalJS('Array.from(__mock.attachmentFiles.keys())[0]');
+  await evalJS(`window.expiryInvoke=window.__TAURI__.core.invoke;window.expireOnce=true;window.__TAURI__.core.invoke=async(cmd,args)=>{if(cmd==='chat_send'&&expireOnce){expireOnce=false;__mock.calls.push({cmd,args});__mock.attachmentFiles.clear();throw new Error('Attachment is unavailable. Select it again.');}return expiryInvoke(cmd,args);}`);
+  await type('private expired-file draft'); await key('Enter'); await wait("document.getElementById('prompt-input').value==='private expired-file draft'&&!document.getElementById('btn-reasoning').disabled");
+  check('expired native file becomes a recoverable failed chip',await evalJS(`!!${err}&&!!${retry}`));
+  await screenshot('expired-file-340.png');
+  if(await evalJS(`!!${retry}`)){await click(retry);await wait(ready);}
+  check('expired file Retry stages a fresh native id without submitting',await evalJS(`__mock.attachmentFiles.size===1&&!__mock.attachmentFiles.has(${JSON.stringify(expiredId)})&&__mock.count('chat_send')===1`));
+  check('expired file recovery keeps its private draft unsaved',await inputValue()==='private expired-file draft'&&await evalJS(`!(localStorage.getItem('qchat.chats')||'').includes('private expired-file draft')`));
+  await setup(); await type('/temp'); await key('Enter'); await sleep(100); await add('pending-private.bin',17); await wait(ready);
+  await evalJS(`window.pendingInvoke=window.__TAURI__.core.invoke;window.__TAURI__.core.invoke=async(cmd,args)=>{if(cmd==='chat_send')throw new Error('attachment_pending: Clear pending files');return pendingInvoke(cmd,args);}`);
+  await send('private pending draft'); await wait("document.getElementById('prompt-input').value==='private pending draft'&&!document.getElementById('btn-reasoning').disabled");
+  check('pending provider files show the actionable recovery reason',await evalJS(`document.body.textContent.includes('Start a new chat or remove them there')`));
+  check('pending provider files retain the local attachment and private draft',await inputValue()==='private pending draft'&&await evalJS(`!!${ready}&&__mock.attachmentFiles.size===1&&!(localStorage.getItem('qchat.chats')||'').includes('private pending draft')`));
   await setup(); await send('ordinary prompt'); await wait("__mock.calls.some(c=>c.cmd==='chat_send')");
   check('ordinary send carries false temporary intent', await evalJS(`__mock.last('chat_send').args.temporary===false`));
   check('no runtime errors',problems.length===0,problems.join(' | '));
