@@ -58,7 +58,12 @@ try {
   };
   const chord = (extra={}) => evalJS('(()=>{const event=new KeyboardEvent("keydown",'+JSON.stringify({key:'N',ctrlKey:true,shiftKey:true,bubbles:true,cancelable:true,...extra})+');document.activeElement.dispatchEvent(event);return event.defaultPrevented;})()');
   const newCount = () => count('chat_new');
-  for (const provider of ['chatgpt','gemini']) {
+  // Gemini has no Temporary chats: the shortcut says so and leaves the chat alone.
+  await boot('gemini');await type('Keep my Gemini draft');
+  const geminiBefore=await newCount();const geminiHandled=await chord();await sleep(60);
+  check('gemini shortcut explains Temporary is ChatGPT only',geminiHandled&&await evalJS("document.getElementById('command-feedback').textContent.includes('Temporary chats are ChatGPT only')"));
+  check('gemini shortcut keeps the chat, draft and mode unchanged',await newCount()===geminiBefore&&await inputValue()==='Keep my Gemini draft'&&await evalJS('document.getElementById("mode-chip").hidden'));
+  for (const provider of ['chatgpt']) {
     await boot(provider);await type('Keep my ordinary draft');
     const before=await newCount();const handled=await chord();await wait('__mock.count("chat_new")>'+before);
     check(provider+' shortcut requests Temporary and prevents the default',handled&&await evalJS('__mock.last("chat_new").args.temporary===true&&document.getElementById("mode-chip").textContent==="Temporary"'));

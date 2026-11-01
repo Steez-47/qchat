@@ -12,6 +12,7 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 - Starting a new ChatGPT chat makes sure the page has really left the old conversation, so the next message can't land in an old chat.
 - Replies whose text ChatGPT keeps in an out-of-view copy show as they stream instead of needing a refresh.
 - An image send that times out says what it was waiting for.
+- A second message in a ChatGPT temporary chat no longer fails with "Temporary chat could not be confirmed". ChatGPT drops its temporary toggle once the chat has started, so QChat remembers the chat it started in Temporary mode, even across a page reload.
 - Changing provider right after picking a mode or model no longer shows a false error a few seconds later.
 - A late error from a reply you already dismissed or stopped no longer shows a banner.
 - History no longer says "Couldn't load earlier messages" after a load that worked.
@@ -19,7 +20,9 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 - A saved shortcut that's no longer valid can be replaced, and a failed Backspace clear in Settings shows why instead of staying stuck on "Press keys…".
 - A failed download or update no longer leaves a partial file behind.
 - A `$&` in a ChatGPT attachment's label no longer garbles the reply, and Gemini images no longer pile up in memory during a long chat.
-- A second message in a ChatGPT temporary chat no longer fails with "Temporary chat could not be confirmed". ChatGPT hides its temporary toggle once the chat has started, so QChat now remembers that the chat started in temporary mode.
+
+### Changed
+- Temporary chats are ChatGPT only. Gemini gives no reliable sign that a chat is temporary, so `/temp` and Ctrl+Shift+N say so on Gemini, and switching a temporary chat to Gemini makes it a normal chat with a notice.
 
 ## [1.5.2] - 2026-11-02
 

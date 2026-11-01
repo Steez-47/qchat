@@ -1322,7 +1322,8 @@
     const draft = input.value;
     const start = input.selectionStart, end = input.selectionEnd, direction = input.selectionDirection;
     const selections = chats.current.selectionTexts.slice();
-    const temporary = Boolean(chats.current.temporary);
+    const temporary = Boolean(chats.current.temporary) && temporaryAvailable();
+    const droppedTemporary = Boolean(chats.current.temporary) && !temporary;
     const chat = chats.current;
     const pickerKey = pickerOpen && el.picker.contains(document.activeElement) ? document.activeElement.dataset.pickerKey : null;
     const title = !(chat.transcript?.length || chat.lastPrompt || chat.lastResponse || chat.lastHasMedia || chat.conversationId) ? chat.title : "";
@@ -1336,6 +1337,7 @@
     renderAttachments();
     chats.current.draft = draftValue();
     saveChats(); autoResizePrompt(); updateIdleChips(); updateComposerMode();
+    if (droppedTemporary) showCommandFeedback("Temporary chats are ChatGPT only. This is a normal chat.");
     if (pickerOpen && pickerKey) {
       renderPicker();
       const next = el.picker.querySelector(`[data-picker-key="${CSS.escape(pickerKey)}"]`);
@@ -2916,7 +2918,11 @@
     el.promptInput.focus();
   }
 
+  // Gemini gives no reliable sign that a chat is really temporary, so only ChatGPT offers it.
+  function temporaryAvailable(provider = activeProvider) { return provider === "chatgpt"; }
+
   async function startTemporaryChat() {
+    if (!temporaryAvailable()) { showCommandFeedback("Temporary chats are ChatGPT only"); return; }
     await startNewChat(false);
     chats.current.temporary = true;
     chats.current.mode = "chat";

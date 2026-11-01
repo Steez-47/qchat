@@ -63,7 +63,7 @@ Nightly uses your existing settings, chats and sign-in; quit QChat before instal
 - Up to 3 recent chats sit as tabs on the bar. **Ctrl+P** or `/chats` searches every saved chat. Up to 50 chats are kept locally, with full transcripts for the newest eight.
 - New chats are named from the first line of the first prompt. `/rename` renames the current chat.
 - Unsent drafts survive a reload or restart when local history is on. Switching chats keeps them, and remembers where you were reading.
-- **Ctrl+Shift+N** or `/temp` starts a temporary chat that stays out of QChat's saved history. Sending waits until the provider confirms its Temporary mode. If it refuses, your draft and files are kept.
+- **Ctrl+Shift+N** or `/temp` starts a temporary ChatGPT chat that stays out of QChat's saved history. Sending waits until ChatGPT confirms its Temporary mode. If it refuses, your draft and files are kept. Temporary chats are ChatGPT only: Gemini gives no reliable sign that a chat is temporary.
 - Removing chats, `/clear` and `/discard` can each be undone for six seconds.
 
 **Replies**
@@ -107,7 +107,7 @@ Nightly uses your existing settings, chats and sign-in; quit QChat before instal
 
 - Up to 10 attachments, 512 MB in total. ChatGPT's and Gemini's own account, upload and format limits still apply. Audio and video playback depends on WebView2's codecs.
 - Live voice and camera sessions are not implemented.
-- Temporary mode can be refused on guest accounts, non-English or changed provider interfaces, and Gemini secondary-account routes such as `/u/1/app`. Refusing is the safe failure.
+- Temporary mode can be refused on guest accounts and non-English or changed ChatGPT interfaces. Refusing is the safe failure.
 - Staged files and cached reply media are cleared on New chat or Quit. Your normal sign-in stays saved.
 
 QChat is an independent app and is not affiliated with OpenAI or Google.

@@ -71,13 +71,12 @@ try{
     await client.send('Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'}]});
     const url=provider==='chatgpt'?domain+'?temporary-chat=true#qchat-setup=first':domain+'app';
     await client.send('Page.navigate',{url});
-    await safeWait(client,'document.readyState==="complete"&&!!window.__qchat?.stageTemporaryFiles&&window.__qchat.temporaryReady()','actual provider fixture '+provider);
+    await safeWait(client,'document.readyState==="complete"&&!!window.__qchat?.stageTemporaryFiles'+(provider==='chatgpt'?'&&window.__qchat.temporaryReady()':''),'actual provider fixture '+provider);
     return client;
   };
   const info=await invoke('launch_info');
   const bytes=Buffer.alloc(259);for(let index=0;index<bytes.length;index++)bytes[index]=(index*37+191)%256;
-  for(const provider of ['chatgpt','gemini']) {
-    if(provider==='gemini'){const switched=await invoke('provider_set',{provider});if(!switched.ok)throw Error(switched.error);}
+  for(const provider of ['chatgpt']) {
     site=await install(provider);
     if(provider==='chatgpt') {
       const first=await site.evaluate('Number(sessionStorage.fixtureLoads)');
@@ -90,37 +89,6 @@ try{
       await site.evaluate('window.__qchat.status();undefined');
       await safeWait(main,'fixtureBridgeEvents.some(event=>event.type==="status"&&event.provider==="chatgpt"&&event.ready&&event.url.includes("fixture=strip"))','native setup status after router rewrite');
       check('native setup correlation survives a router clearing the hash',await main.evaluate('fixtureBridgeEvents.filter(event=>event.type==="status"&&event.provider==="chatgpt"&&event.ready&&event.url.includes("fixture=strip")).at(-1).setupId==="strip-me"'));
-    } else {
-      await site.evaluate('window.fixtureSetupEvents=[];window.fixtureSetupEmit=window.__QCHAT_EMIT__;window.__QCHAT_EMIT__=event=>{fixtureSetupEvents.push(event);fixtureSetupEmit(event);};window.fixtureFreshClicks=0;window.fixtureTempClicks=0;document.querySelector(\'button[aria-label="Temporary chat"]\').onclick=()=>{fixtureTempClicks++;};');
-      for(const unavailable of ['missing','disabled','aria-disabled']) {
-        await site.evaluate('document.querySelector(\'button[aria-label="New chat"]\')?.remove();'+(unavailable==='missing'?'':'document.querySelector("chat-window").insertAdjacentHTML("beforeend",\'<button data-test-id="reset-button" aria-label="New chat" '+(unavailable==='disabled'?'disabled':'aria-disabled="true"')+'>New chat</button>\');')+'fixtureSetupEvents=[];window.__qchat.newChat({temporary:true,setupId:'+JSON.stringify('empty-'+unavailable)+'})');
-        check('empty Gemini Temporary setup succeeds with '+unavailable+' New chat',await site.evaluate('fixtureSetupEvents.some(event=>event.type==="status"&&event.setupId==='+JSON.stringify('empty-'+unavailable)+')&&!fixtureSetupEvents.some(event=>event.type==="error")&&fixtureFreshClicks===0&&fixtureTempClicks===0&&__qchat.temporaryReady()'));
-      }
-      await site.evaluate('document.querySelector(\'button[aria-label="New chat"]\')?.remove()');
-      await site.evaluate('window.fixtureOriginalComposer=document.querySelector(".ql-editor");const textarea=document.createElement("textarea");textarea.className="ql-editor";textarea.setAttribute("contenteditable","true");textarea.setAttribute("role","textbox");textarea.value="Unsent private textarea text";fixtureOriginalComposer.replaceWith(textarea);fixtureSetupEvents=[];window.__qchat.newChat({temporary:true,setupId:"leftover-textarea"})');
-      check('Gemini Temporary setup refuses typed textarea content without New chat',await site.evaluate('fixtureSetupEvents.some(event=>event.code==="temporary_unavailable"&&event.setupId==="leftover-textarea")&&!fixtureSetupEvents.some(event=>event.type==="status")&&fixtureFreshClicks===0&&fixtureTempClicks===0&&document.querySelector("textarea").value==="Unsent private textarea text"'));
-      await site.evaluate('document.querySelector("textarea").replaceWith(fixtureOriginalComposer)');
-      for(const leftover of ['text','user','assistant','file','remover','disabled-remover']) {
-        const setup=leftover==='text'?'document.querySelector(".ql-editor").textContent="Unsent private text"':leftover==='user'?'document.querySelector("chat-window").insertAdjacentHTML("beforeend","<user-query data-fixture-leftover>Prior user context</user-query>")':leftover==='assistant'?'document.querySelector("chat-window").insertAdjacentHTML("beforeend","<model-response data-fixture-leftover>Prior assistant context</model-response>")':leftover==='file'?'(()=>{const files=new DataTransfer();files.items.add(new File(["secret"],"pending.bin"));document.getElementById("fixture-file-input").files=files.files;})()':'document.querySelector("chat-window").insertAdjacentHTML("beforeend",\'<button data-fixture-leftover aria-label="Remove file" '+(leftover==='disabled-remover'?'disabled':'')+'>Remove file</button>\')';
-        await site.evaluate(setup+';fixtureSetupEvents=[];window.__qchat.newChat({temporary:true,setupId:'+JSON.stringify('leftover-'+leftover)+'})');
-        check('Gemini Temporary setup still refuses leftover '+leftover+' without New chat',await site.evaluate('fixtureSetupEvents.some(event=>event.code==="temporary_unavailable"&&event.setupId==='+JSON.stringify('leftover-'+leftover)+')&&!fixtureSetupEvents.some(event=>event.type==="status")&&fixtureFreshClicks===0&&fixtureTempClicks===0'));
-        await site.evaluate('document.querySelector(".ql-editor").textContent="";document.getElementById("fixture-file-input").value="";document.querySelectorAll("[data-fixture-leftover]").forEach(node=>node.remove())');
-      }
-      for(const leftover of ['upload-progress','upload-spinner','cancelled-file','cancelled-file-repeat']) {
-        const setup=leftover==='upload-progress'?'document.querySelector("chat-window").insertAdjacentHTML("beforeend",\'<input-container data-fixture-leftover><div role="progressbar"></div></input-container>\')':leftover==='upload-spinner'?'document.querySelector("chat-window").insertAdjacentHTML("beforeend","<mat-progress-spinner data-fixture-leftover>Uploading</mat-progress-spinner>")':leftover==='cancelled-file'?'(()=>{const files=new DataTransfer();files.items.add(new File(["secret"],"cancelled.bin"));document.getElementById("fixture-file-input").files=files.files;__qchat.cancelAttachmentSelection(1);document.getElementById("fixture-file-input").value="";})()':'';
-        await site.evaluate(setup+';fixtureSetupEvents=[];window.__qchat.newChat({temporary:true,setupId:'+JSON.stringify('leftover-'+leftover)+'})');
-        check('Gemini Temporary setup refuses '+leftover+' without New chat',await site.evaluate('fixtureSetupEvents.some(event=>event.code==="temporary_unavailable"&&event.setupId==='+JSON.stringify('leftover-'+leftover)+')&&!fixtureSetupEvents.some(event=>event.type==="status")&&fixtureFreshClicks===0&&fixtureTempClicks===0'));
-        await site.evaluate('document.querySelectorAll("[data-fixture-leftover]").forEach(node=>node.remove())');
-      }
-      await site.evaluate('document.querySelector("chat-window").insertAdjacentHTML("beforeend",\'<button data-test-id="reset-button" aria-label="New chat">New chat</button>\')');
-      for(const keepMode of [false,true]) {
-        await site.evaluate('(()=>{window.fixtureFreshClicks=0;window.fixtureTempClicks=0;const host=document.querySelector("chat-window");host.classList.add("is-temporary-chat");host.insertAdjacentHTML("beforeend","<user-query id=old-chat-fixture>Previous temporary context</user-query>");document.querySelector(\'button[aria-label="New chat"]\').onclick=()=>{fixtureFreshClicks++;document.querySelectorAll("user-query,model-response").forEach(node=>node.remove());'+(keepMode?'':'host.classList.remove("is-temporary-chat");')+'};document.querySelector(\'button[aria-label="Temporary chat"]\').onclick=()=>{fixtureTempClicks++;host.classList.toggle("is-temporary-chat");};})()');
-        await site.evaluate('window.__qchat.newChat({temporary:true,setupId:'+JSON.stringify(keepMode?'gemini-keeps':'gemini-resets')+'})');
-        check('Gemini repeat setup starts fresh when New chat '+(keepMode?'keeps':'resets')+' the mode',await site.evaluate('fixtureFreshClicks===1&&!document.getElementById("old-chat-fixture")&&window.__qchat.temporaryReady()'));
-        check('Gemini repeat setup toggles only when activation is needed '+keepMode,await site.evaluate('fixtureTempClicks==='+(keepMode?0:1)));
-      }
-      await site.evaluate('fixtureFreshClicks=0;fixtureTempClicks=0;document.querySelector("chat-window").classList.remove("is-temporary-chat");window.__qchat.newChat({temporary:true,setupId:"gemini-normal"})');
-      check('Gemini initial temporary activation clicks its toggle once',await site.evaluate('fixtureFreshClicks===0&&fixtureTempClicks===1&&window.__qchat.temporaryReady()'));
     }
     await site.evaluate('window.fixtureEvents=[];window.fixtureJobs=[];window.fixtureLoss=false;window.fixtureReplace=false;window.fixtureStage=null;window.fixtureOriginalStage=window.__qchat.stageTemporaryFiles;window.fixtureOriginalCommit=window.__qchat.commitTemporaryFiles;window.__qchat.stageTemporaryFiles=async id=>{const stage=await fixtureOriginalStage(id);window.fixtureStage=stage;return stage;};window.__qchat.commitTemporaryFiles=id=>{if(fixtureLoss){document.getElementById("fixture-temp-control").setAttribute("aria-label","Temporary chat");document.querySelector("chat-window")?.classList.remove("is-temporary-chat");}if(fixtureReplace){const old=document.getElementById("fixture-file-input");old.replaceWith(old.cloneNode(false));}return fixtureOriginalCommit(id);};window.__qchat.send=job=>{fixtureJobs.push(job);};');
     for(const mode of ['confirmed','mode-lost','input-replaced','pending']) {
@@ -150,6 +118,25 @@ try{
       }
       const removed=await invoke('attachment_remove',{id:fileId});if(!removed.ok)throw Error(removed.error);
     }
+  }
+  // Gemini has no Temporary chats: setup and a native Temporary send with a file are both refused.
+  {
+    const switched=await invoke('provider_set',{provider:'gemini'});if(!switched.ok)throw Error(switched.error);
+    site=await install('gemini');
+    await site.evaluate('window.fixtureGeminiEvents=[];window.fixtureGeminiEmit=window.__QCHAT_EMIT__;window.__QCHAT_EMIT__=event=>{fixtureGeminiEvents.push(event);fixtureGeminiEmit(event);};window.fixtureGeminiSends=[];window.__qchat.send=job=>{fixtureGeminiSends.push(job);};document.querySelector("chat-window")?.classList.add("is-temporary-chat");window.__qchat.newChat({temporary:true,setupId:"gemini-refused"});undefined');
+    await safeWait(site,'fixtureGeminiEvents.some(event=>event.code==="temporary_unavailable"&&event.setupId==="gemini-refused")','Gemini Temporary setup refusal');
+    check('Gemini Temporary setup is refused even with its old marker',await site.evaluate('!window.__qchat.temporaryReady()&&!fixtureGeminiEvents.some(event=>event.type==="status"&&event.setupId==="gemini-refused")'));
+    const begin=await invoke('attachment_begin',{name:'gemini-refused-🌏.bin',mime:'application/octet-stream',size:bytes.length,uploadGeneration:info.value?.uploadGeneration||0});
+    if(!begin.ok||!begin.value?.id)throw Error('Fixture attachment begin failed: '+begin.error);
+    const fileId=begin.value.id;
+    const chunk=await invoke('attachment_chunk',{id:fileId,offset:0,data:bytes.toString('base64')});
+    const finish=await invoke('attachment_finish',{id:fileId});if(!chunk.ok||!finish.ok)throw Error('Fixture upload staging failed');
+    const result=await invoke('chat_send',{id:crypto.randomUUID(),prompt:'Isolated attachment fixture',provider:'gemini',temporary:true,attachmentIds:[fileId]});
+    check('Gemini native Temporary send is refused',!result.ok&&result.error.includes('temporary_unavailable'),result.error||'send resolved');
+    check('Gemini native Temporary send reaches no provider input or send',await site.evaluate('fixtureGeminiSends.length===0&&(document.getElementById("fixture-file-input")?.files.length||0)===0'));
+    const retained=(await uploads()).find(file=>file.id===fileId);
+    check('Gemini native Temporary refusal retains exact local bytes',!!retained&&retained.bytes.equals(bytes));
+    const removed=await invoke('attachment_remove',{id:fileId});if(!removed.ok)throw Error(removed.error);
   }
   await waitFor(()=>fulfilled===requests.length,'all fixture requests fulfilled locally');
   check('fixture transport fulfills every intercepted request locally',fulfilled===requests.length&&fulfilled>0);

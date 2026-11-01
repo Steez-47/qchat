@@ -1,5 +1,14 @@
 # Temporary-mode verification evidence
 
+## Live findings, 2026-11-01
+
+A signed-in user run settled two points the source evidence below left open.
+
+- **ChatGPT.** After the first message in a temporary chat the page moves to `/c/<id>?temporary-chat=true`, and nothing visible carries an aria-label or text containing "temporary". The `Turn off temporary chat` control below only confirms an empty temporary chat. The bridge therefore remembers the chat it started while that control confirmed Temporary mode, and accepts later turns only on that chat's own temporary URL.
+- **Gemini.** Sends went through without the chat really being temporary. QChat no longer offers Temporary chats on Gemini, and the Gemini bridge never confirms Temporary mode.
+
+The sections below are the original source-only evidence.
+
 Checked 2026-11-01 using public, signed-out resources. No account or chat messages were used.
 
 [Google's Gemini help](https://support.google.com/gemini/answer/13275745?hl=en) distinguishes the control that starts Temporary chat from the icon shown at the top while it is active. It requires a personal signed-in account.
