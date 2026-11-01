@@ -34,3 +34,46 @@ jobs:
           echo "QCHAT_TEST_EDGE=$RUNNER_TEMP/edge.sh" >> "$GITHUB_ENV"
       - name: Run tests
         run: npm test
+
+  nightly:
+    name: Windows Nightly
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Stamp Nightly version
+        shell: pwsh
+        run: |
+          $version = node tools/nightly-version.mjs $env:GITHUB_RUN_NUMBER
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "NIGHTLY_VERSION=$version" >> $env:GITHUB_ENV
+      - name: Check stamped manifests
+        run: node tests/edge-contract-test.mjs
+      - name: Generate bundled notices
+        run: node tools/third-party-notices.mjs
+      - run: npm run test:rust
+      - run: npm run build:installer
+      - name: Publish Nightly
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:NIGHTLY_VERSION"
+          $notes = "Nightly build of main at $env:GITHUB_SHA. Includes unreleased changes. Install once to receive future Nightly updates through QChat's Update button."
+          $notes | Set-Content -LiteralPath "$env:RUNNER_TEMP/nightly-notes.txt"
+          gh release create $tag "dist/v$env:NIGHTLY_VERSION/*" --target $env:GITHUB_SHA --title "QChat Nightly $env:NIGHTLY_VERSION" --notes-file "$env:RUNNER_TEMP/nightly-notes.txt" --prerelease --latest=false --draft
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release edit $tag --draft=false --prerelease --latest=false

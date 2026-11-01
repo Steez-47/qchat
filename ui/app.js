@@ -4817,6 +4817,7 @@
     try {
       const result = await updater.check(true);
       if (result?.available) { hideCommandFeedback(); updater.focus(); }
+      else if (result?.status === "no_nightly") showCommandFeedback("No Nightly builds have been published yet.");
       else showCommandFeedback(`QChat is up to date${result?.current ? ` (v${result.current})` : ""}`);
     } catch (_) { showCommandFeedback("Couldn't check for updates. Try again later."); }
   }

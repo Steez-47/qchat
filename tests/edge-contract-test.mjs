@@ -103,7 +103,7 @@ test('every qchat:// event the UI listens for has a sender', () => {
 
 test('versions agree across every manifest', () => {
   const version = JSON.parse(read('package.json')).version;
-  assert.match(version, /^\d+\.\d+\.\d+$/);
+  assert.match(version, /^\d+\.\d+\.\d+(?:-nightly\.[1-9]\d*)?$/);
   assert.equal(conf.version, version, 'tauri.conf.json');
   assert.equal(/^version = "([^"]+)"/m.exec(read('src-tauri/Cargo.toml'))[1], version, 'Cargo.toml');
   const lock = /name = "qchat"\s*\nversion = "([^"]+)"/.exec(read('src-tauri/Cargo.lock'));
