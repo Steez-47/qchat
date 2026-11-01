@@ -2,9 +2,10 @@
 
 Notable changes to QChat. Downloads, checksums and full verification notes for each version are on the [releases page](https://github.com/Steez-47/qchat/releases).
 
-## Unreleased
+## [1.4.1] - 2026-11-01
 
 ### Fixed
+- Idle folding follows the screen edge and keeps a bar with a draft open.
 - The model picker names the current Gemini model at launch instead of reading "Model" while Gemini's page loads. QChat also remembers the last model between launches.
 - A folded orb that was dragged to the other side of the screen now opens toward the middle of the screen instead of off the monitor edge.
 

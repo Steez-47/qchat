@@ -8,6 +8,13 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 
 ## Current state
 
+## v1.4.1 public release (2026-11-01)
+
+- Goal: publish the current build with synchronized v1.4.1 metadata, installer, portable executable, notices and checksums.
+- Parent owns release metadata and packaging; one cross-family reviewer checks the post-v1.4.0 orb/model changes read-only.
+- Status: v1.4.1 metadata and installer complete; Rust 34 PASS/1 intentional ignore and 99 syntax checks PASS. Full offline gate running. Installer payload/version, offline WebView2 signature, asInvoker manifest and checksums verified. Publication pending final offline results.
+- Review: requested Antigravity Sonnet medium; provider quota prevented review. Parent source/package checks complete, no application edits. Native mixed-DPI behavior, signed-in sending and clean-device installation remain unverified. Running app/profile preserved.
+
 - Latest release: v1.4.0 (2026-11-01). `main` is the only long-lived branch.
 - `npm test` runs the 54 headless suites. CI runs them on every push and pull request.
 

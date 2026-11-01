@@ -29,7 +29,7 @@ QChat sits over whatever you're doing as one small bar with a bubble or two, and
 
 ## Install
 
-Download `QChat_1.4.0_x64-setup.exe` from the [latest release](https://github.com/Steez-47/qchat/releases/latest) and run it.
+Download `QChat_1.4.1_x64-setup.exe` from the [latest release](https://github.com/Steez-47/qchat/releases/latest) and run it.
 
 - It installs for your Windows user, adds a Start menu shortcut, and includes the WebView2 runtime. Nothing else needs installing.
 - Quit any running QChat from its tray menu first. Your settings, chats and sign-in carry over.
