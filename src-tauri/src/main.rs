@@ -201,7 +201,7 @@ fn fit_logical(m: &tauri::Monitor, width: f64, height: f64, margin: f64) -> taur
 fn fit_size(r: Rect, scale: f64, width: f64, height: f64, margin: f64) -> (f64, f64) {
     let scale = if scale.is_finite() && scale > 0. { scale } else { 1. };
     let (aw, ah) = (r.w as f64 / scale - margin, r.h as f64 / scale - margin);
-    (width.min(aw).max(width.min(360.)).round(), height.min(ah).max(height.min(360.)).round())
+    (width.min(aw.max(1.)).floor(), height.min(ah.max(1.)).floor())
 }
 fn nearest_anchor(a: Anchor, areas: &[Rect]) -> Option<(Anchor, Rect)> {
     areas.iter().map(|r| {
@@ -966,8 +966,9 @@ mod tests {
         // Sign-in on 720p: both sides shrink.
         assert_eq!(super::fit_size(Rect{x:0,y:0,w:1280,h:680},1.,1000.,760.,64.),(1000.,616.));
         assert_eq!(super::fit_size(Rect{x:0,y:0,w:1024,h:600},1.,1000.,760.,64.),(960.,536.));
-        // A broken scale or a tiny area still leaves a usable window.
-        assert_eq!(super::fit_size(Rect{x:0,y:0,w:200,h:200},0.,620.,720.,48.),(360.,360.));
+        // Even high scaling and tiny work areas stay within the available area.
+        assert_eq!(super::fit_size(Rect{x:0,y:0,w:1280,h:680},2.,620.,720.,48.),(592.,292.));
+        assert_eq!(super::fit_size(Rect{x:0,y:0,w:200,h:200},0.,620.,720.,48.),(152.,152.));
     }
     #[test]
     fn auto_return_only_after_a_new_login_in_the_foreground() {
