@@ -178,6 +178,54 @@ try {
   await click('#picker [data-picker-key="model:thinking"]');
   await sleep(150);
   check('Gemini model pick calls chat_model_choose', await evalJS(`__mock.last('chat_model_choose')?.args.id==='thinking'`));
+  // A cold provider page can finish loading after the picker has already opened.
+  await open0('/?mock=signedin&nomodel');
+  await type('draft during Gemini startup');
+  await pill(); await sleep(80);
+  await evalJS(`__mock.statusHold=true; __mock.silentModels=true; __mock.modeUnavailable=true; __mock.calls=[]`);
+  await click('#picker [data-picker-key="provider:gemini"]');
+  await waitFor(`__mock.provider==='gemini' && !document.getElementById('btn-reasoning').disabled`);
+  check('cold Gemini waits for its page before requesting models', await evalJS(`__mock.count('chat_models')===0 && document.querySelector('#picker .picker-empty')?.textContent==='Loading models…'`));
+  await evalJS(`__mock.silentModels=false; __mock.modeUnavailable=false; __mock.emit('bridge',{type:'status',provider:'gemini',ready:true,loggedIn:true})`);
+  check('Gemini readiness loads Chat models without a mode toggle', await waitFor(`document.querySelectorAll('#picker .picker-row').length===3`) && await evalJS(`__mock.last('chat_models')?.args.mode==='chat' && __mock.count('chat_mode_set')===0`));
+  check('Gemini readiness refreshes the available modes', await evalJS(`document.querySelector('#picker [data-picker-key="mode:work"]').getAttribute('aria-disabled')!=='true'`));
+  check('startup recovery preserves the draft and open picker', await pickerOpen() && await evalJS(`document.getElementById('prompt-input').value==='draft during Gemini startup'`) && (await chatState()).mode==='chat');
+  const readyReads = await evalJS(`__mock.count('chat_models')`);
+  await evalJS(`__mock.emit('bridge',{type:'status',provider:'gemini',ready:true,loggedIn:true})`);
+  check('unchanged ready status does not reread the menu', await evalJS(`__mock.count('chat_models')`)===readyReads);
+
+  // The composer can become ready before Gemini draws its model switcher.
+  await open0('/?mock=signedin&nomodel');
+  await pill(); await sleep(80);
+  await evalJS(`__mock.silentModels=true; __mock.calls=[]`);
+  await click('#picker [data-picker-key="provider:gemini"]');
+  await waitFor(`__mock.count('chat_models')===1`);
+  await evalJS(`__mock.emit('bridge',{type:'models',provider:'gemini',models:[],error:'unavailable'})`);
+  check('a missing Gemini switcher reports a failed first read', (await rows()).length===0 && await evalJS(`document.querySelector('#picker .picker-empty')?.textContent.includes("read the model list")`));
+  await evalJS(`__mock.silentModels=false; __mock.emit('bridge',{type:'status',provider:'gemini',ready:true,loggedIn:true,model:'Flash-Lite'})`);
+  check('late Gemini switcher recovers the model list automatically', await waitFor(`document.querySelectorAll('#picker .picker-row').length===3`) && await evalJS(`__mock.count('chat_models')===2 && __mock.count('chat_mode_set')===0`));
+  await press2('Escape');
+  await evalJS(`__mock.silentModels=true; __mock.calls=[]`);
+  await pill();
+  await evalJS(`__mock.emit('bridge',{type:'status',provider:'gemini',ready:false,loggedIn:true}); __mock.silentModels=false; __mock.emit('bridge',{type:'status',provider:'gemini',ready:true,loggedIn:true,model:'Flash-Lite'})`);
+  check('Gemini reload replaces a request lost with the old page', await waitFor(`__mock.count('chat_models')===2`) && (await rows()).join()==='Flash-Lite,Pro,Thinking');
+
+  // A ready event must not open a dismissed picker or touch the other provider.
+  await open0('/?mock=signedin&nomodel');
+  await pill(); await sleep(80);
+  await evalJS(`__mock.statusHold=true; __mock.calls=[]`);
+  await click('#picker [data-picker-key="provider:gemini"]');
+  await waitFor(`__mock.provider==='gemini' && !document.getElementById('btn-reasoning').disabled`);
+  await press2('Escape');
+  await evalJS(`__mock.calls=[]; __mock.emit('bridge',{type:'status',provider:'gemini',ready:true,loggedIn:true,model:'Flash-Lite'})`);
+  check('Gemini readiness leaves a dismissed picker alone', !(await pickerOpen()) && await evalJS(`__mock.count('chat_models')===0`));
+  await pill();
+  await waitFor(`document.querySelectorAll('#picker .picker-row').length===3`);
+  await click('#picker [data-picker-key="provider:chatgpt"]');
+  await waitFor(`__mock.provider==='chatgpt' && document.querySelector('#picker .picker-effort')`);
+  await evalJS(`__mock.calls=[]; __mock.emit('bridge',{type:'status',provider:'gemini',ready:false,loggedIn:true}); __mock.emit('bridge',{type:'status',provider:'gemini',ready:true,loggedIn:true,model:'Thinking'})`);
+  check('background Gemini readiness leaves ChatGPT models alone', (await rows()).join()==='Mock model,Mock alternate' && await evalJS(`__mock.count('chat_models')===0`));
+
   // Gemini reasoning rows and the failure copy
   await open0('/?mock=signedin');
   await evalJS(`__mock.levels=[{id:'std',label:'Standard',selected:true,meta:'Balanced'},{id:'ext',label:'Extended',meta:'Slower'}]`);
