@@ -29,6 +29,60 @@
     return cancel;
   }
 
+  // A closing popover leaves as a ghost. The real node hides at once, so focus, state and
+  // hit-testing change immediately, and an inert copy fades out where it stood. The ghost
+  // takes no pointer events, so it also drops out of the click-through and blur surfaces.
+  // Call this before the node is hidden or emptied. An in-flow node's copy is pinned by its
+  // bottom edge, because the stack grows up from the bar: the copy stays where the node was
+  // while the layout settles at once, as leaving bubbles do.
+  const LEAVE_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+  // Notices sink a little toward the bar they came out of.
+  const NOTICE_LEAVE = "translateY(6px) scale(0.98)";
+  const ghosts = new WeakMap();
+  function dropGhost(node) {
+    const ghost = ghosts.get(node);
+    if (!ghost) return;
+    ghosts.delete(node);
+    ghost.getAnimations().forEach((a) => a.cancel());
+    ghost.remove();
+  }
+  function leaveAsGhost(node, transform = "translateY(4px) scale(0.98)") {
+    // Already closed: a repeated close leaves the ghost of the first one fading.
+    if (node.hidden) return;
+    dropGhost(node);
+    if (!QSettings.motionOn || !node.isConnected || !node.getClientRects().length) return;
+    const ghost = node.cloneNode(true);
+    for (const n of [ghost, ...ghost.querySelectorAll("[id]")]) n.removeAttribute("id");
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.removeAttribute("role");
+    ghost.inert = true;
+    ghost.dataset.ghost = "";
+    ghost.style.pointerEvents = "none";
+    ghost.style.animation = "none";
+    if (!/absolute|fixed/.test(getComputedStyle(node).position)) {
+      const parent = node.offsetParent;
+      if (!parent || node.parentElement !== parent) return;
+      Object.assign(ghost.style, {
+        position: "absolute", top: "auto", margin: "0",
+        // The used width, unrounded and untransformed: a rounded one can rewrap the text.
+        left: `${node.offsetLeft}px`, width: getComputedStyle(node).width,
+        bottom: `${parent.clientHeight - node.offsetTop - node.offsetHeight}px`
+      });
+    }
+    node.after(ghost);
+    ghost.scrollTop = node.scrollTop;
+    ghosts.set(node, ghost);
+    const base = getComputedStyle(node).transform;
+    const from = base === "none" ? "none" : base;
+    const to = base === "none" ? transform : `${base} ${transform}`;
+    const animation = ghost.animate(
+      [{ opacity: 1, transform: from }, { opacity: 0, transform: to }],
+      { duration: Math.max(1, Math.round(QSettings.timings.t1 * 1.1)), easing: LEAVE_EASE, fill: "forwards" }
+    );
+    const done = () => { if (ghosts.get(node) === ghost) ghosts.delete(node); ghost.remove(); };
+    animation.finished.then(done, done);
+  }
+
   // ---------------------------------------------------------------------------
   // 1. Theme
   // ---------------------------------------------------------------------------
@@ -403,6 +457,8 @@
   let autoDismissTimer = null;
   let historyOpen = false;
   let historyChatKey = null;
+  // How many of the newest history items to render; Infinity once all are in (growHistory).
+  let historyLimit = Infinity, historyGrowth = 0;
   let historyHideTimer = null;
   let historyHeld = false;
   const readingPositions = new Map();
@@ -428,7 +484,8 @@
   const stopBackend = () => invoke("chat_stop").catch(() => {});
   const finder = window.QFind.create({
     panel: el.historyPanel, controls: el.historyControls,
-    onOpen: () => { setHistoryOpen(true); historyHeld = true; },
+    // A search needs every message, so it does not wait for older ones to fill in.
+    onOpen: () => { setHistoryOpen(true); completeHistory(); historyHeld = true; },
     onClose: () => el.promptInput.focus({ preventScroll: true }),
     onHold: () => { historyHeld = true; },
     onLayout: queueSizes
@@ -667,7 +724,9 @@
       return;
     }
     el.historyControls.hidden = false;
-    const items = historyItems();
+    const all = historyItems();
+    // Opening a long chat shows its newest messages first; older ones fill in above (growHistory).
+    const items = all.length > historyLimit ? all.slice(-historyLimit) : all;
     const panel = el.historyPanel;
     if (historyChatKey !== chats.current.key) {
       panel.replaceChildren();
@@ -689,9 +748,12 @@
       if (item.role === "assistant" && item.stopped) {
         if (!stoppedNote) row.append(make("div", "turn-note", "Stopped"));
       } else if (stoppedNote) stoppedNote.remove();
-      // Completed messages are immutable during a stream; avoid reparsing them.
-      const fingerprint = JSON.stringify([item.text, item.selectionTexts, item.hasMedia, item.media, item.sources, item.stopped]);
-      if (row._historyFingerprint === fingerprint) continue;
+      // Completed messages are immutable during a stream; avoid reparsing them. This runs every
+      // streamed frame while history is open, so the text, the bulk of it, is compared as is
+      // (usually the very same string) instead of being serialised again for every message.
+      const fingerprint = JSON.stringify([item.selectionTexts, item.hasMedia, item.media, item.sources, item.stopped]);
+      if (row._historyText === item.text && row._historyFingerprint === fingerprint) continue;
+      row._historyText = item.text;
       row._historyFingerprint = fingerprint;
       row._copyText = item.text;
       row._userTurn = item.role === "user" ? item : null;
@@ -838,6 +900,8 @@
     if (state.history) {
       setHistoryOpen(true, { focus: false });
       const panel = el.historyPanel;
+      // The saved place may be among the older messages that fill in after opening.
+      if (state.anchor && ![...panel.children].some(node => node.dataset.id === state.anchor.id)) completeHistory();
       const row = state.anchor && [...panel.children].find(node => node.dataset.id === state.anchor.id);
       historyHeld = Boolean(row);
       if (row) panel.scrollTop += row.getBoundingClientRect().top - panel.getBoundingClientRect().top + state.anchor.offset;
@@ -852,6 +916,37 @@
         syncScrollState(entry);
       }
     }
+  }
+
+  // Every row is parsed when History opens, which froze a long chat for a moment. The newest
+  // messages that fill the panel render at once, then older ones are added above a few per
+  // frame; renderHistory keeps the reader's place as they arrive, as it does for backfills.
+  const HISTORY_FIRST_CHARS = 9000, HISTORY_STEP_CHARS = 7000;
+  // How many of the newest items hold about `chars` characters, never fewer than four.
+  function historyTail(items, from, chars) {
+    let count = from, total = 0;
+    while (count < items.length && (count - from < 4 || total < chars)) total += (items[items.length - 1 - count++].text || "").length + 200;
+    return count;
+  }
+  // Everything at once, for a caller that needs a row that may not be in yet.
+  function completeHistory() {
+    if (historyLimit === Infinity) return;
+    historyGrowth++;
+    historyLimit = Infinity;
+    renderHistory();
+  }
+  function growHistory() {
+    const mine = ++historyGrowth;
+    const step = () => {
+      if (mine !== historyGrowth || !historyOpen) return;
+      const items = historyItems();
+      if (historyLimit >= items.length) { historyLimit = Infinity; return; }
+      historyLimit = historyTail(items, historyLimit, HISTORY_STEP_CHARS);
+      if (historyLimit >= items.length) historyLimit = Infinity;
+      renderHistory();
+      if (historyLimit !== Infinity) nextFrame(step);
+    };
+    nextFrame(step);
   }
 
   function setHistoryOpen(open, { focus = true } = {}) {
@@ -871,7 +966,11 @@
       historyHeld = false;
       el.stack.toggleAttribute("data-history", true);
       panel.hidden = false;
+      const items = historyItems();
+      historyLimit = historyTail(items, 0, HISTORY_FIRST_CHARS);
+      if (historyLimit >= items.length) historyLimit = Infinity;
       renderHistory();
+      if (historyLimit !== Infinity) growHistory();
       updateBubbleMax();
       syncHistoryHeight();
       panel.scrollTop = panel.scrollHeight;
@@ -887,6 +986,8 @@
     } else {
       const bottom = el.stack.getBoundingClientRect().bottom - panel.getBoundingClientRect().bottom;
       historyOpen = false;
+      historyGrowth++;
+      historyLimit = Infinity;
       el.stack.toggleAttribute("data-history", false);
       setHistoryStatus("");
       if (QSettings.motionOn) {
@@ -1836,7 +1937,11 @@
   function syncScrollState(entry) {
     const { scroller, row, jump } = entry;
     const capped = row.hasAttribute("data-capped");
-    jump.hidden = !capped || scrollGap(scroller) <= 2 || (!userScrolledUp && QSettings.settings.followStream !== false);
+    const hide = !capped || scrollGap(scroller) <= 2 || (!userScrolledUp && QSettings.settings.followStream !== false);
+    if (hide !== jump.hidden) {
+      if (hide) leaveAsGhost(jump, "translateY(6px) scale(0.96)"); else dropGhost(jump);
+      jump.hidden = hide;
+    }
     scroller.toggleAttribute("data-above", capped && scroller.scrollTop > 2);
     scroller.toggleAttribute("data-below", capped && scrollGap(scroller) > 2);
   }
@@ -2061,6 +2166,7 @@
     jump.append(makeIcon(GLYPH.down), document.createTextNode("Latest"));
     jump.addEventListener("click", () => {
       userScrolledUp = false;
+      leaveAsGhost(jump, "translateY(6px) scale(0.96)");
       jump.hidden = true;
       scroller.scrollTop = scroller.scrollHeight;
       const entry = turnNodes.get(turn.id);
@@ -2294,7 +2400,22 @@
   // One buffered reveal path for every stream style. Text appears a finished block at a time:
   // the latest snapshot is cut at the largest complete prefix, and the final snapshot is shown
   // whole. There are no timers, so nothing can reopen a turn that finished or was stopped.
+  // The bridge sends the whole text on every delta, often many times a frame. Only the latest
+  // snapshot matters, so deltas are coalesced into one pass per frame; anything that needs the
+  // text shown at once (done, stop, settings) calls paceTurn directly, which settles a queued pass.
+  const pacing = new Map();
+  function queuePace(turn) {
+    // Until a reveal exists, a render shows the raw text: start one now, so nothing that renders
+    // before the queued pass (a size change, a tool chip) can flash the unfinished tail.
+    const entry = turnNodes.get(turn.id);
+    if (entry && turn.status === "streaming") entry.reveal ||= { visible: "", target: null };
+    if (pacing.has(turn.id)) return;
+    pacing.set(turn.id, nextFrame(() => { pacing.delete(turn.id); paceTurn(turn); }));
+  }
+
   function paceTurn(turn) {
+    pacing.get(turn.id)?.();
+    pacing.delete(turn.id);
     const entry = turnNodes.get(turn.id);
     if (!entry || turn.status !== "streaming") return;
     const state = entry.reveal ||= { visible: "", target: null };
@@ -3093,6 +3214,7 @@
     closeSlashMenu();
     hideClearConfirm();
     pickerOpen = true;
+    dropGhost(el.picker);
     el.picker.hidden = false;
     el.btnReasoning.setAttribute("aria-expanded", "true");
     renderPicker();
@@ -3107,6 +3229,7 @@
     if (!pickerOpen) return;
     pickerOpen = false;
     cancelModelRequest();
+    leaveAsGhost(el.picker);
     el.picker.hidden = true;
     el.picker.replaceChildren();
     el.btnReasoning.setAttribute("aria-expanded", "false");
@@ -3491,10 +3614,61 @@
     return group;
   }
 
+  // Where each segmented control's selection sat before a re-render, relative to its group.
+  function segmentSelections() {
+    const spots = new Map();
+    for (const group of el.picker.querySelectorAll('[role="radiogroup"]')) {
+      const on = group.querySelector('[aria-checked="true"]');
+      if (!on) continue;
+      const box = group.getBoundingClientRect(), b = on.getBoundingClientRect();
+      spots.set(group.getAttribute("aria-label"), { x: b.left - box.left, w: b.width });
+    }
+    return spots;
+  }
+
+  // After a re-render, a changed choice slides its pill across from the old one, and the
+  // popover eases to its new height instead of snapping. Both are small and absolutely
+  // placed, so the stack never reflows.
+  function smoothPicker(spots, oldHeight) {
+    if (!QSettings.motionOn) return;
+    const duration = Math.max(1, QSettings.timings.t2);
+    for (const group of el.picker.querySelectorAll('[role="radiogroup"]')) {
+      const from = spots.get(group.getAttribute("aria-label"));
+      const on = group.querySelector('[aria-checked="true"]');
+      if (!from || !on) continue;
+      const box = group.getBoundingClientRect(), b = on.getBoundingClientRect();
+      const to = { x: b.left - box.left, w: b.width };
+      if (Math.abs(from.x - to.x) < 1 && Math.abs(from.w - to.w) < 1) continue;
+      const pill = make("span", "picker-pill");
+      pill.setAttribute("aria-hidden", "true");
+      pill.style.top = `${b.top - box.top}px`;
+      pill.style.height = `${b.height}px`;
+      group.prepend(pill);
+      group.dataset.sliding = "";
+      const slide = pill.animate(
+        [{ left: `${from.x}px`, width: `${from.w}px` }, { left: `${to.x}px`, width: `${to.w}px` }],
+        { duration, easing: LEAVE_EASE, fill: "forwards" }
+      );
+      const done = () => { pill.remove(); delete group.dataset.sliding; };
+      slide.finished.then(done, done);
+    }
+    const height = el.picker.getBoundingClientRect().height;
+    if (oldHeight && Math.abs(height - oldHeight) > 1) {
+      el.picker.animate(
+        [{ height: `${oldHeight}px`, overflowY: "hidden" }, { height: `${height}px`, overflowY: "hidden" }],
+        { duration, easing: LEAVE_EASE }
+      );
+    }
+  }
+
   function renderPicker() {
     if (!pickerOpen) return;
     const focusedKey = el.picker.contains(document.activeElement) ? document.activeElement.dataset.pickerKey : null;
     const scroll = el.picker.scrollTop;
+    const spots = segmentSelections();
+    // Only a picker already on screen eases its height; the first render rises in instead.
+    const oldHeight = el.picker.childElementCount ? el.picker.getBoundingClientRect().height : 0;
+    el.picker.getAnimations().forEach((a) => { if (!a.animationName) a.cancel(); });
     const provider = activeProvider;
     const mode = effectiveMode();
     const temporary = Boolean(chats.current.temporary);
@@ -3569,6 +3743,7 @@
       if (next && !next.disabled) pickerFocus(next);
     }
     el.picker.scrollTop = scroll;
+    smoothPicker(spots, oldHeight);
   }
 
   document.addEventListener("pointerdown", (event) => {
@@ -3757,6 +3932,7 @@
 
   function closeSlashMenu() {
     commandMenu = false;
+    leaveAsGhost(el.slashMenu);
     el.slashMenu.hidden = true;
     el.slashMenu.replaceChildren();
     slashMatches = [];
@@ -3796,6 +3972,7 @@
       item.addEventListener("mousedown", (e) => { e.preventDefault(); runCommand(cmd); });
       return item;
     }));
+    if (!wasOpen) dropGhost(el.slashMenu);
     el.slashMenu.hidden = false;
     el.promptInput.setAttribute("aria-expanded", "true");
     paintSlashSelection();
@@ -3818,6 +3995,7 @@
     if (["ArrowLeft", "ArrowRight"].includes(e.key)) { e.preventDefault(); (document.activeElement === el.btnClearYes ? el.btnClearNo : el.btnClearYes).focus(); }
   });
   function showClearConfirm() {
+    dropGhost(el.clearConfirm);
     el.clearConfirm.hidden = false;
     syncMenuFlag();
     queueSizes();
@@ -3826,6 +4004,7 @@
 
   function hideClearConfirm() {
     if (el.clearConfirm.hidden) return;
+    leaveAsGhost(el.clearConfirm, NOTICE_LEAVE);
     el.clearConfirm.hidden = true;
     syncMenuFlag();
     queueSizes();
@@ -3908,7 +4087,11 @@
       el.guestTitle.textContent = "Guest mode";
       el.guestMessage.textContent = "Sign in to use your models and history.";
     }
-    if (el.guestNotice.hidden === show) { el.guestNotice.hidden = !show; queueSizes(); }
+    if (el.guestNotice.hidden === show) {
+      if (show) dropGhost(el.guestNotice); else leaveAsGhost(el.guestNotice, NOTICE_LEAVE);
+      el.guestNotice.hidden = !show;
+      queueSizes();
+    }
   }
 
   function updateIdleChips() {
@@ -3925,6 +4108,7 @@
     el.btnErrorSignin.textContent = retry ? "Try again" : "Sign in";
     el.btnErrorSignin.dataset.action = retry ? "retry-connect" : "signin";
     connectErrorShown = retry;
+    dropGhost(el.globalError);
     el.globalError.hidden = false;
     setStatusError();
     queueSizes();
@@ -3933,6 +4117,7 @@
   function hideGlobalError() {
     if (el.globalError.hidden) return;
     globalErrorRevision++;
+    leaveAsGhost(el.globalError, NOTICE_LEAVE);
     el.globalError.hidden = true;
     el.globalErrorText.textContent = "";
     el.btnErrorSignin.hidden = true;
@@ -4023,6 +4208,7 @@
     clearTimeout(undoExpiryTimer);
     pendingChatUndo = pendingChatUndo.filter(item => item.expires > Date.now());
     if (!pendingChatUndo.length) {
+      leaveAsGhost(commandFeedback, NOTICE_LEAVE);
       commandFeedback.hidden = true;
     } else {
       const latest = pendingChatUndo[pendingChatUndo.length - 1];
@@ -4031,6 +4217,7 @@
       button.type = "button";
       button.addEventListener("click", () => void undoChatChange());
       commandFeedback.append(button);
+      dropGhost(commandFeedback);
       commandFeedback.hidden = false;
       undoExpiryTimer = setTimeout(() => paintChatUndo(), Math.max(1, Math.min(...pendingChatUndo.map(item => item.expires)) - Date.now()));
     }
@@ -4156,6 +4343,7 @@
     copyGeneration++;
     clearTimeout(commandFeedbackTimer);
     if (pendingChatUndo.length) { paintChatUndo(); return; }
+    leaveAsGhost(commandFeedback, NOTICE_LEAVE);
     commandFeedback.hidden = true;
     syncMenuFlag();
     queueSizes();
@@ -4168,6 +4356,7 @@
       return;
     }
     commandFeedback.textContent = message;
+    dropGhost(commandFeedback);
     commandFeedback.hidden = false;
     syncMenuFlag();
     queueSizes();
@@ -4290,15 +4479,27 @@
       buttonEl._prevTitle = buttonEl.title;
       if (label) buttonEl._prevLabel = label.textContent;
     }
-    if (icon) icon.textContent = GLYPH.check;
+    if (icon) { icon.textContent = GLYPH.check; popIcon(icon); }
     if (label) label.textContent = "Copied";
     buttonEl.title = "Copied";
     buttonEl._copyTimer = setTimeout(() => {
       buttonEl._copyTimer = null;
-      if (icon) icon.textContent = GLYPH.copy;
+      if (icon) { icon.textContent = GLYPH.copy; popIcon(icon, 0.8); }
       if (label) label.textContent = buttonEl._prevLabel;
       buttonEl.title = buttonEl._prevTitle;
     }, 1200);
+    return true;
+  }
+
+  // A glyph that just changed meaning (copy to check and back) settles in from a little
+  // smaller. The icon is a few pixels wide, so it scales on its own small layer.
+  function popIcon(icon, from = 0.6) {
+    if (!QSettings.motionOn || !icon.animate) return;
+    icon.getAnimations().forEach((a) => a.cancel());
+    icon.animate(
+      [{ opacity: 0.35, transform: `scale(${from})` }, { opacity: 1, transform: "none" }],
+      { duration: Math.max(1, QSettings.timings.t2), easing: LEAVE_EASE }
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -4869,7 +5070,7 @@
         const turn = turns.find((t) => t.id === evt.id);
         if (turn?.status === "streaming" && !turn.backendDone) {
           turn.text = String(evt.text ?? "");
-          paceTurn(turn);
+          queuePace(turn);
         }
         break;
       }

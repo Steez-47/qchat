@@ -16,7 +16,7 @@ assert.equal(md('<Cite refs={["turn1search0:L1-L3","turn2search0"]}/>',{citation
 for(const code of ['`<Entity value="x"/>`','``a ` <Cite ref="x"/>``','~~~~\n<Entity value="x"/>\n~~~~','````\n```\n<Cite/>','~~~\n<Entity/>']) assert.equal(md(code),code);
 assert.equal(md('x < 3 and &lt;tag&gt;'), 'x &lt; 3 and &lt;tag&gt;');
 for (const s of ['<Future','<Future a="x>','<Future a={{"x":[1,2]']) assert.equal(md('hello '+s),'hello ');
-for(const tag of ['u','mark','sub','sup','table','thead','tbody','tr','td','th','dl','dt','dd','details','summary','figure','figcaption']) assert.equal(md(`<${tag} onclick="bad()">word</${tag}>`).trim(),`<${tag}>word</${tag}>`);
+for(const tag of ['u','mark','sub','sup','kbd','table','thead','tbody','tr','td','th','dl','dt','dd','details','summary','figure','figcaption']) assert.equal(md(`<${tag} onclick="bad()">word</${tag}>`).trim(),`<${tag}>word</${tag}>`);
 for(const tag of ['b','strong','i','em','s','del','h1','h6','p','div','blockquote','li','ul','ol','pre','code','title','caption','box','row','col','column','stack','grid','grid-item','text','card','section']) assert.match(md(`<${tag}>word</${tag}>`), /word/);
 assert.equal(md('<pre><code>&lt;Entity/&gt;</code></pre>'), '\n\n~~~\n<Entity/>\n~~~\n\n');
 assert.equal(md('<img src="https://evil.example/image" alt="photo"/>'),'photo');

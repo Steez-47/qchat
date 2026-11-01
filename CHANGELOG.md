@@ -4,6 +4,22 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-02
+
+### Changed
+- Long replies stream far more smoothly. A long technical answer used to freeze the window for up to a second at a time as it grew; it now streams without a hitch and uses about a third of the processor time.
+- A long History opens at once with its newest messages and fills in the rest, and scrolling it is lighter.
+- Smoother motion throughout. The picker, command menu, All chats, find and rename bars, the Latest chip, the thinking chip and Settings pages ease in; menus and notices fade out where they stood instead of vanishing, without ever delaying what you do next.
+- Picking a provider, mode or effort slides the selection across, and the picker eases to its new height when its list changes.
+- Copy buttons pop their check mark in and back.
+- Opening the folded orb brings the reply and the bar's contents back right away, so the bar no longer sits empty for a moment.
+
+### Fixed
+- Reply text no longer shows through the picker and command menu.
+- Table columns aligned to the centre or right in a reply now line up that way.
+- Task lists show their checkboxes without a bullet beside them.
+- Keyboard shortcuts written as keys, like Ctrl + C, show as keys instead of plain text.
+
 ## [1.5.0] - 2026-11-01
 
 ### Added
@@ -137,6 +153,7 @@ First beta: Snapshot attachments, per-chat reasoning, file attachments and media
 [0.1.2]: https://github.com/Steez-47/qchat/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Steez-47/qchat/releases/tag/v0.1.1
 
+[1.5.1]: https://github.com/Steez-47/qchat/releases/tag/v1.5.1
 [1.5.0]: https://github.com/Steez-47/qchat/releases/tag/v1.5.0
 [1.4.2]: https://github.com/Steez-47/qchat/releases/tag/v1.4.2
 [1.4.1]: https://github.com/Steez-47/qchat/releases/tag/v1.4.1

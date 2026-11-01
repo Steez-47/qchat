@@ -86,12 +86,18 @@ html[data-mode="light"] {
   padding: 8px;
   border-radius: 16px;
   transform-origin: 100% 100%;
-  animation: picker-in 140ms var(--ease-out);
+  animation: picker-in var(--t2) var(--ease-out) both;
 }
-@keyframes picker-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes picker-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } }
 html[data-motion="off"] .picker { animation: none; }
 
-.picker-seg { display: flex; gap: 2px; }
+.picker-seg { position: relative; display: flex; gap: 2px; }
+.picker-effort-seg { position: relative; }
+.picker-seg-btn, .picker-effort-seg button { position: relative; z-index: 1; }
+/* A changed choice's fill slides over from the old one (app.js, smoothPicker). */
+.picker-pill { position: absolute; z-index: 0; border-radius: 8px; background: var(--fill-2); pointer-events: none; }
+.picker-effort-seg .picker-pill { border-radius: 6px; }
+.picker [data-sliding] > [aria-checked="true"] { background: transparent; }
 .picker-seg-btn {
   flex: 1 1 0;
   min-width: 0;
@@ -632,6 +638,21 @@ html[data-justify="true"] .bubble-response .turn-content p { text-align: justify
 .turn-content li > :last-child { margin-bottom: 0; }
 .turn-content li > ul, .turn-content li > ol { margin: 0.4em 0; }
 .turn-content li::marker { color: var(--accent-text); font-weight: 650; }
+/* Task lists: the checkbox takes the bullet's place, in tight lists and in loose ones (<li><p>). */
+.turn-content li:has(> input[type="checkbox"]:first-child, > p:first-child > input[type="checkbox"]:first-child) { list-style: none; margin-left: -1.35em; }
+.turn-content li > :is(input, p:first-child > input)[type="checkbox"]:first-child { width: 0.95em; height: 0.95em; margin: 0 0.5em 0 0; vertical-align: -0.12em; accent-color: var(--accent-2); }
+/* Keyboard keys, as on the shortcuts card. */
+.turn-content kbd {
+  display: inline-block;
+  min-width: 1.7em;
+  padding: 0 0.42em;
+  border-radius: 5px;
+  background: var(--fill-1);
+  box-shadow: inset 0 0 0 1px var(--stroke-1), inset 0 -1px 0 var(--stroke-1);
+  font: 500 0.84em/1.65 var(--font-small);
+  text-align: center;
+  white-space: nowrap;
+}
 .turn-content h1, .turn-content h2, .turn-content h3,
 .turn-content h4, .turn-content h5, .turn-content h6 {
   margin: 1.45em 0 0.5em;
@@ -724,6 +745,9 @@ html[data-codewrap="true"] .code-block pre { white-space: pre-wrap; overflow-wra
 }
 .turn-content th, .turn-content td { padding: 9px 12px; text-align: left; vertical-align: top; box-shadow: inset 0 -1px 0 var(--stroke-1); }
 .turn-content th { font-weight: 700; background: var(--fill-2); }
+/* GFM column alignment (:---: and ---:) arrives as align attributes; numbers line up right. */
+.turn-content :is(th, td)[align="center"] { text-align: center; }
+.turn-content :is(th, td)[align="right"] { text-align: right; }
 .turn-content tbody tr:nth-child(even) { background: var(--fill-1); }
 .turn-content tr:last-child td { box-shadow: none; }
 
@@ -1149,14 +1173,14 @@ html[data-collapse][data-orbstyle="hidden"] .orb { width: 18px; margin: calc((va
   position: absolute; bottom: calc(100% + var(--stack-gap)); left: 0;
   display: flex; align-items: center; gap: 2px; padding: 3px;
   border-radius: var(--r-chip); white-space: nowrap; pointer-events: auto;
-  animation: update-chip-in var(--t2) var(--ease-out);
+  transform-origin: 0 100%;
+  animation: menu-in var(--t2) var(--ease-out) both;
 }
 .update-chip[hidden] { display: none; }
 .stack[data-update-chip] .tabs { visibility: hidden; }
 .update-chip .btn { display: inline-flex; align-items: center; min-height: 28px; }
 .update-chip .icon-btn { width: 28px; height: 28px; }
 .update-chip .icon-btn[hidden] { display: none; }
-@keyframes update-chip-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .update-chip { animation: none; } }
 
 /* ---------------------------------------------------------------------------
@@ -1233,3 +1257,27 @@ html[data-orb-task="attention"] .orb-badge { background: var(--attention-badge);
 @keyframes orb-badge-in { from { opacity: 0; transform: scale(.6); } }
 html[data-motion="off"] .orb-badge { animation: none; }
 @media (prefers-reduced-motion: reduce) { .orb-badge { animation: none; } }
+
+/* ---------------------------------------------------------------------------
+   Small entrances. Popovers and chips that open over the stack rise a few pixels
+   out of the bar as they fade in; closing ones leave as an inert ghost (app.js,
+   leaveAsGhost) so state changes at once. Transform and opacity only, ease-out,
+   never on hover or press.
+   --------------------------------------------------------------------------- */
+@keyframes menu-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } }
+@keyframes chip-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes jump-in { from { opacity: 0; transform: translate(-50%, 6px) scale(0.96); } }
+@keyframes thinking-in { from { opacity: 0; transform: translateY(3px) scale(0.9); } }
+.slash-menu { animation: menu-in var(--t2) var(--ease-out) both; }
+.feature-list:not([data-leaving]) { transform-origin: 50% 100%; animation: menu-in var(--t2) var(--ease-out) both; }
+.jump-chip { animation: jump-in var(--t2) var(--ease-out) both; }
+.find-bar, .rename-bar, .mode-chip { animation: chip-in var(--t2) var(--ease-out) both; }
+.thinking { transform-origin: 0 100%; animation: thinking-in var(--t2) var(--ease-out) both; }
+/* The tab row fades back once a confirm or rename bar that stood in for it goes away. */
+.tabs { animation: fade-in var(--t2) linear both; }
+[data-ghost] { pointer-events: none; }
+/* Popovers open over the conversation, which the native blur never reaches: like the
+   Latest chip and the reply tools, they turn near-solid so reply text cannot show through. */
+.picker, .slash-menu, .update-chip { --fill-alpha: max(var(--glass-a), 0.94); }
+html[data-motion="off"] :is(.slash-menu, .feature-list, .update-chip, .jump-chip, .find-bar, .rename-bar, .mode-chip, .thinking, .tabs) { animation: none !important; }
+html[data-motion="off"] [data-ghost] { display: none; }

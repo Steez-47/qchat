@@ -869,15 +869,14 @@
   // DOM rendering: never innerHTML — text nodes and spans only.
   // ---------------------------------------------------------------------------
   const rendered = new WeakMap();
+  // Finished code blocks are parsed again every time a reply grows by a block, so their
+  // highlighted DOM is kept, keyed by language and text, and comes back as one native clone.
+  // Small and bounded: an LRU by entry count and by total characters.
+  const built = new Map();
+  let builtChars = 0;
+  const MAX_BUILT = 64, MAX_BUILT_CHARS = 1500000;
 
-  function highlightInto(el, code, lang) {
-    if (!el || typeof document === "undefined" || typeof el.appendChild !== "function") return;
-    const src = String(code == null ? "" : code);
-    const langKey = String(lang == null ? "" : lang);
-    const prev = rendered.get(el);
-    if (prev && prev.code === src && prev.lang === langKey) return; // unchanged: cheap no-op
-
-    const toks = tokenize(src, langKey);
+  function build(toks) {
     const frag = document.createDocumentFragment();
     for (const tok of toks) {
       if (tok.t == null) {
@@ -889,8 +888,38 @@
         frag.appendChild(span);
       }
     }
+    return frag;
+  }
+
+  function highlighted(src, langKey) {
+    const key = langKey + "\u0000" + src;
+    let frag = built.get(key);
+    if (frag) { built.delete(key); built.set(key, frag); return frag; }
+    frag = build(tokenize(src, langKey));
+    if (src.length > MAX_BUILT_CHARS / 4) return frag;
+    built.set(key, frag);
+    builtChars += src.length;
+    while (built.size > MAX_BUILT || builtChars > MAX_BUILT_CHARS) {
+      const oldest = built.keys().next().value;
+      builtChars -= oldest.length - oldest.indexOf("\u0000") - 1;
+      built.delete(oldest);
+    }
+    return frag;
+  }
+
+  function highlightInto(el, code, lang) {
+    if (!el || typeof document === "undefined" || typeof el.appendChild !== "function") return;
+    const src = String(code == null ? "" : code);
+    const langKey = String(lang == null ? "" : lang);
+    const prev = rendered.get(el);
+    if (prev && prev.code === src && prev.lang === langKey) return; // unchanged: cheap no-op
+
+    // Clone straight into the target's own document. A reply is parsed in an inert <template>,
+    // and nodes made by the page's document would each be adopted across on insertion.
+    const doc = el.ownerDocument || document;
+    const copy = doc.importNode(highlighted(src, langKey), true);
     while (el.firstChild) el.removeChild(el.firstChild);
-    el.appendChild(frag);
+    el.appendChild(copy);
     rendered.set(el, { code: src, lang: langKey });
   }
 

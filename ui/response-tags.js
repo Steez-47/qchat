@@ -289,7 +289,7 @@
     }
     return partial();
   }
-  const inert = new Set('u ins mark sub sup table thead tbody tfoot tr th td dl dt dd details summary figure figcaption'.split(' '));
+  const inert = new Set('u ins mark sub sup kbd table thead tbody tfoot tr th td dl dt dd details summary figure figcaption'.split(' '));
   const blocks = new Set('box row col column stack grid text card section div p article header footer main aside ul ol'.split(' '));
   const blocked = /^(script|style|iframe|svg|object|template)$/i;
   function readableBody(body) {

@@ -44,7 +44,8 @@
 
     // Objects above the bar, top first. checkVisibility() without options still counts
     // visibility:hidden, so this also finds the parts while they rest folded.
-    const parts = () => [...stack.children].filter((n) => !n.contains(bar) && !n.hidden && n.checkVisibility());
+    // A closing notice's fading copy (data-ghost) cleans itself up, so it is never a part.
+    const parts = () => [...stack.children].filter((n) => !n.contains(bar) && !n.hidden && !n.hasAttribute("data-ghost") && n.checkVisibility());
     // What the bar holds besides the orb it closes into.
     const contents = () => [...bar.children].filter((n) => n !== orb && !n.hidden && !n.matches(".sr-only, .prompt-measure"));
 
@@ -161,15 +162,17 @@
         { width: px(from.width), height: px(from.height), borderRadius: radius },
         { width: px(to.width), height: px(to.height), borderRadius: toRadius }
       ], { duration: grow, easing: easeMove() })];
+      // The growth eases out, so the bar looks open well before its timing ends. Contents and
+      // stack follow that visible shape, not the full duration, or the open bar sits empty.
       // Single keyframes end on each element's own value, so a hidden Send stays hidden.
       for (const node of inside) {
         const first = wasClosed ? { opacity: 0 } : { opacity: start.get(node).opacity };
-        animations.push(play(node, [{ ...first, offset: 0 }], { duration: t.t2, delay: wasClosed ? Math.round(grow * 0.45) : 0, easing: "linear" }));
+        animations.push(play(node, [{ ...first, offset: 0 }], { duration: t.t2, delay: wasClosed ? Math.round(grow * 0.22) : 0, easing: "linear" }));
       }
       // Nearest first, so the stack rises back out of the bar.
       [...folding].reverse().forEach((part, i) => {
         const first = wasClosed ? { opacity: 0, transform: sink(part) } : start.get(part);
-        animations.push(play(part, [{ ...first, offset: 0 }], { duration: t.t3, delay: wasClosed ? Math.round(grow * 0.3) + i * 40 : 0, easing: EASE_OUT }));
+        animations.push(play(part, [{ ...first, offset: 0 }], { duration: t.t3, delay: wasClosed ? Math.round(grow * 0.16) + i * 40 : 0, easing: EASE_OUT }));
       });
       settle(animations, opened);
     }
