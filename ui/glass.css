@@ -238,18 +238,21 @@ html[data-motion="off"] .bar-input { transition: none; }
 /* ---------------------------------------------------------------------------
    Recent-chat tabs: attached to the bar's top edge, with room for every title
    --------------------------------------------------------------------------- */
+/* A grid, not a flex row: when titles do not all fit, free space is shared out evenly and
+   each tab stops at its own width, so a short title stays whole and only long ones shorten. */
 .tabs {
   position: relative;
   z-index: 2;
-  display: flex;
-  justify-content: flex-start;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(auto, max-content);
+  justify-content: start;
   gap: 4px;
   min-width: 0;
   padding-inline: calc(var(--r-bar) * 0.72 + 6px) 8px;
   margin-bottom: calc(-1 * var(--stack-gap, 8px));
 }
 .tab {
-  flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -303,7 +306,7 @@ html[data-motion="on"][data-tabpop="true"] .tab.pop {
 .send-btn:disabled:not([data-mode="stop"]) { opacity: 0; transform: scale(.8); pointer-events: none; }
 .send-btn[data-mode="stop"] { opacity: 1; transform: none; }
 .send-btn:not(:disabled)[data-mode="send"] { box-shadow: none; }
-.tab { box-shadow: none; height: 24px; flex: 1 1 0; }
+.tab { box-shadow: none; height: 24px; }
 .tab.glass::after { border-bottom: 0; }
 
 .bar-input { font-size: var(--text-size); line-height: 1.45; }
@@ -313,8 +316,7 @@ html[data-motion="on"][data-tabpop="true"] .tab.pop {
 .tab-label::before { left: -8px; mask: radial-gradient(circle at 0 0, transparent 7.8px, black 8px); }
 .tab-label::after { right: -8px; mask: radial-gradient(circle at 100% 0, transparent 7.8px, black 8px); }
 
-.tabs { justify-content: flex-start; }
-.tab { flex: 0 1 auto; min-width: 0; }
+.tab { min-width: 0; }
 .tab-label::before, .tab-label::after { display: none; }
 .tok-keyword, .tok-builtin { color: #d4baff; }
 .tok-string { color: #a9dfb4; }

@@ -408,6 +408,12 @@
 
   const isStreaming = () => turns.some((t) => t.status === "streaming");
   const isBusy = () => sending || isStreaming() || switchingProvider;
+  // An action refused mid-reply says why instead of silently doing nothing.
+  function refuseWhileBusy() {
+    if (!isBusy()) return false;
+    showCommandFeedback(switchingProvider ? "Switching providers…" : "Finish or stop the reply first (Ctrl+.)");
+    return true;
+  }
   const stopBackend = () => invoke("chat_stop").catch(() => {});
   const finder = window.QFind.create({
     panel: el.historyPanel, controls: el.historyControls,
@@ -1040,8 +1046,25 @@
     return text.length > MAX_STORED_TEXT ? `${text.slice(0, MAX_STORED_TEXT - 1)}…` : text;
   };
 
+  // Titles are cut by what a reader sees as one character, so an emoji family, a flag or an
+  // accented letter is never split into a broken glyph. Code points are the fallback.
+  const graphemeSegmenter = typeof Intl?.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+  const graphemes = (text) => graphemeSegmenter ? Array.from(graphemeSegmenter.segment(text), part => part.segment) : Array.from(text);
+  const titleText = (value) => value.replace(/\s+/gu, " ").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+
   function normalizeChatTitle(value) {
-    return typeof value === "string" ? Array.from(value.replace(/\s+/gu, " ").replace(/[\u0000-\u001f\u007f]/g, "").trim()).slice(0, 40).join("").trimEnd() : "";
+    return typeof value === "string" ? graphemes(titleText(value)).slice(0, 40).join("").trimEnd() : "";
+  }
+
+  // A chat named from its first prompt or draft: the first line, shortened at a word with an
+  // ellipsis rather than stopping mid-word. Stays within normalizeChatTitle's limit.
+  function autoChatTitle(value) {
+    const line = titleText(String(value || "").split(/\r?\n/).find(part => part.trim()) || "");
+    const characters = graphemes(line);
+    if (characters.length <= 40) return line;
+    const head = characters.slice(0, 39);
+    const space = head.lastIndexOf(" ");
+    return `${(space >= 20 ? head.slice(0, space) : head).join("").replace(/[\s,;:.\-–—]+$/u, "")}…`;
   }
 
   function cleanChat(raw) {
@@ -1179,7 +1202,8 @@
     input.setSelectionRange(start, end, direction);
   }
   async function chooseProvider(provider) {
-    if (provider === activeProvider || isBusy()) return;
+    if (provider === activeProvider) { showCommandFeedback(`Already using ${providerName()}`); return; }
+    if (refuseWhileBusy()) return;
     if (!await setProvider(provider)) return;
     await resetChatPreservingComposer();
   }
@@ -2342,7 +2366,10 @@
     const check = () => {
       const entry = responseEntry();
       if (!entry || isBusy()) return;
-      if (historyOpen || entry.row.matches(":hover, :focus-within")) { autoDismissTimer = setTimeout(check, 1500); return; }
+      // Text selected in the reply is being read or copied, even once the pointer has moved away.
+      const selection = window.getSelection();
+      const selecting = Boolean(selection && !selection.isCollapsed && selection.anchorNode && entry.row.contains(selection.anchorNode));
+      if (historyOpen || selecting || entry.row.matches(":hover, :focus-within")) { autoDismissTimer = setTimeout(check, 1500); return; }
       dismissExchange();
     };
     autoDismissTimer = setTimeout(check, seconds * 1000);
@@ -2517,7 +2544,7 @@
     }
 
     const label = prompt || (selectionTexts.length ? "Selected text" : files[0]?.file.name) || "Attachment";
-    chat.title = chat.title || normalizeChatTitle(label);
+    chat.title = chat.title || autoChatTitle(label);
     chat.lastPrompt = prompt;
     chat.lastHadAttachments = files.length > 0;
     rememberTurn(userTurn);
@@ -2717,7 +2744,7 @@
     const index = tabs.indexOf(tab);
     let next = index;
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); el.promptInput.focus(); return; }
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (!isBusy()) void switchToChat(tab.dataset.key); return; }
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (!e.repeat) void switchToChat(tab.dataset.key); return; }
     if (tabs.length < 2) return;
     if (e.key === "ArrowRight") next = (index + 1) % tabs.length;
     else if (e.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
@@ -2729,7 +2756,7 @@
     tabs.forEach((item) => { item.tabIndex = item === tabs[next] ? 0 : -1; });
     tabs[next].focus();
   });
-  const chatDisplayTitle = (chat) => chat.title || normalizeChatTitle((chat.draft || "").split(/\r?\n/).find(line => line.trim()) || "") || "Untitled chat";
+  const chatDisplayTitle = (chat) => chat.title || autoChatTitle(chat.draft) || "Untitled chat";
 
   function renderTabs() {
     const focused = document.activeElement?.closest?.(".tab");
@@ -2758,7 +2785,7 @@
       const label = elapsedLabel(chat.lastActive);
       tab.querySelector(".tab-label").textContent = label;
       const title = chatDisplayTitle(chat);
-      const characters = Array.from(title);
+      const characters = graphemes(title);
       tab.querySelector(".tab-title").textContent = characters.length > 24
         ? `${characters.slice(0, 23).join("")}…` : title;
       const when = label === "now" ? "just now" : `${label} ago`;
@@ -2776,7 +2803,7 @@
   }
 
   async function switchToChat(key) {
-    if (isBusy()) return;
+    if (refuseWhileBusy()) return;
     const index = chats.recent.findIndex((c) => c.key === key);
     if (index < 0) return;
     // Before the provider switch, which can close History or replace the current chat.
@@ -2929,7 +2956,7 @@
   function saveChatName() {
     if (renameForm.hidden || renameTarget !== chats.current) { closeRenameChat(false); return; }
     const title = normalizeChatTitle(renameInput.value);
-    const shortened = Array.from(renameInput.value.replace(/\s+/gu, " ").replace(/[\u0000-\u001f\u007f]/g, "").trim()).length > 40;
+    const shortened = graphemes(titleText(renameInput.value)).length > 40;
     if (!title) {
       renameInput.setAttribute("aria-invalid", "true");
       renameError.textContent = "Enter a chat name.";
@@ -2955,7 +2982,7 @@
   function cancelModelRequest() { if (modelRequest) clearTimeout(modelRequest.timer); modelRequest = null; }
   const modelCache = {};
   function requestModels() {
-    if (isBusy()) return;
+    if (refuseWhileBusy()) return;
     if (activeProvider === "gemini") {
       showModels(modelCache.gemini || {loading:true});
       // A pick is being applied, and the list on screen already shows it.
@@ -3215,8 +3242,8 @@
   }
 
   async function openAccountChat(item) {
-    if (isBusy()) return;
-    const chat = { ...freshChat(), conversationId: item.id, title: normalizeChatTitle(item.title || "Untitled chat"), lastActive: item.updated || Date.now() };
+    if (refuseWhileBusy()) return;
+    const chat = { ...freshChat(), conversationId: item.id, title: autoChatTitle(item.title) || "Untitled chat", lastActive: item.updated || Date.now() };
     chats.recent.unshift(chat);
     await switchToChat(chat.key);
     setHistoryOpen(true);
@@ -3248,15 +3275,38 @@
     if (!e.isComposing && e.keyCode !== 229 && e.key === "Escape" && pendingChatUndo.length && !slashOpen() && el.clearConfirm.hidden && renameForm.hidden) { e.stopImmediatePropagation(); e.preventDefault(); dismissChatUndo(); return; }
     if (!e.isComposing && e.keyCode !== 229 && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "z" && pendingChatUndo.length && document.activeElement !== finder.input && document.activeElement !== renameInput && !(document.activeElement?.matches("input, textarea") && document.activeElement.value)) { e.preventDefault(); e.stopImmediatePropagation(); void undoChatChange(); return; }
     if (e.key === "Escape" && !featureList.hidden) { e.stopImmediatePropagation(); e.preventDefault(); closeFeatureList(); }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); showChatList(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
+      e.preventDefault();
+      if (e.repeat) return;
+      // Pressing it again closes the list, like the menu.
+      if (!featureList.hidden && !featureList.hasAttribute("data-leaving") && featureList.querySelector(".feature-search")) closeFeatureList();
+      else showChatList();
+    }
   }, true);
   let slashMatches = [];
   function openFind() {
     closeRenameChat(false);
     if (!historyItems().some(item => String(item.text || "").trim())) { showCommandFeedback("No messages to search yet."); return; }
+    const selected = selectedConversationText();
     closeSlashMenu(); hideClearConfirm();
     if (!featureList.hidden) closeFeatureList();
+    const wasOpen = finder.isOpen;
+    if (selected) finder.input.value = selected;
     finder.open();
+    if (selected && wasOpen) finder.input.dispatchEvent(new Event("input"));
+  }
+
+  // Find starts from words selected in the conversation, when they fit on one line.
+  function selectedConversationText() {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed) return "";
+    const inside = (node) => {
+      const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+      return Boolean(element && (el.zone.contains(element) || el.historyPanel.contains(element)));
+    };
+    if (!inside(selection.anchorNode) || !inside(selection.focusNode)) return "";
+    const text = selection.toString().trim();
+    return text && !/[\r\n]/.test(text) && text.length <= 200 ? text : "";
   }
   let slashIndex = 0;
 
@@ -3990,7 +4040,14 @@
   el.orb.addEventListener("pointerup", () => { orbDown = null; });
   el.orb.addEventListener("pointercancel", () => { orbDown = null; });
   document.addEventListener("pointerdown", e => { if (!el.slashMenu.contains(e.target) && e.target !== el.promptInput) closeSlashMenu(); });
-  window.addEventListener("keydown", e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCommandMenu(); } });
+  // Pressing the shortcut again puts the menu away, keeping the draft and the caret.
+  window.addEventListener("keydown", e => {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "k") return;
+    e.preventDefault();
+    if (e.repeat) return;
+    if (commandMenu && slashOpen()) { closeSlashMenu(); el.promptInput.focus(); }
+    else openCommandMenu();
+  });
   window.addEventListener("keydown", e => {
     if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey || e.isComposing || e.keyCode === 229) return;
     const key = e.key.toLowerCase();
@@ -4112,9 +4169,21 @@
     // Leave Enter alone while a reply streams so the textarea inserts a newline.
     if (isStreaming()) return;
     e.preventDefault();
-    if (!bridge.ready || e.repeat) return;
+    if (e.repeat) return;
+    if (!bridge.ready) { enterWhileConnecting(); return; }
     submitFromInput();
   });
+
+  // Commands still run while the page connects, and a message says it is waiting rather than
+  // Enter appearing to do nothing. The draft stays put for when the page is ready.
+  function enterWhileConnecting() {
+    const value = el.promptInput.value.trim();
+    const exact = value.startsWith("/") && COMMANDS.find((c) => `/${c.name}` === value.toLowerCase());
+    if (exact) { runCommand(exact); return; }
+    if ((value || pendingFiles.length || chats.current.selectionTexts.length) && el.globalError.hidden) {
+      showCommandFeedback(`Still connecting to ${providerName()}…`);
+    }
+  }
 
   el.btnSend.addEventListener("click", () => {
     if (isStreaming()) stopStreaming();
