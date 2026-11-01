@@ -12,10 +12,10 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 
 - Goal: publish the current build with synchronized v1.4.1 metadata, installer, portable executable, notices and checksums.
 - Parent owns release metadata and packaging; one cross-family reviewer checks the post-v1.4.0 orb/model changes read-only.
-- Status: v1.4.1 metadata and installer complete; Rust 34 PASS/1 intentional ignore and 99 syntax checks PASS. Full offline gate running. Installer payload/version, offline WebView2 signature, asInvoker manifest and checksums verified. Publication pending final offline results.
+- Status: done. v1.4.1 public/latest at https://github.com/Steez-47/qchat/releases/tag/v1.4.1; tag/source 040fbce227a0f2c0d4dc23fef7e9ad9125371fac. All 54 offline suites, Rust 34 PASS/1 intentional ignore and 99 syntax checks PASS. Installer payload/version, offline WebView2 signature, asInvoker manifest and checksums verified. All five published asset sizes/server SHA256 match; downloaded portable/checksum roundtrip PASS.
 - Review: requested Antigravity Sonnet medium; provider quota prevented review. Parent source/package checks complete, no application edits. Native mixed-DPI behavior, signed-in sending and clean-device installation remain unverified. Running app/profile preserved.
 
-- Latest release: v1.4.0 (2026-11-01). `main` is the only long-lived branch.
+- Latest release: v1.4.1 (2026-11-01). `main` is the only long-lived branch.
 - `npm test` runs the 54 headless suites. CI runs them on every push and pull request.
 
 ## Gemini model label and dragged-orb collapse (2026-11-01)
@@ -39,5 +39,5 @@ Verified headless only. Not verified: the native window shift on Windows (mixed-
 
 ## Open follow-ups
 
-- Run the native suites and `cargo test` on Windows after the window-shift change.
+- Run native window-shift checks on Windows, especially mixed DPI. Rust tests/build passed for v1.4.1.
 - Signed-in checks still outstanding from earlier releases: Temporary chat, attachments, model switching, clean-device install.
