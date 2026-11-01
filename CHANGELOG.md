@@ -4,10 +4,16 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-11-02
+
 ### Changed
+- Windows Nightly builds publish automatically from main, with a separate update channel.
+- Temporary chats are ChatGPT only. Gemini gives no reliable sign that a chat is temporary, so `/temp` and Ctrl+Shift+N say so on Gemini, and switching a temporary chat to Gemini makes it a normal chat with a notice.
 - Normal chats now fold into the orb when idle while waiting for a reply, with the same spinning arc as Work and Task. Once the words start arriving, the bar stays open so you can read them.
 
 ### Fixed
+- Gemini model loading recovers when switching providers, and its hidden side panel spinner no longer blocks image sends.
+- Signed-in ChatGPT Work and Gemini Task mode selection follows the provider state reliably.
 - A text message no longer sends images left behind by an earlier image send that never went out, and no longer goes out without its text. Leftover files are removed first, and Send waits until ChatGPT or Gemini has the text.
 - Starting a new ChatGPT chat makes sure the page has really left the old conversation, so the next message can't land in an old chat.
 - Replies whose text ChatGPT keeps in an out-of-view copy show as they stream instead of needing a refresh.
@@ -20,9 +26,6 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 - A saved shortcut that's no longer valid can be replaced, and a failed Backspace clear in Settings shows why instead of staying stuck on "Press keys…".
 - A failed download or update no longer leaves a partial file behind.
 - A `$&` in a ChatGPT attachment's label no longer garbles the reply, and Gemini images no longer pile up in memory during a long chat.
-
-### Changed
-- Temporary chats are ChatGPT only. Gemini gives no reliable sign that a chat is temporary, so `/temp` and Ctrl+Shift+N say so on Gemini, and switching a temporary chat to Gemini makes it a normal chat with a notice.
 
 ## [1.5.2] - 2026-11-02
 
@@ -182,6 +185,7 @@ First beta: Snapshot attachments, per-chat reasoning, file attachments and media
 [0.1.2]: https://github.com/Steez-47/qchat/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Steez-47/qchat/releases/tag/v0.1.1
 
+[1.5.3]: https://github.com/Steez-47/qchat/releases/tag/v1.5.3
 [1.5.2]: https://github.com/Steez-47/qchat/releases/tag/v1.5.2
 [1.5.1]: https://github.com/Steez-47/qchat/releases/tag/v1.5.1
 [1.5.0]: https://github.com/Steez-47/qchat/releases/tag/v1.5.0
