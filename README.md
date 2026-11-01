@@ -25,6 +25,7 @@ A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed
 - `/discard` clears the unsent composer in one step, and Undo can bring it back.
 - **Ctrl+Alt+Q** opens QChat with the text selected in the current app quoted in the box.
 - The desktop is really blurred behind the glass, and clicks pass through the empty space around it. Desktop blur can be turned off in Settings.
+- Click away and after 5 seconds QChat folds into its orb; click the orb to open it again, or drag it to move QChat folded. Settings > Behavior sets the delay, and 0 turns it off.
 - Code is highlighted and maths is rendered.
 - **Ctrl+Home** jumps to the start of the visible conversation.
 - **Ctrl+End** jumps to the latest message and resumes following the reply.
@@ -45,7 +46,7 @@ Temporary mode can be refused on guest, localized or changed provider interfaces
 
 ## Install
 
-Download `QChat_1.3.1_x64-setup.exe` from the [v1.3.1 release](https://github.com/Steez-47/qchat/releases/tag/v1.3.1). The Windows x64 installer includes WebView2, installs for your current user, and creates a Start menu shortcut. Quit any existing QChat tray instance first. This release is unsigned; Windows may show an unknown-publisher warning. See [installation and testing notes](packaging/INSTALL.txt).
+Download `QChat_1.4.0_x64-setup.exe` from the [v1.4.0 release](https://github.com/Steez-47/qchat/releases/tag/v1.4.0). The Windows x64 installer includes WebView2, installs for your current user, and creates a Start menu shortcut. Quit any existing QChat tray instance first. This release is unsigned; Windows may show an unknown-publisher warning. See [installation and testing notes](packaging/INSTALL.txt).
 
 ## Build and run
 ```
