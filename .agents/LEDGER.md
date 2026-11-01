@@ -8,6 +8,8 @@ Usage and rate-limit log for delegated work. The full log through v1.4.0 is in `
 
 ## Log
 
+2026-11-01 | v1.4.2 public release | parent | done | source/tag 2a0d294c8f2bb4287c3f739c8a76d4e7413b0881; reused 55 passing integration suites, release settings/updater2PASS, Rust39PASS/1ignore, 106syntaxPASS; installer220297926bytes SHA256 ba0f876480cf8d89d0fa1cef36f4842b28601b501496b39aba5b5d6643301501; portable6233088bytes SHA256 687cab55b45050ae889de375de305f82dfc4a5b79ea326e2b606a7c032d0b423; payload/signature/manifest verified; public/latest, five server hashes/sizes and portable/checksum roundtrip PASS; existing dist/QChat.exe preserved. Prior independent updater review reused; no application edits in release preparation.
+
 2026-11-01 | PR14/15/16 merge updater review | codex/gpt-6-luna high | done | read-only; checksum, swap/rollback, relaunch and settings integration; no actionable blockers. Terra budget unavailable.
 
 2026-11-01 | v1.4.1 release review | antigravity/claude-sonnet-5-5 medium | unavailable | usage quota reached, reset in 5 days 2 hours; no review produced or fallback dispatched. Parent performs source/package checks; independent review unavailable.

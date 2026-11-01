@@ -12,7 +12,7 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 
 - Goal: publish the merged settings overhaul, website and GitHub updater as v1.4.2.
 - Parent owns version metadata, packaging, asset verification and publication. Existing application verification is reused from the PR14/15/16 integration; updater received an independent Luna review.
-- Status: package verified, publication pending. Windows installer and portable executable report 1.4.2; extracted payload, install notes/notices, Microsoft WebView2 signature, asInvoker manifest and four checksum entries verified. Rust: 39 pass / 1 intentional ignore; release settings/updater suites: 2/2 pass; 106 JavaScript syntax checks pass. All 55 integration suites passed before the version bump. Existing dist/QChat.exe preserved.
+- Status: done. v1.4.2 is public/latest at https://github.com/Steez-47/qchat/releases/tag/v1.4.2; source/tag 2a0d294c8f2bb4287c3f739c8a76d4e7413b0881. Windows installer and portable executable report 1.4.2; extracted payload, install notes/notices, Microsoft WebView2 signature, asInvoker manifest and four checksum entries verified. All five server asset sizes/SHA256 match; downloaded portable/checksum roundtrip and website latest-release lookup pass. Rust: 39 pass / 1 intentional ignore; release settings/updater suites: 2/2 pass; 106 JavaScript syntax checks pass. All 55 integration suites passed before the version bump. Existing dist/QChat.exe preserved. Native settings appearance, real updater restart, signed-in sending and clean-device installation remain unverified.
 
 ## Merge PRs 14, 15 and 16 (2026-11-01)
 
@@ -29,7 +29,7 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 - Status: done. v1.4.1 public/latest at https://github.com/Steez-47/qchat/releases/tag/v1.4.1; tag/source 040fbce227a0f2c0d4dc23fef7e9ad9125371fac. All 54 offline suites, Rust 34 PASS/1 intentional ignore and 99 syntax checks PASS. Installer payload/version, offline WebView2 signature, asInvoker manifest and checksums verified. All five published asset sizes/server SHA256 match; downloaded portable/checksum roundtrip PASS.
 - Review: requested Antigravity Sonnet medium; provider quota prevented review. Parent source/package checks complete, no application edits. Native mixed-DPI behavior, signed-in sending and clean-device installation remain unverified. Running app/profile preserved.
 
-- Latest release: v1.4.1 (2026-11-01). `main` is the only long-lived branch.
+- Latest release: v1.4.2 (2026-11-01). `main` is the only long-lived branch.
 - `npm test` runs the 54 headless suites. CI runs them on every push and pull request.
 
 ## Settings overhaul (2026-11-01)
