@@ -192,6 +192,17 @@ fn rect(m: &tauri::Monitor) -> Rect {
     let a = m.work_area();
     Rect { x: a.position.x, y: a.position.y, w: a.size.width as i32, h: a.size.height as i32 }
 }
+// Shrinks a window's preferred logical size to fit the monitor's work area, so the settings
+// and sign-in windows never run off a 720p or 768p screen.
+fn fit_logical(m: &tauri::Monitor, width: f64, height: f64, margin: f64) -> tauri::LogicalSize<f64> {
+    let (w, h) = fit_size(rect(m), m.scale_factor(), width, height, margin);
+    tauri::LogicalSize::new(w, h)
+}
+fn fit_size(r: Rect, scale: f64, width: f64, height: f64, margin: f64) -> (f64, f64) {
+    let scale = if scale.is_finite() && scale > 0. { scale } else { 1. };
+    let (aw, ah) = (r.w as f64 / scale - margin, r.h as f64 / scale - margin);
+    (width.min(aw).max(width.min(360.)).round(), height.min(ah).max(height.min(360.)).round())
+}
 fn nearest_anchor(a: Anchor, areas: &[Rect]) -> Option<(Anchor, Rect)> {
     areas.iter().map(|r| {
         let c = Anchor { cx: a.cx.clamp(r.x, r.x+r.w), bottom: a.bottom.clamp(r.y, r.y+r.h) };
@@ -294,16 +305,17 @@ fn open_settings_window(app: tauri::AppHandle) -> Result<(),String> {
     let _guard=SETTINGS.lock().map_err(|e|e.to_string())?;
     let profile=test_profile();
     let offscreen=profile.is_some() && std::env::var("QCHAT_TEST_SHOW_SETTINGS").as_deref()!=Ok("1");
-    let w=if let Some(w)=app.get_webview_window("settings") { w } else {
+    let monitor=if offscreen { None } else { app.get_webview_window("main").and_then(|main| if main.is_visible().unwrap_or(false) { main.current_monitor().ok().flatten() } else { cursor_monitor(&main) }) };
+    let size=monitor.as_ref().map(|m| fit_logical(m,620.,720.,48.)).unwrap_or(tauri::LogicalSize::new(620.,720.));
+    let w=if let Some(w)=app.get_webview_window("settings") { let _=w.set_size(size); w } else {
         let b=WebviewWindowBuilder::new(&app,"settings",WebviewUrl::App("settings.html".into()));
         let b=if let Some(p)=profile.as_ref(){b.data_directory(p.clone())}else{b};
-        b.title("QChat settings").inner_size(620.,720.).decorations(false).transparent(true).shadow(false).resizable(false).always_on_top(true).skip_taskbar(true).visible(false).build().map_err(|e|e.to_string())?
+        b.title("QChat settings").inner_size(size.width,size.height).decorations(false).transparent(true).shadow(false).resizable(false).always_on_top(true).skip_taskbar(true).visible(false).build().map_err(|e|e.to_string())?
     };
     if offscreen {
         w.set_position(tauri::PhysicalPosition::new(-32000,-32000)).map_err(|e|e.to_string())?;
-    } else if let Some(main)=app.get_webview_window("main") {
-        let m=if main.is_visible().unwrap_or(false) { main.current_monitor().ok().flatten() } else { cursor_monitor(&main) };
-        if let (Some(m),Ok(s))=(m,w.outer_size()) { let r=rect(&m); let _=w.set_position(tauri::PhysicalPosition::new(r.x+(r.w-s.width as i32)/2,r.y+(r.h-s.height as i32)/2)); }
+    } else if let (Some(m),Ok(s))=(monitor,w.outer_size()) {
+        let r=rect(&m); let _=w.set_position(tauri::PhysicalPosition::new(r.x+(r.w-s.width as i32)/2,r.y+(r.h-s.height as i32)/2));
     }
     w.show().map_err(|e|e.to_string())?;
     if offscreen { return Ok(()) }
@@ -383,6 +395,7 @@ fn signin_window(app: tauri::AppHandle, provider: String) {
     let _ = w.set_size(tauri::LogicalSize::new(1000, 760));
     if let Ok(pos) = w.cursor_position() {
         if let Ok(Some(m)) = w.monitor_from_point(pos.x, pos.y) {
+            let _ = w.set_size(fit_logical(&m, 1000., 760., 64.));
             let a = m.work_area();
             let Ok(s) = w.outer_size() else {
                 return;
@@ -942,6 +955,19 @@ mod tests {
             assert_eq!(a.bottom-h,r.y);
             assert!(a.bottom<=r.y+r.h && a.cx-w/2>=r.x);
         }
+    }
+    #[test]
+    fn side_windows_shrink_to_small_work_areas() {
+        // 1440p at 100%: the preferred size fits untouched.
+        assert_eq!(super::fit_size(Rect{x:0,y:0,w:2560,h:1392},1.,620.,720.,48.),(620.,720.));
+        // 1366x768 at 100% and 1080p at 150%: settings get shorter, never taller than the area.
+        assert_eq!(super::fit_size(Rect{x:0,y:0,w:1366,h:728},1.,620.,720.,48.),(620.,680.));
+        assert_eq!(super::fit_size(Rect{x:0,y:0,w:1920,h:1032},1.5,620.,720.,48.),(620.,640.));
+        // Sign-in on 720p: both sides shrink.
+        assert_eq!(super::fit_size(Rect{x:0,y:0,w:1280,h:680},1.,1000.,760.,64.),(1000.,616.));
+        assert_eq!(super::fit_size(Rect{x:0,y:0,w:1024,h:600},1.,1000.,760.,64.),(960.,536.));
+        // A broken scale or a tiny area still leaves a usable window.
+        assert_eq!(super::fit_size(Rect{x:0,y:0,w:200,h:200},0.,620.,720.,48.),(360.,360.));
     }
     #[test]
     fn auto_return_only_after_a_new_login_in_the_foreground() {

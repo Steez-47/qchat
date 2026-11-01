@@ -6,7 +6,7 @@
   const STORAGE_KEY = "qchat.settings";
   const THEME_KEY = "qchat.theme";
   const LEGACY_LOOK_KEY = "qchat.look";
-  const VERSION = 6;
+  const VERSION = 7;
 
   // ---------------------------------------------------------------------------
   // Looks. Everything else (fills, text tiers, rims) is derived in apply().
@@ -147,7 +147,59 @@
     checkUpdates: bool(true)
   };
 
-  const DEFAULTS = Object.freeze(Object.fromEntries(Object.entries(SCHEMA).map(([k, v]) => [k, v.def])));
+  // ---------------------------------------------------------------------------
+  // Screen fit. The schema defaults above suit a big screen. The first time QChat starts it
+  // measures the screen in logical pixels (so Windows display scaling counts) and picks
+  // smaller defaults for 1080p, 768p and 720p class screens. The choice is stored, so the
+  // defaults stay put when the bar is later dragged to another monitor.
+  // ---------------------------------------------------------------------------
+  const FIT_KEY = "qchat.screenfit";
+  const BASE_DEFAULTS = Object.freeze(Object.fromEntries(Object.entries(SCHEMA).map(([k, v]) => [k, v.def])));
+  const FIT_SIZES = {
+    large: {},
+    medium: { textSize: 14, barWidth: 420, replyWidth: 560, maxHeightPct: 55, replyPadding: 16, bubbleGap: 7 },
+    small: { textSize: 13, barWidth: 380, replyWidth: 480, maxHeightPct: 50, replyPadding: 13, bubbleGap: 6, density: "compact" }
+  };
+  const FIT_KEYS = [...new Set(Object.values(FIT_SIZES).flatMap(Object.keys))];
+  // 1440p and up at 100% is large. 1080p at 100% is medium. 768p, 720p, and 1080p at 125% or
+  // more (1536x864 logical and below) are small.
+  function screenTier(width, height) {
+    if (!(width > 0 && height > 0)) return null;
+    if (width < 1400 || height < 900) return "small";
+    if (width < 2200 || height < 1300) return "medium";
+    return "large";
+  }
+  function measureScreen() {
+    // Under the plain-browser mock, only an explicit ?screen=WxH measures, so tests stay put.
+    if (window.__QCHAT_MOCK__) {
+      const m = /^(\d+)x(\d+)$/.exec(new URLSearchParams(location.search).get("screen") || "");
+      return m ? { width: Number(m[1]), height: Number(m[2]) } : null;
+    }
+    const s = window.screen;
+    return s && s.availWidth > 0 && s.availHeight > 0 ? { width: s.availWidth, height: s.availHeight } : null;
+  }
+  function storedFit() {
+    try {
+      const fit = JSON.parse(localStorage.getItem(FIT_KEY) || "null");
+      return fit && Object.hasOwn(FIT_SIZES, fit.tier) ? fit : null;
+    } catch (_) { return null; }
+  }
+  function detectFit() {
+    const size = measureScreen();
+    const tier = size && screenTier(size.width, size.height);
+    if (!tier) return null;
+    const fit = { tier, width: size.width, height: size.height };
+    try { localStorage.setItem(FIT_KEY, JSON.stringify(fit)); } catch (_) {}
+    return fit;
+  }
+  const fitState = storedFit() || detectFit() || { tier: "large" };
+  const DEFAULTS = {};
+  function setFitDefaults(tier) {
+    const sized = { ...BASE_DEFAULTS, ...FIT_SIZES[tier] };
+    for (const key of Object.keys(SCHEMA)) { SCHEMA[key].def = sized[key]; DEFAULTS[key] = sized[key]; }
+    fitState.tier = tier;
+  }
+  setFitDefaults(fitState.tier);
   const APPEARANCE_KEYS = Object.keys(SCHEMA).filter(k => !["defaultProvider","showBarAtStartup","rememberPosition","selectionClipboard","alwaysOnTop","hideOnBlur","idleCollapse","sendKey","defaultReasoning","autoDismiss","keepHistory","checkUpdates"].includes(k));
   const PRESETS = [
     ["default","Default","Clear glass",{}],
@@ -242,6 +294,9 @@
         if (parsed.textSize === 14) parsed.textSize = 15;
         if (parsed.lineHeight === 1.6) parsed.lineHeight = 1.65;
       }
+      // Settings saved before screen fit hold the big-screen sizes. A size that was never
+      // changed from that default takes this screen's default instead.
+      if ((parsed.v || 0) < 7) for (const key of FIT_KEYS) if (parsed[key] === BASE_DEFAULTS[key]) delete parsed[key];
       if (!Object.hasOwn(parsed, "replyNativeBlur")) parsed.replyNativeBlur = parsed.nativeBlur;
       if (!Object.hasOwn(parsed, "replyBlur") && Number.isFinite(parsed.blur)) parsed.replyBlur = parsed.blur / 40 * 100;
       if (!Object.hasOwn(parsed, "replyBorder")) parsed.replyBorder = parsed.border;
@@ -254,6 +309,13 @@
     } catch (_) {
       return sanitize({});
     }
+  }
+
+  // Measures the screen this window is on again and resets just the size settings to suit it.
+  function fitScreen(settings) {
+    const fit = detectFit();
+    if (fit) setFitDefaults(fit.tier);
+    return sanitize({ ...settings, ...Object.fromEntries(FIT_KEYS.map((k) => [k, DEFAULTS[k]])) });
   }
 
   function save(settings) {
@@ -583,7 +645,8 @@
 
   window.QSettings = {
     PRESETS, APPEARANCE_KEYS, applyPreset, listPresets, savePreset, deletePreset, exportPreset, importPreset,
-    STORAGE_KEY, VERSION, SCHEMA, DEFAULTS, LOOKS,
+    STORAGE_KEY, VERSION, SCHEMA, DEFAULTS, BASE_DEFAULTS, LOOKS, FIT_KEYS, FIT_SIZES, screenTier, fitScreen,
+    get screenFit() { return fitState.tier; },
     get settings() { return state.settings; },
     get timings() { return state.timings; },
     get motionOn() { return state.motionOn; },
