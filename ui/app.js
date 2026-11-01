@@ -1460,11 +1460,18 @@
     return promise;
   }
 
+  function onConversationURL(url) {
+    try { return /\/c\/[^/]|^\/app\/[^/]/.test(new URL(url).pathname); } catch { return false; }
+  }
+
   function settleReadyWaiters(evt) {
     if (!evt.ready) return;
     for (const waiter of [...readyWaiters]) {
       if (waiter.provider !== activeProvider || waiter.generation !== chatGeneration || (waiter.temporary && (evt.temporary !== true || evt.setupId !== waiter.setupId))) continue;
       const id = waiter.conversationId;
+      // A fresh chat isn't ready while the page still shows an old conversation:
+      // a send then would land in that conversation.
+      if (!id && typeof evt.url === "string" && onConversationURL(evt.url)) continue;
       if (!id || typeof evt.url !== "string" || evt.url.includes(`${activeProvider === "gemini" ? "/app/" : "/c/"}${id}`)) waiter.resolve();
       // A guest page falls back to a fresh chat instead of /c/<id>; give it a moment to get there.
       else if (!evt.loggedIn && !waiter.grace) waiter.grace = setTimeout(() => waiter.resolve(), 500);

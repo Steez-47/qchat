@@ -51,7 +51,12 @@ export async function serveUI({ csp = CSP, onRequest, onMissing } = {}) {
 // Starts a headless browser on a throwaway profile. Used by the runner and by standalone suites.
 export async function launchBrowser(label = 'browser') {
   const profile = await mkdtemp(path.join(tmpdir(), `qchat-${label}-`));
-  const child = spawn(browserPath(), [...BROWSER_FLAGS, ...(process.platform === 'win32' ? [] : ['--no-sandbox']), '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore', windowsHide: true });
+  const child = spawn(browserPath(), [...BROWSER_FLAGS, ...(process.platform === 'win32' ? [] : ['--no-sandbox']), '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+  // Keep the end of the browser's own complaints, so a failed start says why.
+  let stderr = '', exited = null;
+  child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-4000); });
+  child.on('exit', (code, signal) => { exited = signal || code; });
+  child.on('error', (error) => { exited = error.message; });
   const kill = () => {
     if (!child.pid || child.exitCode !== null) return;
     if (process.platform === 'win32') spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
@@ -60,12 +65,19 @@ export async function launchBrowser(label = 'browser') {
   // A suite that throws or is killed must not leave a browser or a profile behind.
   const onExit = () => { kill(); try { rmSync(profile, { recursive: true, force: true }); } catch {} };
   process.once('exit', onExit);
+  // A cold first start on a fresh CI runner can take far longer than a warm one.
   let port;
-  for (let i = 0; i < 200 && !port; i++) {
+  const deadline = Date.now() + 30000;
+  while (!port && exited === null && Date.now() < deadline) {
     try { port = Number((await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]); } catch {}
     if (!port) await sleep(25);
   }
-  if (!port) { kill(); throw new Error('Headless browser did not start'); }
+  if (!port) {
+    kill();
+    const why = exited !== null ? `exited (${exited})` : 'gave no DevTools port within 30 seconds';
+    throw new Error(`Headless browser did not start: ${browserPath()} ${why}${stderr.trim() ? `\n${stderr.trim().split('\n').slice(-15).join('\n')}` : ''}`);
+  }
+  child.stderr.resume(); child.stderr.removeAllListeners('data');
   return {
     origin: `http://127.0.0.1:${port}`,
     async close() {

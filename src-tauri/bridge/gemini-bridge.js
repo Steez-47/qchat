@@ -1066,6 +1066,20 @@
     return false;
   }
 
+  // Nothing QChat sends is ever left in Gemini's composer between turns: the
+  // app keeps its own files until Send. Chips found there are leftovers from a
+  // send that never went out, and the next Send would carry them along, so
+  // remove them first. Refuse rather than send them if they will not go.
+  async function clearStaleAttachments() {
+    if (!attachmentRemovers().length) return true;
+    attachmentRemovers().forEach(node => { try { node.click(); } catch (_) {} });
+    for (let i = 0; i < 40; i++) {
+      await sleep(50);
+      if (!attachmentRemovers().length) return true;
+    }
+    return false;
+  }
+
   function temporaryReady() {
     const composer = find('composer');
     const host = composer?.closest('chat-window');
@@ -1117,6 +1131,7 @@
       if (cancelledAttachments.hadControls && uploads === 0 && attachmentRemovers(cancelledAttachments.names).length === 0) cancelledAttachments = null;
       else throw new Error('attachment_pending: Start a new chat to clear cancelled attachments before uploading again.');
     }
+    if (!active && attachmentRemovers().length && !await clearStaleAttachments()) throw new Error('attachment_pending: Old attachments are stuck in Gemini. Start a new chat before sending again.');
     attachmentSelectionAt = Date.now();
     const choose = () => {
       const inputs = [...document.querySelectorAll('input[type="file"]')].filter(input => !input.disabled);
@@ -1262,6 +1277,12 @@
         if (!composer) { fail(job, 'not_ready', 'Gemini composer changed. Please try again.'); return; }
         if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
         dismissNudges();
+        // A text-only turn must not pick up files left behind by an earlier send.
+        if (!attachmentCount && attachmentRemovers().length && !await clearStaleAttachments()) {
+          fail(job, 'attachment_pending', 'Old attachments are stuck in Gemini. Start a new chat before sending again.'); return;
+        }
+        if (active !== job || job.cancelled) return;
+        composer = find('composer') || composer;
         const fill = composer => {
           composer.focus?.();
           if (composer.tagName === 'TEXTAREA') {
@@ -1289,8 +1310,9 @@
             fill(composer); filledComposer = composer; filledAt = Date.now(); held = !!typed(composer);
           }
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
-          // An attachment enables Send by itself, so Send can't show that the page has taken the text.
-          if (attachmentCount > 0 && prompt.trim() && (!typed(composer) || Date.now() - filledAt < 300)) {
+          // Never click Send before the page has the text. An attachment enables Send by itself,
+          // so Send can't show that the page has taken the text; give it a moment to settle too.
+          if (prompt.trim() && (!typed(composer) || (attachmentCount > 0 && Date.now() - filledAt < 300))) {
             if (!typed(composer) && Date.now() - filledAt >= 300) fill(composer), filledAt = Date.now();
             await sleep(100);
             continue;
@@ -1314,6 +1336,8 @@
           job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           if (!composer) { fail(job, 'not_ready', 'Gemini composer changed. Please try again.'); return; }
+          // Enter can't send what the page never took, and could send leftovers on their own.
+          if (prompt.trim() && !typed(find('composer') || composer)) { fail(job, 'send_failed', 'Gemini did not take the message text. Try again.'); return; }
           job.submitted = true;
           composer.dispatchEvent?.(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
           sampleDOM(job);

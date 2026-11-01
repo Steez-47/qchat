@@ -44,7 +44,7 @@
   const debug = (...args) => { if (window.__QCHAT_DEBUG__) console.debug('[qchat]', ...args); };
   let active, loginCache, loginAt = -Infinity, loginProbe, loginUnknown = true, loginStale = false;
   const media = new Map();
-  let mediaSerial = 0, inputSerial = 0, uploads = 0, uploadFailureAt = -Infinity, attachmentSelectionAt = -Infinity, cancelledAttachments, downloadActivation;
+  let mediaSerial = 0, inputSerial = 0, uploads = 0, uploadFailureAt = -Infinity, uploadDoneAt = -Infinity, attachmentSelectionAt = -Infinity, cancelledAttachments, downloadActivation;
   function error(id, code, message) { emit({ type: 'error', ...(id == null ? {} : { id }), code, message }); }
   function toolActivity(recipient) {
     if (typeof recipient !== 'string' || !recipient || ['all', 'all_tools'].includes(recipient)) return null;
@@ -179,11 +179,15 @@
     const users = [...document.querySelectorAll(userSelector)];
     const latest = users[users.length - 1];
     const ids = latest ? messageIds(latest) : [];
+    // Rendered bubbles reflow whitespace (paragraph gaps, trailing spaces), so
+    // compare words, not exact characters.
+    const words = text => String(text || '').replace(/\s+/g, ' ').trim();
+    const bubble = latest ? words(latest.innerText || latest.textContent) : '', prompt = words(job.prompt);
     const boundary = latest && (job.userMessageIds?.size
       ? ids.some(id => job.userMessageIds.has(id))
       : !job.previousUsers.has(latest) && !ids.some(id => job.previousUserIds.has(id)) &&
         // A message with an image can carry more than the prompt in its bubble.
-        (job.attachmentCount > 0 ? (latest.innerText || latest.textContent || '').includes(job.prompt) : (latest.innerText || latest.textContent || '').trim() === job.prompt));
+        (job.attachmentCount > 0 ? bubble.includes(prompt) : bubble === prompt));
     return boundary ? latest : null;
   }
   function currentAssistants(job) {
@@ -208,14 +212,19 @@
     return nodes.filter(node => !nodes.some(other => other !== node && node.contains(other)))
       .sort((a, b) => a.compareDocumentPosition(b) & 4 ? -1 : 1);
   }
-  function hiddenReplyNode(node) {
-    // Streaming text can have a second, screen-reader-only copy beside the
-    // painted words. Read the displayed representation once, including when
-    // the site hides its staging nodes through CSS rather than attributes.
-    if (node.hasAttribute?.('hidden') || node.getAttribute?.('aria-hidden') === 'true' ||
-        /(?:^|\s)(?:sr-only|visually-hidden|screen-reader-only)(?:\s|$)/.test(node.className || '')) return true;
-    const style = node.nodeType === 1 && typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
+  function cssHidden(node) {
+    const style = node?.nodeType === 1 && typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
     return style?.display === 'none' || style?.visibility === 'hidden' || style?.visibility === 'collapse';
+  }
+  // Streaming text can have a second, screen-reader-only copy beside the
+  // painted words. Read the displayed representation once, including when
+  // the site hides its staging nodes through CSS rather than attributes.
+  // `css: false` is for a root that is itself kept out of view, where CSS
+  // visibility says nothing about which of its words are the reply.
+  function hiddenReplyNode(node, { css = true } = {}) {
+    if (node.hasAttribute?.('hidden') || node.getAttribute?.('aria-hidden') === 'true' ||
+        /(?:^|\s)(?:sr-only|visually-hidden|screen-reader-only)(?:\s|$)/.test(typeof node.className === 'string' ? node.className : '')) return true;
+    return css && cssHidden(node);
   }
   function nodeMarkdown(node) {
     if (node.nodeType === 3) return node.nodeValue;
@@ -575,10 +584,13 @@
       } catch (_) { return null; }
     };
     const fence = (text, minimum) => '`'.repeat(Math.max(minimum, ...[...text.matchAll(/`+/g)].map(match => match[0].length + 1)));
+    // A copy surface the site keeps out of view is read by its markup alone:
+    // visibility is inherited, so every word in it would otherwise look hidden.
+    const options = { css: !cssHidden(body) };
     const walk = node => {
       if (node.nodeType === 3) return escape(node.nodeValue || '');
       const tag = node.tagName?.toLowerCase();
-      if (['script', 'style', 'iframe', 'svg', 'button'].includes(tag) || hiddenReplyNode(node)) return '';
+      if (['script', 'style', 'iframe', 'svg', 'button'].includes(tag) || hiddenReplyNode(node, options)) return '';
       if (tag === 'pre') {
         const code = node.querySelector('code') || node;
         const text = (code.textContent || '').replace(/\n$/, '');
@@ -884,7 +896,7 @@
     const request = originalFetch.apply(this, arguments);
     if (upload) {
       uploads++;
-      request.then(response => { uploads--; if (!response.ok) uploadFailureAt = Date.now(); }, () => { uploads--; uploadFailureAt = Date.now(); });
+      request.then(response => { uploads--; if (!response.ok) uploadFailureAt = Date.now(); else uploadDoneAt = Date.now(); }, () => { uploads--; uploadFailureAt = Date.now(); });
     }
     if (job) request.then(response => { try { observe(response.clone(), job); } catch (e) { detach(job, e.message); } }, e => fail(job, 'stream_failed', e.message));
     return request;
@@ -1084,6 +1096,19 @@
     }
     return false;
   }
+  // Nothing QChat sends is ever left in ChatGPT's composer between turns: the
+  // app keeps its own files until Send. Chips found there are leftovers from a
+  // send that never went out, and the next Send would carry them along, so
+  // remove them first. Refuse rather than send them if they will not go.
+  async function clearStaleAttachments() {
+    if (!attachmentRemovers().length) return true;
+    attachmentRemovers().forEach(node => { try { node.click(); } catch (_) {} });
+    for (let i = 0; i < 40; i++) {
+      await sleep(50);
+      if (!attachmentRemovers().length) return true;
+    }
+    return false;
+  }
   function temporaryReady() {
     const visible = node => {
       if (!node?.isConnected || !node.getClientRects().length) return false;
@@ -1137,6 +1162,7 @@
       if (cancelledAttachments.hadControls && uploads === 0 && attachmentRemovers(cancelledAttachments.names).length === 0) cancelledAttachments = null;
       else throw new Error('attachment_pending: Start a new chat to clear cancelled attachments before uploading again.');
     }
+    if (!active && attachmentRemovers().length && !await clearStaleAttachments()) throw new Error('attachment_pending: Old attachments are stuck in ChatGPT. Start a new chat before sending again.');
     attachmentSelectionAt = Date.now();
     const choose = () => {
       const inputs = [...document.querySelectorAll('input[type="file"]')].filter(input => !input.disabled);
@@ -1537,6 +1563,12 @@
         composer = find('composer');
         if (!composer) { fail(job, 'not_ready', 'ChatGPT composer changed. Please try again.'); return; }
         if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
+        // A text-only turn must not pick up files left behind by an earlier send.
+        if (!attachmentCount && attachmentRemovers().length && !await clearStaleAttachments()) {
+          fail(job, 'attachment_pending', 'Old attachments are stuck in ChatGPT. Start a new chat before sending again.'); return;
+        }
+        if (active !== job || job.cancelled) return;
+        composer = find('composer') || composer;
         const fill = composer => {
           composer.focus();
           if (composer.tagName === 'TEXTAREA') {
@@ -1547,7 +1579,7 @@
           }
         };
         const typed = node => String(node.tagName === 'TEXTAREA' ? node.value : node.innerText ?? node.textContent ?? '').trim();
-        let uploadQuietAt = Date.now(), filledComposer = null, held = false, filledAt = 0;
+        let uploadQuietAt = Date.now(), filledComposer = null, held = false, filledAt = 0, waiting = '';
         for (let i = 0; i < (attachmentCount > 0 ? 1200 : 100) && active === job && !job.started && !job.cancelled; i++) {
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           // File selection can register late and replace the composer. Require every attachment
@@ -1562,8 +1594,12 @@
               fail(job, 'attachment_failed', 'ChatGPT rejected an attachment. Check the attachment in ChatGPT.'); return;
             }
             const pending = uploads > 0 || !!area?.querySelector('[role="progressbar"], [aria-busy="true"], [data-testid*="uploading"], [data-state="uploading"]');
-            const present = attachmentRemovers(job.attachmentNames).length >= attachmentCount;
+            const removers = attachmentRemovers(job.attachmentNames).length;
+            // The chip's remove button is the usual proof a file is in the draft. If the site
+            // renders chips without a labelled remove button, a finished upload is the proof.
+            const present = removers >= attachmentCount || (!removers && Number.isFinite(uploadDoneAt) && uploadDoneAt >= attachmentSelectionAt && Date.now() - uploadDoneAt >= 1500);
             if (pending || !present) uploadQuietAt = Date.now();
+            waiting = pending ? 'uploading' : !present ? 'chips' : '';
             if (pending || !present || Date.now() - uploadQuietAt < 800) { await sleep(100); continue; }
           }
           composer = find('composer');
@@ -1572,13 +1608,16 @@
             fill(composer); filledComposer = composer; filledAt = Date.now(); held = !!typed(composer);
           }
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
-          // An attachment enables Send by itself, so Send can't show that the page has taken the text.
-          if (attachmentCount > 0 && prompt.trim() && (!typed(composer) || Date.now() - filledAt < 300)) {
+          // Never click Send before the page has the text. An attachment enables Send by itself,
+          // so Send can't show that the page has taken the text; give it a moment to settle too.
+          if (prompt.trim() && (!typed(composer) || (attachmentCount > 0 && Date.now() - filledAt < 300))) {
             if (!typed(composer) && Date.now() - filledAt >= 300) fill(composer), filledAt = Date.now();
+            waiting = 'text';
             await sleep(100);
             continue;
           }
           const button = find('send');
+          waiting = 'send';
           if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
             job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
             job.submitted = true;
@@ -1593,9 +1632,14 @@
           await sleep(100);
         }
         if (active === job && !job.started && !job.cancelled) {
-          if (attachmentCount > 0) { fail(job, 'attachment_failed', 'Attachments did not become ready within two minutes. Check them in ChatGPT.'); return; }
+          if (attachmentCount > 0) {
+            const why = { uploading: 'ChatGPT was still uploading them', chips: 'ChatGPT never showed them in the message box', text: 'ChatGPT did not take the message text', send: 'ChatGPT kept Send disabled' }[waiting];
+            fail(job, 'attachment_failed', `Attachments did not become ready within two minutes${why ? ` (${why})` : ''}. Check them in ChatGPT.`); return;
+          }
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           if (!composer) { fail(job, 'not_ready', 'ChatGPT composer changed. Please try again.'); return; }
+          // Enter can't send what the page never took, and could send leftovers on their own.
+          if (prompt.trim() && !typed(find('composer') || composer)) { fail(job, 'send_failed', 'ChatGPT did not take the message text. Try again.'); return; }
           job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
           job.submitted = true; composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
         }
@@ -1742,9 +1786,14 @@
       }
       await window.__qchat.stop();
       media.clear(); cancelledAttachments = null; downloadActivation = null;
+      // The next send goes wherever this page is, so it must really be a fresh chat:
+      // off the old conversation's URL, with none of its turns on screen.
+      const fresh = () => !/\/c\//.test(location.pathname) && !assistantNodes().length && !document.querySelector(userSelector);
       const button = find('fresh');
       if (button) button.click();
       else { history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); }
+      for (let i = 0; i < 15 && !fresh(); i++) await sleep(100);
+      if (!fresh()) { location.assign('https://chatgpt.com/'); return; }
       await sleep(300); await status();
     },
     status
