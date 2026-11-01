@@ -8,6 +8,8 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 - Settings overhaul. The sidebar groups 13 pages under Basics, Look & feel and Account, and only one page shows at a time. Each page has a one-line description and titled groups, and every option has a plain-English name ("Shaded" quotes, "From theme" accent, "Clock icon on tabs").
 - A dot in the sidebar marks pages you've changed, and each page has its own "Reset page" button.
 - Search (Ctrl+F) looks across every page and opens Fine-tune when a match is inside it. The custom colour pickers only appear once you choose Custom. Preset save, import and export sit behind a disclosure. Settings reopens on the page you last used.
+### Added
+- Updates from GitHub. When a newer release is out, an arrow badge appears on the orb. Hover the orb (or the folded circle) and an **Update** button pops up above it. QChat downloads the new `QChat.exe`, checks its SHA-256, swaps it in and restarts. `/update` checks on demand, the × skips that version, and Settings > General > *Check GitHub for updates* turns checking off.
 
 ## [1.4.1] - 2026-11-01
 

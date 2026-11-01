@@ -508,7 +508,8 @@
         ] },
         { title: "Startup", rows: [
           () => desktopControl("autostart"),
-          S("showBarAtStartup", "Show the bar at startup", "Otherwise QChat waits in the tray until you call it")
+          S("showBarAtStartup", "Show the bar at startup", "Otherwise QChat waits in the tray until you call it"),
+          S("updateCheck", "Check GitHub for updates", "Show an update button when a newer release is available")
         ] }
       ]
     },

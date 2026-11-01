@@ -143,11 +143,12 @@
     defaultReasoning: choice("medium", ["low", "medium", "high"]),
     autoDismiss: range(0, 0, 120, 5, "s"),
 
-    keepHistory: bool(true)
+    keepHistory: bool(true),
+    checkUpdates: bool(true)
   };
 
   const DEFAULTS = Object.freeze(Object.fromEntries(Object.entries(SCHEMA).map(([k, v]) => [k, v.def])));
-  const APPEARANCE_KEYS = Object.keys(SCHEMA).filter(k => !["defaultProvider","showBarAtStartup","rememberPosition","selectionClipboard","alwaysOnTop","hideOnBlur","idleCollapse","sendKey","defaultReasoning","autoDismiss","keepHistory"].includes(k));
+  const APPEARANCE_KEYS = Object.keys(SCHEMA).filter(k => !["defaultProvider","showBarAtStartup","rememberPosition","selectionClipboard","alwaysOnTop","hideOnBlur","idleCollapse","sendKey","defaultReasoning","autoDismiss","keepHistory","checkUpdates"].includes(k));
   const PRESETS = [
     ["default","Default","Clear glass",{}],
     ["reader","Reader","Wide, generous serif",{replyWidth:860,textSize:18,fontFamily:"serif",replyOpacity:100,paragraphSpacing:1.4}],

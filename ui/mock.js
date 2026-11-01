@@ -52,6 +52,9 @@
     emit: emitMock,
     count: (cmd) => mock.calls.filter((c) => c.cmd === cmd).length,
     last: (cmd) => mock.calls.filter((c) => c.cmd === cmd).at(-1),
+    // `?update=1.9.0` stands for a newer GitHub release; `updateFail` makes installing fail.
+    update: params.get("update"),
+    updateFail: params.get("updateFail"),
     release: null
   });
 
@@ -138,7 +141,14 @@
             if (mock.providerHold) await new Promise(resolve => { mock.releaseProvider = resolve; });
             if (mock.failProvider) throw new Error("unavailable");
             mock.provider = args.provider; if (!mock.statusHold) emitStatus(0); return;
-          case "launch_info": return {autostart:mock.autostart};
+          case "launch_info": return {autostart:mock.autostart, updated:params.get("updated")};
+          case "update_check":
+            return mock.update ? {available:true, version:mock.update, current:"1.4.1", url:`https://github.com/Steez-47/qchat/releases/tag/v${mock.update}`} : {available:false, current:"1.4.1"};
+          case "update_install":
+            if (!mock.update) throw new Error("no_update");
+            emitMock("qchat://update-progress", {received:5, total:10});
+            if (mock.updateFail) throw new Error(mock.updateFail);
+            return null;
           case "show_main": return;
           case "snapshot_capture": {
             if (mock.snapshotError) throw new Error(mock.snapshotError);

@@ -5,6 +5,7 @@ mod selection;
 mod surfaces;
 mod media;
 mod conversation_export;
+mod update;
 use media::{
     attachment_begin, attachment_chunk, attachment_finish, attachment_remove, media_load,
     media_save,
@@ -684,7 +685,7 @@ fn test_profile() -> Option<std::path::PathBuf> {
 #[tauri::command]
 fn provider_get(app: tauri::AppHandle) -> String { active_provider(&app) }
 #[tauri::command]
-fn launch_info(app: tauri::AppHandle) -> serde_json::Value { serde_json::json!({"autostart":std::env::args().any(|a|a=="--autostart"),"uploadGeneration":media::upload_generation(&app)}) }
+fn launch_info(app: tauri::AppHandle) -> serde_json::Value { serde_json::json!({"autostart":std::env::args().any(|a|a=="--autostart"),"uploadGeneration":media::upload_generation(&app),"updated":update::relaunched().then_some(env!("CARGO_PKG_VERSION"))}) }
 #[tauri::command]
 fn show_main(app: tauri::AppHandle) { show(&app); }
 fn ensure_provider(app: &tauri::AppHandle, provider: &str) -> Result<(),String> {
@@ -752,6 +753,7 @@ fn start_retry(app: tauri::AppHandle) {
     }
 }
 fn main() {
+    update::after_restart();
     surfaces::remember_launch_foreground();
     #[cfg(debug_assertions)]
     if let Ok(port) = std::env::var("QCHAT_DEBUG_PORT") {
@@ -763,7 +765,7 @@ fn main() {
         }
     }
     let builder = tauri::Builder::default()
-        .manage(StartupMenu(Mutex::new(None))).manage(selection::State::default()).manage(media::MediaState::default()).manage(surfaces::State::default())
+        .manage(StartupMenu(Mutex::new(None))).manage(selection::State::default()).manage(media::MediaState::default()).manage(surfaces::State::default()).manage(update::State::default())
         .register_asynchronous_uri_scheme_protocol("qchat-media", |context, request, responder| {
             let app = context.app_handle().clone();
             let label = context.webview_label().to_owned();
@@ -778,7 +780,7 @@ fn main() {
  .manage(Host(Mutex::new(Activity { active:"chatgpt".into(), providers:[("chatgpt".into(),ProviderActivity::default()),("gemini".into(),ProviderActivity::default())].into(), content: None, hidden:Instant::now(),flight_id:None,last_progress:Instant::now(),anchor:None,remember_position:true,always_on_top:true,positioned:Instant::now(),save_due:None,save_generation:0})))
 
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,shortcut,event|{if event.state()==ShortcutState::Pressed{if selection::matches(app,shortcut) { selection::activate(app); } else { toggle(app); }}}).build())
- .invoke_handler(tauri::generate_handler![provider_set,provider_get,launch_info,show_main,surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,chat_list_conversations,surfaces::get_hotkey, surfaces::get_hotkey_available, selection::get_selection_hotkey_available,surfaces::set_hotkey,selection::get_selection_hotkey,selection::set_selection_hotkey,selection::set_selection_clipboard,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_models,chat_model_choose,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,conversation_export::conversation_export,clipboard::image_copy,snapshot::snapshot_capture])
+ .invoke_handler(tauri::generate_handler![provider_set,provider_get,launch_info,show_main,surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,chat_list_conversations,surfaces::get_hotkey, surfaces::get_hotkey_available, selection::get_selection_hotkey_available,surfaces::set_hotkey,selection::get_selection_hotkey,selection::set_selection_hotkey,selection::set_selection_clipboard,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_models,chat_model_choose,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,conversation_export::conversation_export,clipboard::image_copy,snapshot::snapshot_capture,update::update_check,update::update_install])
  .setup(|app|{
  surfaces::repair_autostart();
  app.add_capability(r#"{"identifier":"selection-settings","windows":["settings"],"permissions":["allow-get-selection-hotkey","allow-set-selection-hotkey","allow-get-hotkey","allow-set-hotkey","allow-get-autostart","allow-set-autostart"]}"#)?;
