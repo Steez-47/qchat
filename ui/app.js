@@ -2353,7 +2353,22 @@
   // One buffered reveal path for every stream style. Text appears a finished block at a time:
   // the latest snapshot is cut at the largest complete prefix, and the final snapshot is shown
   // whole. There are no timers, so nothing can reopen a turn that finished or was stopped.
+  // The bridge sends the whole text on every delta, often many times a frame. Only the latest
+  // snapshot matters, so deltas are coalesced into one pass per frame; anything that needs the
+  // text shown at once (done, stop, settings) calls paceTurn directly, which settles a queued pass.
+  const pacing = new Map();
+  function queuePace(turn) {
+    // Until a reveal exists, a render shows the raw text: start one now, so nothing that renders
+    // before the queued pass (a size change, a tool chip) can flash the unfinished tail.
+    const entry = turnNodes.get(turn.id);
+    if (entry && turn.status === "streaming") entry.reveal ||= { visible: "", target: null };
+    if (pacing.has(turn.id)) return;
+    pacing.set(turn.id, nextFrame(() => { pacing.delete(turn.id); paceTurn(turn); }));
+  }
+
   function paceTurn(turn) {
+    pacing.get(turn.id)?.();
+    pacing.delete(turn.id);
     const entry = turnNodes.get(turn.id);
     if (!entry || turn.status !== "streaming") return;
     const state = entry.reveal ||= { visible: "", target: null };
@@ -5008,7 +5023,7 @@
         const turn = turns.find((t) => t.id === evt.id);
         if (turn?.status === "streaming" && !turn.backendDone) {
           turn.text = String(evt.text ?? "");
-          paceTurn(turn);
+          queuePace(turn);
         }
         break;
       }
