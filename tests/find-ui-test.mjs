@@ -179,7 +179,7 @@ try {
   await find('needle');await type('/');
   check('typing slash commands replaces find cleanly',await clean()&&await evalJS("!document.getElementById('slash-menu').hidden"));await key('Escape');
   await show();await find('needle');
-  const immediateNavigation=await evalJS("new Promise(resolve=>{document.querySelector('#history-panel [data-id=\"old-u\"] .turn-content').firstChild.data='Changed question.';queueMicrotask(()=>{document.getElementById('find-next').click();resolve({count:document.getElementById('find-count').textContent.replace(/\\s/g,''),ranges:CSS.highlights.get('qchat-find').size,current:Array.from(CSS.highlights.get('qchat-find-current'))[0]?.toString()})})})");
+  const immediateNavigation=await evalJS("new Promise(resolve=>{document.querySelector('#history-panel [data-id=\"old-u\"] .selection-prompt').firstChild.data='Changed question.';queueMicrotask(()=>{document.getElementById('find-next').click();resolve({count:document.getElementById('find-count').textContent.replace(/\\s/g,''),ranges:CSS.highlights.get('qchat-find').size,current:Array.from(CSS.highlights.get('qchat-find-current'))[0]?.toString()})})})");
   check('navigation flushes pending message mutations',immediateNavigation.count==='1/1'&&immediateNavigation.ranges===1&&immediateNavigation.current==='NEEDLE',JSON.stringify(immediateNavigation));
 
   await show();await evalJS("__mock.hold=true");await send('Stream with prior history');await until("__mock.last('chat_send')");

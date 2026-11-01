@@ -478,8 +478,6 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
   line-height: 1.3;
 }
 .attachments .attachment-chip { animation: rise-in var(--t3) var(--ease-out) both, fade-in var(--t1) linear both; }
-.selection-chip > .icon { color: var(--accent-text, var(--text-2)); font-size: 14px; }
-.bubble-user .selection-chip { display: inline-flex; margin-left: 7px; vertical-align: middle; }
 .attachment-chip:has(.attachment-thumbnail) { padding-left: 3px; }
 .attachment-name { min-width: 0; overflow-wrap: anywhere; user-select: text; font-weight: 500; }
 .attachments .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
@@ -779,6 +777,43 @@ html[data-motion="off"] .history-panel { transition: none; }
 .stack[data-history] > .history-controls { position: relative; top: auto; }
 
 .attachments .attachment-chip { height: 28px; min-height: 28px; padding-block: 0; font-size: 11.5px; }
+
+.attachments .selection-chip,
+.bubble-user .selection-chip {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  height: auto;
+  min-height: 0;
+  padding: 0 0 0 8px;
+  border-left: 2px solid var(--text-2);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+.attachments .selection-chip .attachment-name,
+.bubble-user .selection-chip .attachment-name {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+}
+.bubble-user .selection-chip { margin: 0 0 4px; }
+.bubble-user .turn-content:has(> .selection-chip) { display: block; overflow: visible; }
+.bubble-user .selection-prompt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--user-lines, 6);
+  overflow: hidden;
+}
+.history-row .bubble-user .selection-prompt { display: block; overflow: visible; }
 .attachments .attachment-thumbnail { width: 22px; height: 22px; }
 
 .feature-list { border-radius: 16px; padding: 8px; margin: 0 var(--bar-inset) 8px; max-height: 340px; display: flex; flex-direction: column; }

@@ -22,3 +22,7 @@ Usage and rate-limit log for delegated work. The full log through v1.4.0 is in `
 date | task | provider/model | status | notes
 ---|---|---|---|---
 2026-11-01 | Gemini model label, dragged-orb collapse, repo cleanup | Claude Code cloud session | done | no delegation available in this environment; 54 headless suites PASS; native/Rust unverified
+
+2026-11-01 | Selected-text quote preview | opencode-go/deepseek-v4.1-flash high | unavailable | upstream region policy requires Global regions; no work produced, privacy settings unchanged; requested owner routing preference per T3 instructions.
+2026-11-01 | Selected-text quote preview | codex/gpt-6.1-terra medium | partial | owner explicitly selected Terra; quote render landed; existing stale showReasoningPicker handler blocked startup, parent corrected it to openPicker; follow-up Terra task completing layout checks/screenshots.
+2026-11-01 | Selected-text quote follow-up and review | codex/gpt-6.1-terra medium, 2 tasks | done with parent integration | owner choice overrides recorded Terra budget; parent fixed hidden-row geometry fixture and prompt line-limit finding, updated two obsolete quote fixtures. Final selection33PASS, selection/Find/provider-draft3/3PASS, rendered screenshots reviewed, release buildPASS. Full run50/56 before fixture updates; remaining4 failures reproduced on pre-change picker/mode UI. Total: 3 Terra tasks, 1 unavailable DeepSeek task; privacy unchanged.

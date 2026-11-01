@@ -45,6 +45,7 @@ try {
   const pending = new Map();
   ws.onmessage = (e) => {
     const message = JSON.parse(e.data);
+    if (message.method === 'Runtime.exceptionThrown') console.error('PAGE ERROR', message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text);
     if (message.id) { pending.get(message.id)?.(message); pending.delete(message.id); }
   };
   const cdp = (method, params = {}) => new Promise((resolve, reject) => {
@@ -112,7 +113,9 @@ try {
   ` });
 
   await cdp('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
-  for (let i = 0; i < 100; i++) { if (await evalJS(`!!window.test?.handlers.bridge && !!window.QSettings`)) break; await sleep(50); }
+  for (let i = 0; i < 100; i++) { if (await evalJS(`!!window.test?.handlers["qchat://selection"] && !!window.QSettings`)) break; await sleep(50); }
+
+  if (!await evalJS(`!!window.test?.handlers["qchat://selection"]`)) throw new Error("Selection listener did not initialize; see page errors above");
 
   const results = await evalJS(String.raw`(async () => {
     const results = [];
@@ -131,8 +134,8 @@ try {
     $('prompt-input').setSelectionRange(2,4);
     selection(secret);
     check('capture preserves draft and caret', $('prompt-input').value==='Explain this' && $('prompt-input').selectionStart===2 && $('prompt-input').selectionEnd===4);
-    check('compact removable selection indicator', chips().length===1 && !!chips()[0].querySelector('.icon') && !!chips()[0].querySelector('button[aria-label="Remove selection"]'));
-    check('captured text stays out of the rendered UI', !document.body.textContent.includes('First private selection') && !document.querySelector('img[src="x"]'));
+    check('compact removable selection indicator', chips().length===1 && !chips()[0].querySelector(':scope > .icon') && chips()[0].querySelector('.attachment-name').textContent.includes('First private selection') && !!chips()[0].querySelector('button[aria-label="Remove selection"]'));
+    check('captured excerpt renders as literal text', document.body.textContent.includes('First private selection') && !document.querySelector('img[src="x"]'));
     check('selection is saved with its draft', saved().current.selectionTexts[0]===secret);
     selection('Another private selection');
     check('repeated captures attach independently', chips().length===2);
@@ -143,12 +146,13 @@ try {
     $('btn-send').click();
     await until(()=>sends().length===1 && $('attachments').hidden);
     check('send includes question and all selected text', sends()[0].args.prompt==='Explain this'+String.fromCharCode(10,10)+'> '+secret.replace(/\r\n?/g,'\n').split('\n').join('\n> '));
-    check('sent message displays question and selection chip', document.querySelector('[data-role="user"] .selection-chip') && !document.body.textContent.includes('First private selection'));
+    check('sent quote sits above question', (()=>{const c=document.querySelector('[data-role="user"] .selection-chip'); const node=c.parentNode.querySelector('.selection-prompt'); const r=document.createRange(); r.selectNodeContents(node); return c.getBoundingClientRect().bottom<=r.getBoundingClientRect().top+1 && !c.querySelector('button');})());
+    check('sent message displays question and selection chip', document.querySelector('[data-role="user"] .selection-chip') && document.body.textContent.includes('First private selection'));
     check('successful send consumes only its captured context', saved().current.selectionTexts.length===0 && $('attachments').hidden);
     await until(()=>document.querySelector('[data-action="retry-reply"]:not([hidden])'));
     await wait(250); document.querySelector('[data-action="retry-reply"]').click();
     await until(()=>sends().length===2);
-    check('retry reuses hidden selection exactly once', sends()[1].args.prompt===sends()[0].args.prompt);
+    check('retry reuses selection exactly once', sends()[1].args.prompt===sends()[0].args.prompt);
     await wait(80);
     test.emit({type:'transcript',conversationId:'conv-1',complete:true,messages:[{role:'user',text:sends()[0].args.prompt},{role:'assistant',text:'Account answer'}]});
     await wait(80);
@@ -174,7 +178,7 @@ try {
     await until(()=>$('attachments').hidden && $('btn-send').dataset.mode==='stop');
     $('btn-send').click();
     await wait(60);
-    check('Stop before a reply restores question and hidden context', $('prompt-input').value==='Stop question' && chips().length===1 && saved().current.selectionTexts[0]==='Stop context');
+    check('Stop before a reply restores question and context', $('prompt-input').value==='Stop question' && chips().length===1 && saved().current.selectionTexts[0]==='Stop context');
     await reset();
     input('Pending question'); selection('First send context'); test.autoDone=true; test.delaySelectionSend=true;
     const before=sends().length;
@@ -220,18 +224,42 @@ try {
   await evalJS(`test.emit({type:'transcript',conversationId:'conv-1',complete:true,messages:[{role:'user',text:${JSON.stringify(largeWire)}},{role:'assistant',text:'Restored answer'}]})`);
   await sleep(100);
   await evalJS(`document.getElementById('btn-history').click()`);
-  const restored=await evalJS(`(()=>{const s=JSON.parse(localStorage.getItem('qchat.chats'));return s.current.lastPrompt==='Large selection question' && s.current.transcript[0].text==='Large selection question' && document.querySelector('#history-panel .selection-chip') && !document.body.textContent.includes('Large private context');})()`);
+  const restored=await evalJS(`(()=>{const s=JSON.parse(localStorage.getItem('qchat.chats'));return s.current.lastPrompt==='Large selection question' && s.current.transcript[0].text==='Large selection question' && document.querySelector('#history-panel .selection-chip') && document.body.textContent.includes('Large private context');})()`);
   console.log((restored?'PASS ':'FAIL ')+'quota fallback reload keeps account selection collapsed'); if(!restored) failed++;
   await evalJS(`document.getElementById('btn-history').click(); const i=document.getElementById('prompt-input');i.value='Draft to restore';i.dispatchEvent(new Event('input'));for(const fn of test.handlers['qchat://selection']) fn({payload:'Draft private context'});`);
   await cdp('Page.reload'); await sleep(250);
-  const draftRestored=await evalJS(`document.getElementById('prompt-input').value==='Draft to restore' && document.querySelectorAll('#attachments .selection-chip').length===1 && !document.body.textContent.includes('Draft private context')`);
-  console.log((draftRestored?'PASS ':'FAIL ')+'reload restores hidden context and question'); if(!draftRestored) failed++;
+  const draftRestored=await evalJS(`document.getElementById('prompt-input').value==='Draft to restore' && document.querySelectorAll('#attachments .selection-chip').length===1 && document.body.textContent.includes('Draft private context')`);
+  console.log((draftRestored?'PASS ':'FAIL ')+'reload restores context and question'); if(!draftRestored) failed++;
   await cdp('Emulation.setDeviceMetricsOverride',{width:580,height:600,deviceScaleFactor:1,mobile:false});
+  await sleep(150);
+  const geometry = await evalJS(`(async()=>{
+    const wait=ms=>new Promise(r=>setTimeout(r,ms));
+    QSettings.apply(document.documentElement,{...QSettings.settings,showPrompt:true,userLines:1,barWidth:340,replyWidth:340});
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'n',ctrlKey:true,bubbles:true,cancelable:true})); await wait(100);
+    const input=document.getElementById('prompt-input'); input.value='Geometry question'; input.dispatchEvent(new Event('input',{bubbles:true}));
+    for(const text of ['Long multiline text '+ 'word '.repeat(150)+'\\nsecond line', 'unbroken'+ 'x'.repeat(1000)]) for(const f of test.handlers['qchat://selection']) f({payload:text});
+    const valid=c=>{const n=c.querySelector('.attachment-name'), cs=getComputedStyle(n), r=n.getBoundingClientRect(); return cs.whiteSpace==='nowrap' && cs.textOverflow==='ellipsis' && n.scrollWidth>n.clientWidth && r.height<=parseFloat(cs.lineHeight)+1 && c.getBoundingClientRect().right<=document.documentElement.clientWidth+1;};
+    const composer=[...document.querySelectorAll('#attachments .selection-chip')]; const a=composer.length===2 && composer.every(valid);
+    document.getElementById('btn-send').click(); await wait(250);
+    const sent=[...document.querySelectorAll('.turn-row[data-role="user"] .selection-chip')]; const b=sent.length===2 && sent.every(valid) && sent.every(c=>!c.querySelector('button'));
+    const prompt=document.querySelector('#bubble-zone .selection-prompt') || sent[0]?.parentNode.querySelector('.selection-prompt');
+    const questionVisible=!!prompt && prompt.textContent==='Geometry question' && prompt.getBoundingClientRect().height>0 && prompt.parentNode.getBoundingClientRect().bottom>=prompt.getBoundingClientRect().bottom && sent.at(-1).getBoundingClientRect().bottom<=prompt.getBoundingClientRect().top+1;
+    document.getElementById('btn-history').click(); await wait(100);
+    const history=[...document.querySelectorAll('#history-panel .selection-chip')]; const c=history.length===2 && history.every(valid) && history.every(x=>!x.querySelector('button'));
+    document.getElementById('btn-history').click();
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'n',ctrlKey:true,bubbles:true,cancelable:true})); await wait(100);
+    return [a,b,c,document.documentElement.scrollWidth<=document.documentElement.clientWidth,questionVisible];
+  })()`);
+  for(const [i,name] of ['composer ellipsis at narrow width','sent ellipsis at narrow width','history ellipsis at narrow width','no page horizontal overflow','one-line prompt limit preserves question below multiple quotes'].entries()) { console.log((geometry[i]?'PASS ':'FAIL ')+name); if(!geometry[i]) failed++; }
+  await evalJS(`(()=>{const i=document.getElementById('prompt-input'); i.value='Make this sound friendlier'; i.dispatchEvent(new Event('input',{bubbles:true})); for(const f of test.handlers['qchat://selection']) f({payload:'We missed the launch date because the vendor could not deliver the parts on time.'});})()`);
   await sleep(150);
   const shot=await cdp('Page.captureScreenshot',{format:'png'});
   const {mkdir,writeFile}=await import('node:fs/promises');
   await mkdir(path.join(root,'.tmp/selection-shots'),{recursive:true});
-  await writeFile(path.join(root,'.tmp/selection-shots/selection.png'),Buffer.from(shot.data,'base64'));
+  await writeFile(path.join(root,'.tmp/selection-shots/composer.png'),Buffer.from(shot.data,'base64'));
+  await evalJS(`document.getElementById('btn-send').click()`); await sleep(300);
+  const sentShot=await cdp('Page.captureScreenshot',{format:'png'});
+  await writeFile(path.join(root,'.tmp/selection-shots/sent.png'),Buffer.from(sentShot.data,'base64'));
 } catch (error) {
   console.error(error);
   failed++;

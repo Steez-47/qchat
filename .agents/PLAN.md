@@ -8,6 +8,22 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 
 ## Current state
 
+## Selected-text quote preview (2026-11-01)
+
+- Goal: replace the generic Selection badge with the owner's reference: a quiet, single-line selected-text quote with a left rule above the question, in the composer and sent/history messages.
+- Preserve exact captured text, prompt wiring, draft/caret, per-chat restoration, retry/Stop recovery and removal. Show plain text safely; truncate the preview visually without truncating the stored/sent selection.
+- Existing Work/picker/orb edits in this checkout belong to other work and must be preserved.
+
+| task | model | owns | status |
+|---|---|---|---|
+| Quote rendering, layout, focused regression | codex/gpt-6.1-terra medium (owner choice after DeepSeek region block) | selectionChip/userContent/renderAttachments in ui/app.js; selection-only rules in ui/app.css; tests/selection-ui-test.mjs | done |
+| Integration, rendered verification, full suite/build, review | parent + Terra medium review | .agents/*; scoped integration fixes; Find/provider-draft fixture updates | done |
+
+- Verified: 33 focused selection checks; final selection/Find/provider-draft suites 3/3 PASS; isolated rendered composer/sent screenshots reviewed; Tauri release build PASS, `git diff --check` PASS. Native desktop hotkey/capture was not re-tested.
+- Review found quotes consumed the configured prompt line limit. Quotes now sit above a separately clamped prompt; a one-line limit with multiple quotes is covered.
+- Full offline run: 50/56 suites passed before updating two obsolete quote fixtures. Those two now pass. The other four failures reproduced against the pre-change picker/mode UI: feature/provider/reasoning pickers and missing `chat_modes`/`chat_mode_set` command permissions. Preserve that separate work; no unrelated test expectations were changed.
+- Parent corrected a pre-existing stale `showReasoningPicker` listener to `openPicker` to allow startup. This depends on the unfinished picker work and remains with that work, outside the quote commit. Build output is `src-tauri/target/release/qchat.exe`; installed/dist application was not replaced.
+
 ## v1.4.3 public release (2026-11-01)
 
 - Goal: merge PR17 screen sizing and PR18 website feature tour, then publish v1.4.3 publicly.

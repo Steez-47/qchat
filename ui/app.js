@@ -490,10 +490,9 @@
     return `${text.length}:${a >>> 0}:${b >>> 0}`;
   }
 
-  function selectionChip(removable = false, index = 0) {
-    const chip = make("span", "attachment-chip selection-chip" + (removable ? " glass glass-tiny" : ""));
-    chip.append(makeIcon("\uE8A5"), make("span", "attachment-name", "Selection"));
-    chip.setAttribute("aria-label", "Selected text attached");
+  function selectionChip(text, removable = false, index = 0) {
+    const chip = make("span", "attachment-chip selection-chip");
+    chip.append(make("span", "attachment-name", text.replace(/\s+/g, " ").trim()));
     if (removable) {
       const remove = make("button", "icon-btn");
       remove.type = "button";
@@ -512,8 +511,8 @@
 
   function userContent(item) {
     const fragment = document.createDocumentFragment();
-    fragment.append(document.createTextNode(item.text));
-    for (const _ of item.selectionTexts || []) fragment.append(selectionChip());
+    for (const text of item.selectionTexts || []) fragment.append(selectionChip(text));
+    fragment.append(item.selectionTexts?.length ? make("span", "selection-prompt", item.text) : document.createTextNode(item.text));
     return fragment;
   }
 
@@ -1437,7 +1436,7 @@
     const unused = selectionNodes.slice();
     selectionNodes = selections.map((text, index) => {
       const match = unused.findIndex(entry => entry.text === text);
-      const entry = match < 0 ? { text, chip: selectionChip(true, index) } : unused.splice(match, 1)[0];
+      const entry = match < 0 ? { text, chip: selectionChip(text, true, index) } : unused.splice(match, 1)[0];
       entry.chip._selectionIndex = index;
       entry.chip.querySelector("button").disabled = sending;
       return entry;
