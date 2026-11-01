@@ -71,8 +71,8 @@ try {
   await key('k',{ctrlKey:true});await evalJS("document.getElementById('slash-gemini').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))");
   await wait("JSON.parse(localStorage.getItem('qchat.chats')).current.provider==='gemini'");
   await send('Private cross-provider probe');await sleep(3000);
-  check('temporary provider switch prepares the new provider before sending',await evalJS('__mock.calls.slice('+switchedAt+').some(c=>c.cmd==="chat_new"&&c.args.temporary===true)'));
-  check('temporary send carries explicit privacy intent',await evalJS('__mock.last("chat_send")?.args.temporary===true'));
+  check('switching a temporary chat to Gemini never asks Gemini for Temporary',await evalJS('!__mock.calls.slice('+switchedAt+').some(c=>c.cmd==="chat_new"&&c.args.temporary===true)'));
+  check('the Gemini send after the switch is an ordinary send',await evalJS('__mock.last("chat_send")?.args.temporary===false&&__mock.last("chat_send")?.args.provider==="gemini"'));
   await setup();
   await evalJS('window.originalTemporaryInvoke=window.__TAURI__.core.invoke;window.__TAURI__.core.invoke=async function(cmd,args){if(cmd==="chat_new"&&args?.temporary){__mock.calls.push({cmd,args});__mock.emit("bridge",{type:"error",code:"temporary_unavailable",message:"Temporary mode is unavailable"});return null;}return originalTemporaryInvoke(cmd,args);}');
   await type('/temp');await key('Enter');await wait("__mock.calls.some(c=>c.cmd==='chat_new'&&c.args.temporary)");

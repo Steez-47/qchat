@@ -1080,11 +1080,10 @@
     return false;
   }
 
-  function temporaryReady() {
-    const composer = find('composer');
-    const host = composer?.closest('chat-window');
-    return !!(detectLoggedIn() && shown(composer) && shown(host) && host.classList.contains('is-temporary-chat'));
-  }
+  // Gemini's page gives QChat no reliable sign that a chat is really temporary,
+  // so QChat offers Temporary chats on ChatGPT only. This never confirms one,
+  // so the native preflight and every send check refuse a Temporary send here.
+  function temporaryReady() { return false; }
   let temporaryStage = null, stageEpoch = 0;
   function clearTemporaryStage(id) {
     if (!id || temporaryStage?.id === id) {
@@ -1475,39 +1474,11 @@
       currentSetupId = options.temporary ? options.setupId || null : null;
       clearTemporaryStage();
       await window.__qchat.stop();
-      const composer = find('composer');
-      const emptyTemporary = options.temporary && temporaryReady() && location.pathname === '/app' &&
-        !assistantNodes().length && !userNodes().length && !(composer.value ?? composer.textContent).trim() &&
-        !uploads && !cancelledAttachments && !attachmentRemovers([], true).length &&
-        !document.querySelector('input-container [role="progressbar"], input-area-v2 [role="progressbar"], mat-progress-spinner') &&
-        ![...document.querySelectorAll('input[type="file"]')].some(input => input.files?.length);
       media.clear();
       downloadActivation = null;
       loginCache = detectLoggedIn();
       if (options?.temporary) {
-        if (!loginCache) {
-          emit({type:'error', code:'temporary_unavailable', message:'Sign in to Gemini to use temporary chats.', setupId:options.setupId || null});
-          return;
-        }
-        if (temporaryReady()) {
-          if (emptyTemporary) { await status(); return; }
-          const fresh = find('fresh');
-          if (!fresh || fresh.disabled || fresh.getAttribute('aria-disabled') === 'true') { emit({type:'error', code:'temporary_unavailable', message:'Could not start a fresh temporary chat in Gemini.', setupId:options.setupId || null}); return; }
-          dispatchClickSequence(fresh, true);
-          for (let i = 0; i < 15 && (location.pathname !== '/app' || assistantNodes().length || userNodes().length); i++) await sleep(100);
-          if (location.pathname !== '/app' || assistantNodes().length || userNodes().length) { emit({type:'error', code:'temporary_unavailable', message:'Could not start a fresh temporary chat in Gemini.', setupId:options.setupId || null}); return; }
-          cancelledAttachments = null;
-          if (temporaryReady()) { await status(); return; }
-        }
-        const tempBtn = [...document.querySelectorAll('button, a, [role="button"], gem-nav-list-item')].find(node =>
-          shown(node) && /temp(?:orary)? chat/i.test(`${node.innerText || ''} ${node.getAttribute('aria-label') || ''} ${node.getAttribute('data-test-id') || ''}`));
-        if (!tempBtn || tempBtn.disabled || tempBtn.getAttribute('aria-disabled') === 'true') {
-          emit({type:'error', code:'temporary_unavailable', message:'Temporary chat is unavailable in Gemini.', setupId:options.setupId || null});
-          return;
-        }
-        dispatchClickSequence(tempBtn, true);
-        await sleep(300);
-        await status();
+        emit({type:'error', code:'temporary_unavailable', message:'Temporary chats are ChatGPT only.', setupId:options.setupId || null});
         return;
       }
       cancelledAttachments = null;

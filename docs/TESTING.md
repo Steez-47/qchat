@@ -92,7 +92,7 @@ Run `cd src-tauri && cargo build` first. Each suite starts the real app with an 
 - `node tests/provider-draft-native-test.mjs`: the same provider-change lifecycle in an isolated hidden WebView, including real image bytes and reload persistence. Requires a debug build.
 - `node tests/image-send-native-test.mjs`: image-only, image with text, multiple images, ignored Send clicks and replies without an observed request, through the real UI and both provider bridges. Checks exact PNG bytes and rendered replies against local provider fixtures.
 - `node tests/temporary-chat-native-test.mjs`: native preflight, explicit privacy intent, retained bytes and stale-send races with provider submission stubbed.
-- `node tests/temporary-attachment-native-test.mjs`: real WebView reloads and exact-byte guarded handoffs for both providers; all provider requests are fulfilled locally. Both native suites require a debug build.
+- `node tests/temporary-attachment-native-test.mjs`: real WebView reloads and exact-byte guarded handoffs on ChatGPT, and Gemini refusing Temporary setup and sends; all provider requests are fulfilled locally. Both native suites require a debug build.
 - `node tests/find-native-test.mjs`: search, highlight rendering and native prompt-edit undo in an isolated hidden app. Requires a debug build.
 - `node tests/navigation-native-test.mjs`: reading-position restore, history backfill and keyboard tab navigation in an isolated hidden app. Add `--reading-only` for reading checks. Requires a debug build.
 - `node tests/surfaces-native-test.mjs`: blur and click-through surfaces, shortcut validation and autostart. Requires a debug build.

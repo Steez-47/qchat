@@ -160,7 +160,6 @@
     delta(job, true); job.finished = true; cancelTimers(job); active = null;
     disposeReader(job);
     if (job.media?.size) emit({ type: 'media', id: job.id, items: [...job.media.values()], final: true });
-    adoptTemporaryConversation(job);
     emit({ type: 'done', id: job.id, text: job.text, conversationId: job.conversationId || null, rich: !!job.rich });
   }
   function assistantNodes() {
@@ -632,7 +631,6 @@
   }
   function sampleDOM(job) {
     if (active !== job || job.finished || job.cancelled) return;
-    adoptTemporaryConversation(job);
     const nodes = currentAssistants(job);
     // Image sends can bypass the observed fetch. A correlated user/reply turn
     // is also an acknowledgement, even when a fast reply never displays Stop.
@@ -1126,33 +1124,44 @@
     return [...document.querySelectorAll(`button[aria-label="${label}"]`)].some(button => shown(button) && !button.closest(excluded));
   }
   // ChatGPT offers "Turn off temporary chat" only while a temporary chat is empty.
-  // After the first message it shows a read-only label instead, so that control
-  // can't confirm later turns. A chat is temporary from its first message on and
-  // can't be switched back, so a chat this page started while the control
-  // confirmed it is still temporary as long as the page stays on that chat.
-  // A reload or a move to another chat drops the record and fails closed.
+  // Once the first message is sent that control is gone, nothing on the page says
+  // Temporary any more, and ChatGPT moves to /c/<id>?temporary-chat=true. A chat
+  // is temporary from its first message and can't be switched back, so a chat this
+  // page started while the control confirmed it stays temporary while ChatGPT keeps
+  // it on that URL. Its id is kept for the tab session so a reload doesn't lose it.
+  // A new or opened chat drops it, and any other page fails closed.
+  const temporaryKey = 'qchat-temporary-chat';
+  const sessionValue = (read) => { try { return read(sessionStorage); } catch (_) { return null; } };
   let temporaryThread = null;
+  function forgetTemporaryThread() {
+    temporaryThread = null;
+    sessionValue(store => store.removeItem(temporaryKey));
+  }
   function temporaryContinues() {
-    const thread = temporaryThread;
-    if (!thread || !document.querySelector(userSelector) || headerControl('Temporary chat')) return false;
+    if (!temporaryQuery() || headerControl('Temporary chat')) return false;
     const here = pageConversation();
-    if (!here) return location.pathname === '/' && temporaryQuery();
-    return here === thread.conversationId;
+    // Before ChatGPT moves the chat to its own URL, the first message must be on screen.
+    if (!here) return !!temporaryThread && location.pathname === '/' && !!document.querySelector(userSelector);
+    if (!temporaryThread) {
+      if (sessionValue(store => store.getItem(temporaryKey)) !== here) return false;
+      temporaryThread = { conversationId: here };
+    }
+    if (!temporaryThread.conversationId) {
+      temporaryThread.conversationId = here;
+      sessionValue(store => store.setItem(temporaryKey, here));
+    }
+    return here === temporaryThread.conversationId;
   }
   function temporaryReady() {
     if (!shown(find('composer'))) return false;
     if (temporaryQuery() && headerControl('Turn off temporary chat')) return true;
     return temporaryContinues();
   }
-  // The chat gets its id once the first message is under way.
-  function adoptTemporaryConversation(job) {
-    const thread = job.temporaryThread;
-    if (thread && thread === temporaryThread && !thread.conversationId) thread.conversationId = job.conversationId || pageConversation();
-  }
   // Called just before a confirmed temporary send goes out.
-  function claimTemporaryThread(job) {
-    if (!temporaryThread || !temporaryContinues()) temporaryThread = { conversationId: pageConversation() };
-    job.temporaryThread = temporaryThread;
+  function claimTemporaryThread() {
+    if (temporaryContinues()) return;
+    forgetTemporaryThread();
+    temporaryThread = { conversationId: null };
   }
   let temporaryStage = null, stageEpoch = 0;
   function clearTemporaryStage(id) {
@@ -1654,7 +1663,7 @@
             job.submitted = true;
             // Capture attachment identity before the click can remove the chips.
             const confirmation = attachmentCount > 0 ? confirmAttachmentSend(job, composer, temporary) : null;
-            if (temporary) claimTemporaryThread(job);
+            if (temporary) claimTemporaryThread();
             button.click();
             sampleDOM(job);
             confirmation?.catch(() => {});
@@ -1673,7 +1682,7 @@
           // Enter can't send what the page never took, and could send leftovers on their own.
           if (prompt.trim() && !typed(find('composer') || composer)) { fail(job, 'send_failed', 'ChatGPT did not take the message text. Try again.'); return; }
           job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
-          if (temporary) claimTemporaryThread(job);
+          if (temporary) claimTemporaryThread();
           job.submitted = true; composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
         }
       } catch (e) { fail(job, 'send_failed', e.message); }
@@ -1737,7 +1746,7 @@
     async openConversation(id) {
       if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(id)) throw new Error('invalid_id');
       await window.__qchat.stop();
-      temporaryThread = null;
+      forgetTemporaryThread();
       media.clear(); cancelledAttachments = null; downloadActivation = null;
       await status();
       if (!loginCache) return window.__qchat.newChat();
@@ -1810,7 +1819,7 @@
     },
     async chooseModel(id) { return window.__qchat.listModels(id); },
     async newChat(options = {}) {
-      clearTemporaryStage(); temporaryThread = null;
+      clearTemporaryStage(); forgetTemporaryThread();
       if (options.temporary) {
         await window.__qchat.stop(); media.clear();
         const target = new URL('https://chatgpt.com/?temporary-chat=true' + (options.setupId ? '#qchat-setup=' + encodeURIComponent(options.setupId) : ''));

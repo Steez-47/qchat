@@ -162,7 +162,7 @@ try {
   const settingsAcl = JSON.parse(await readFile(path.join(root,'src-tauri/capabilities/settings.json'),'utf8'));
   check('finding 1 settings selection and desktop command ACL', ['get-hotkey','set-hotkey','get-autostart','set-autostart','get-selection-hotkey','set-selection-hotkey','set-selection-clipboard'].every(c=>settingsAcl.permissions.includes('allow-'+c)));
   check('finding 2 startup registration tracked and fallback attempted', nativeSource.includes('s.registered=registered') && nativeSource.includes('chosen = "Alt+Q"'));
-  check('finding 3 temporary command awaits new chat before marking it', /async function startTemporaryChat\(\) \{\s*await startNewChat\(false\);\s*chats\.current\.temporary = true;/.test(appSource) && appSource.includes('run: startTemporaryChat'));
+  check('finding 3 temporary command awaits new chat before marking it', /async function startTemporaryChat\(\) \{\s*if \(!temporaryAvailable\(\)\) \{[^}]*\}\s*await startNewChat\(false\);\s*chats\.current\.temporary = true;/.test(appSource) && appSource.includes('run: startTemporaryChat'));
   check('finding 4 held buttons only prevent ignoring',nativeSource.includes('!desired || [1,2,4,5,6]'));
   check('finding 5 model selection refuses active jobs and ambiguous triggers',bridgeSource.includes('if(active)') && bridgeSource.includes('candidates.length !== 1') && bridgeSource.includes("['pointerdown','mousedown','pointerup','mouseup','click']"));
   check('finding 6 temporary chat saves a fresh current with recents',appSource.includes('chats.current.temporary ? freshChat() : chats.current'));
