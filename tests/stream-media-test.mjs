@@ -120,8 +120,8 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
     stop(value) { stop = value; }, pending(value) { pending = value; },
     input(accept = '') { const input = element('input', { accept }); input.accept = accept; input.click = () => { pickerClicks++; }; inputs.push(input); return input; },
     openAttachments() { attachmentButton = element('button', { 'aria-label': 'Attach files' }); attachmentButton.click = () => this.input(); },
-    pendingAttachment(name = 'test.txt') {
-      const button = element('button', { 'aria-label': `Remove file ${name}` });
+    pendingAttachment(name = 'test.txt', label = `Remove file ${name}`) {
+      const button = element('button', { 'aria-label': label });
       button.click = () => { removeButtons = removeButtons.filter(item => item !== button); pending = false; };
       removeButtons.push(button); pending = true;
       return button;
@@ -848,6 +848,26 @@ test('progressive image sources update one opaque card and increment its cache r
   assert.equal(final.length,1);assert.equal(final[0].id,first.id);assert.ok(final[0].revision>first.revision);
   assert.doesNotMatch(JSON.stringify(b.events),/blob:https/);
   b.stop(false); await b.tick(1200);
+});
+test("ChatGPT's Remove <file name> button counts as a ready attachment, even with an emptied input", async () => {
+  const b = browser();
+  b.pendingAttachment('photo.png', 'Remove photo.png'); b.pending(false);
+  b.send({ id: 'named', attachmentCount: 1 }); await b.tick(1200);
+  assert.equal(b.clicks, 1);
+});
+test('an attachment-enabled Send waits for the page to take the text', async () => {
+  const b = browser();
+  b.pendingAttachment('photo.png', 'Remove photo.png'); b.pending(false);
+  b.send({ id: 'text-first', attachmentCount: 1 }); await b.tick(1000);
+  assert.equal(b.clicks, 0);
+  await b.tick(400);
+  assert.equal(b.clicks, 1); assert.equal(b.submissions[0].text, 'hello');
+});
+test('other Remove buttons in the composer do not count as attachments', async () => {
+  const b = browser();
+  b.pendingAttachment('tool', 'Remove Deep research'); b.pending(false);
+  b.send({ id: 'tool', attachmentCount: 1 }); await b.tick(1200);
+  assert.equal(b.clicks, 0);
 });
 test('unsent failed upload blocks reuse when cleanup is unknown', async () => {
   const b = browser(); b.pending(true);

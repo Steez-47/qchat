@@ -182,7 +182,8 @@
     const boundary = latest && (job.userMessageIds?.size
       ? ids.some(id => job.userMessageIds.has(id))
       : !job.previousUsers.has(latest) && !ids.some(id => job.previousUserIds.has(id)) &&
-        (latest.innerText || latest.textContent || '').trim() === job.prompt);
+        // A message with an image can carry more than the prompt in its bubble.
+        (job.attachmentCount > 0 ? (latest.innerText || latest.textContent || '').includes(job.prompt) : (latest.innerText || latest.textContent || '').trim() === job.prompt));
     return assistantNodes().filter(node => {
       const ids = messageIds(node);
       // Node identity alone is unsafe: restored history can hydrate or remount
@@ -1024,7 +1025,8 @@
       if (node.disabled || node.getAttribute('aria-disabled') === 'true') return false;
       const label = (node.getAttribute('aria-label') || '').trim();
       const testid = node.getAttribute('data-testid') || '';
-      return /^remove (?:file|attachment|image)(?:\b|$)/i.test(label) || /^remove-(?:file|attachment|image)(?:-|$)/i.test(testid) ||
+      // ChatGPT names the file on the button, and has emptied its input by the time a prompt is sent.
+      return /^remove (?:file|attachment|image)(?:\b|$)/i.test(label) || /^remove .+\.[a-z0-9]{1,8}$/i.test(label) || /^remove-(?:file|attachment|image)(?:-|$)/i.test(testid) ||
         names.some(name => label.toLowerCase() === `remove ${name}`.toLowerCase());
     });
   }
@@ -1120,7 +1122,7 @@
   function cancelAttachmentSelection(count) {
     if (active) return;
     const names = [...document.querySelectorAll('input[type="file"]')].flatMap(input => [...(input.files || [])].map(file => file.name));
-    if (!names.length && !uploads) return;
+    if (!names.length && !uploads && !attachmentRemovers(names).length) return;
     const controls = attachmentRemovers(names);
     cancelledAttachments = { names, hadControls: controls.length >= count };
     controls.forEach(node => { try { node.click(); } catch (_) {} });
@@ -1505,7 +1507,7 @@
           }
         };
         const typed = node => String(node.tagName === 'TEXTAREA' ? node.value : node.innerText ?? node.textContent ?? '').trim();
-        let uploadQuietAt = Date.now(), filledComposer = null, held = false;
+        let uploadQuietAt = Date.now(), filledComposer = null, held = false, filledAt = 0;
         for (let i = 0; i < (attachmentCount > 0 ? 1200 : 100) && active === job && !job.started && !job.cancelled; i++) {
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           // File selection can register late and replace the composer. Require every attachment
@@ -1527,9 +1529,15 @@
           composer = find('composer');
           if (!composer) { await sleep(100); continue; }
           if (composer !== filledComposer || (held && !typed(composer))) {
-            fill(composer); filledComposer = composer; held = !!typed(composer);
+            fill(composer); filledComposer = composer; filledAt = Date.now(); held = !!typed(composer);
           }
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
+          // An attachment enables Send by itself, so Send can't show that the page has taken the text.
+          if (attachmentCount > 0 && prompt.trim() && (!typed(composer) || Date.now() - filledAt < 300)) {
+            if (!typed(composer) && Date.now() - filledAt >= 300) fill(composer), filledAt = Date.now();
+            await sleep(100);
+            continue;
+          }
           const button = find('send');
           if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
             job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);

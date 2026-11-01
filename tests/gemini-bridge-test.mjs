@@ -493,7 +493,7 @@ function uploadFixture(browser, count=1, {controls=count,delay=0,throws=false}={
 test('unsent upload failure clears one copy before retry, including delayed removal',async()=>{
   for(const delay of [0,100]){
     const b=createBrowser({loggedIn:true});const copies=uploadFixture(b,1,{delay});
-    const sent=b.api.send({id:'first-upload',prompt:'hello',attachmentCount:1});await b.tick(1000);await sent;await b.tick(20200);
+    const sent=b.api.send({id:'first-upload',prompt:'hello',attachmentCount:1});await b.tick(1500);await sent;await b.tick(20200);
     assert.equal(b.events.find(event=>event.id==='first-upload'&&event.type==='error')?.code,'send_failed');assert.equal(copies(),0);
     assert.match(await b.api.attachmentInput(),/qchat-file-input/);
     uploadFixture(b);b.sendButton.onClick=()=>{b.addTurn({userText:'hello',replyHtml:'<p>one copy</p>'})};
@@ -529,6 +529,15 @@ const gland = (b, at, { reset = false, remount = false, settle = 0 } = {}) => b.
     const parent = b.composer.parentElement; b.composer.remove(); parent.append(fresh); b.document.execCommand('selectAll', false);
   }
 }, at);
+test("Gemini's close attachment button counts as a ready attachment", async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  b.later(() => b.body.append(makeEl('button', { 'aria-label': 'close attachment' })), 500);
+  const sent = b.api.send({ id: 'close-label', prompt: GPROMPT, attachmentCount: 1 });
+  await b.tick(400); assert.deepEqual(submissions, []);
+  await b.tick(3000);
+  assert.equal(submissions.length, 1); assert.equal(submissions[0].text, GPROMPT);
+  await b.api.stop(); await b.tick(100); await sent;
+});
 test('delayed attachment registration never submits text alone and sends one message with the exact prompt', async () => {
   const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
   gland(b, 3000);
@@ -592,7 +601,7 @@ test('an attachment that never registers fails without submitting text alone', a
 test('started upload failure keeps submitted attachments',async()=>{
   const b=createBrowser({loggedIn:true});const copies=uploadFixture(b);
   b.sendButton.onClick=()=>{b.setStop(true);b.addTurn({userText:'hello',replyHtml:'<p>partial</p>',streaming:true})};
-  const sent=b.api.send({id:'started-upload',prompt:'hello',attachmentCount:1});await b.tick(1000);await sent;
+  const sent=b.api.send({id:'started-upload',prompt:'hello',attachmentCount:1});await b.tick(1500);await sent;
   b.body.append(makeEl('div',{role:'alert'},[makeText('Quota reached, try again later')]));b.notifyMutations();await b.tick(200);
   assert.equal(copies(),1);assert.equal(b.events.find(event=>event.type==='error'&&event.id==='started-upload')?.code,'rate_limited');
 });
