@@ -53,10 +53,15 @@
 
       <div class="composer">
         <div class="slash-menu glass glass-tiny" id="slash-menu" role="listbox" aria-label="Commands" hidden></div>
+        <div class="update-chip glass glass-tiny" id="update-chip" role="group" aria-label="Update available" hidden>
+          <button type="button" class="btn btn-compact btn-accent" id="btn-update"><svg class="update-glyph" viewBox="0 0 8 8" aria-hidden="true"><path d="M4 6.6V1.6M1.7 3.8 4 1.5l2.3 2.3"/></svg><span id="update-label">Update</span></button>
+          <button type="button" class="icon-btn" id="btn-update-skip" title="Skip this version" aria-label="Skip this version"><span class="icon" aria-hidden="true">&#xE8BB;</span></button>
+        </div>
         <footer class="bar glass" id="bar">
           <input id="attachment-input" type="file" multiple hidden>
           <div class="orb" id="orb" aria-hidden="true">
             <span class="status-dot" id="status-dot" data-state="connecting"></span>
+            <span class="update-badge" id="update-badge" hidden><svg viewBox="0 0 8 8" aria-hidden="true"><path d="M4 6.6V1.6M1.7 3.8 4 1.5l2.3 2.3"/></svg></span>
           </div>
           <span class="sr-only" id="status-label" role="status">Connecting…</span>
           <textarea class="bar-input" id="prompt-input" rows="1" placeholder="Ask anything · / commands" aria-label="Message" spellcheck="true" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="slash-menu"></textarea>
@@ -79,6 +84,7 @@
   <script src="find-text.js"></script>
   <script src="find.js"></script>
   <script src="collapse.js"></script>
+  <script src="update.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

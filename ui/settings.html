@@ -25,8 +25,11 @@
       </div>
     </header>
 
-    <input id="settings-search" class="settings-search" type="search" placeholder="Search settings" aria-label="Search settings">
-    <p id="search-empty" class="section-note" hidden>No settings found.</p>
+    <div class="search-wrap" role="search">
+      <span class="icon" aria-hidden="true">&#xE721;</span>
+      <input id="settings-search" class="settings-search" type="search" placeholder="Search settings (Ctrl+F)" aria-label="Search settings" autocomplete="off" spellcheck="false">
+    </div>
+    <p id="search-empty" class="section-note" hidden>No settings match. Try a shorter word, like “blur” or “font”.</p>
     <div class="sheet-body">
       <nav class="section-nav" id="section-nav" aria-label="Settings sections"></nav>
       <div class="sheet-main">

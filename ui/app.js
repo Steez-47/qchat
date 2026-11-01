@@ -2881,7 +2881,8 @@
     { name: "new", icon: GLYPH.newChat, desc: () => "Start a new chat", run: () => startNewChat(true) },
     { name: "signin", icon: GLYPH.account, desc: () => (bridge.loggedIn ? "Manage account" : `Sign in to ${providerName()}`), run: () => openSignin() },
     { name: "clear", icon: GLYPH.trash, desc: () => "Clear recent chats", run: () => showClearConfirm() },
-    { name: "hide", icon: GLYPH.hide, desc: () => "Hide QChat", run: () => invoke("hide_main").catch(() => {}) }
+    { name: "hide", icon: GLYPH.hide, desc: () => "Hide QChat", run: () => invoke("hide_main").catch(() => {}) },
+    { name: "update", icon: GLYPH.down, desc: () => (updater.found ? `Update to v${updater.found.version}` : "Check for updates"), run: () => checkForUpdate() }
   ];
   COMMANDS.push(
     { name: "rename", icon: "", desc: () => "Rename in QChat", run: openRenameChat },
@@ -3911,6 +3912,7 @@
     autoResizePrompt();
     if (!isBusy() && responseEntry()) armAutoDismiss();
     collapse.wake();
+    updater.sync();
     queueSizes();
   }
 
@@ -4143,6 +4145,21 @@
     },
     onOpened: () => queueSizes()
   });
+  // Update notice on the orb (update.js).
+  const updater = window.QUpdate.create({
+    bar: el.bar, orb: el.orb, composer: el.bar.parentElement, invoke, listen,
+    enabled: () => QSettings.settings.checkUpdates !== false
+  });
+  async function checkForUpdate() {
+    if (updater.found) { updater.focus(); return; }
+    showCommandFeedback("Checking for updates…");
+    try {
+      const result = await updater.check(true);
+      if (result?.available) { hideCommandFeedback(); updater.focus(); }
+      else showCommandFeedback(`QChat is up to date${result?.current ? ` (v${result.current})` : ""}`);
+    } catch (_) { showCommandFeedback("Couldn't check for updates. Try again later."); }
+  }
+  launchInfo.then((info) => { if (info?.updated) showCommandFeedback(`Updated to v${info.updated}`); });
   function clipboardFiles(data) {
     const files = Array.from(data?.files || []);
     return files.length ? files : Array.from(data?.items || [])

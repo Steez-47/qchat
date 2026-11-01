@@ -29,7 +29,7 @@ QChat sits over whatever you're doing as one small bar with a bubble or two, and
 
 ## Install
 
-Download `QChat_1.4.1_x64-setup.exe` from the [latest release](https://github.com/Steez-47/qchat/releases/latest) and run it.
+Download `QChat_1.4.2_x64-setup.exe` from the [latest release](https://github.com/Steez-47/qchat/releases/latest) and run it.
 
 - It installs for your Windows user, adds a Start menu shortcut, and includes the WebView2 runtime. Nothing else needs installing.
 - Quit any running QChat from its tray menu first. Your settings, chats and sign-in carry over.
@@ -72,8 +72,9 @@ See [packaging/INSTALL.txt](packaging/INSTALL.txt) for upgrade, uninstall and te
 
 **Window**
 - The desktop really is blurred behind the glass, and clicks pass through the empty space around it. Desktop blur can be turned off in Settings.
-- Click away, and after 5 seconds QChat folds into its orb. Click the orb or bring QChat back with Alt+Q to open it again, or drag it to move QChat while folded. It opens toward the middle of whichever screen you leave it on. Settings > Behavior sets the delay, and 0 turns folding off.
+- Click away, and after 5 seconds QChat folds into its orb. Click the orb or bring QChat back with Alt+Q to open it again, or drag it to move QChat while folded. It opens toward the middle of whichever screen you leave it on. Settings > Window sets the delay, and 0 turns folding off.
 - **Open at startup** (Settings, the tray or `/startup`) starts QChat quietly in the tray at login. Turn on *Show the bar at startup* to see it straight away.
+- When a new release is out on GitHub, a small arrow appears on the orb. Hover the orb and press **Update**: QChat downloads the new version, checks its checksum, and restarts into it. `/update` checks by hand; Settings > General turns checking off. QChat only asks GitHub for its latest release, about every six hours.
 - A connection error retries by itself when the network returns or QChat regains focus, keeping your draft and files.
 
 ## Keyboard shortcuts
@@ -81,7 +82,7 @@ See [packaging/INSTALL.txt](packaging/INSTALL.txt) for upgrade, uninstall and te
 | Shortcut | Action |
 |---|---|
 | **Alt+Q** | Show or hide QChat (change it in Settings) |
-| **Ctrl+Alt+Q** | Open QChat with the text selected in the current app quoted (change or turn off in Settings > Behavior) |
+| **Ctrl+Alt+Q** | Open QChat with the text selected in the current app quoted (change or turn off in Settings > Shortcuts) |
 | **Ctrl+K** | Command menu; press again to close |
 | **Ctrl+P** | Search saved chats; press again to close |
 | **Ctrl+F** | Find in conversation; Enter/F3 next, Shift for previous |

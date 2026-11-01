@@ -151,7 +151,7 @@ try {
   // Saved default: the Settings row persists it, and the chat window applies it live.
   await open('/settings.html', { settings: baseSettings });
   check('Behaviour has a Default reasoning row',
-    await evalJS(`(()=>{const row=document.querySelector('[data-key="defaultReasoning"]');return !!row&&row.closest('#section-behavior')!==null&&[...row.querySelectorAll('.segmented button')].map(b=>b.textContent).join(',')==='Low,Medium,High';})()`));
+    await evalJS(`(()=>{const row=document.querySelector('[data-key="defaultReasoning"]');return !!row&&row.closest('#section-general')!==null&&[...row.querySelectorAll('.segmented button')].map(b=>b.textContent).join(',')==='Low,Medium,High';})()`));
   await evalJS(`document.querySelector('[data-key="defaultReasoning"] button[data-value="low"]').click()`);
   check('the saved default persists as Low',
     (await evalJS(`JSON.parse(localStorage.getItem('qchat.settings')).defaultReasoning`)) === 'low' &&
