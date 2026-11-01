@@ -159,6 +159,7 @@
             mock.provider = args.provider; if (!mock.statusHold) emitStatus(0); return;
           case "launch_info": return {autostart:mock.autostart, updated:params.get("updated")};
           case "update_check":
+            if (params.has("noNightly")) return {available:false, current:"1.5.2-nightly.1", status:"no_nightly"};
             return mock.update ? {available:true, version:mock.update, current:"1.4.1", url:`https://github.com/Steez-47/qchat/releases/tag/v${mock.update}`} : {available:false, current:"1.4.1"};
           case "update_install":
             if (!mock.update) throw new Error("no_update");

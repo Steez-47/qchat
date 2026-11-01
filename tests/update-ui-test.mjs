@@ -139,6 +139,10 @@ try {
   await command('update');
   await until(`document.getElementById('command-feedback').textContent.includes('up to date')`, 'up-to-date feedback', 100);
   check('/update says when QChat is up to date', await feedback() === 'QChat is up to date (v1.4.1)' && !await shown('#update-badge'));
+  await open('?noNightly');
+  await command('update');
+  check('/update explains an unpublished Nightly channel', await feedback() === 'No Nightly builds have been published yet.' && !await shown('#update-badge'));
+  check('an empty Nightly channel never offers an install', await calls('update_install') === 0);
   await open('?updated=1.9.0');
   await until(`!document.getElementById('command-feedback').hidden`, 'updated feedback', 100);
   check('relaunch after an update says so', await feedback() === 'Updated to v1.9.0');
