@@ -769,7 +769,7 @@
       if (pending !== job.prompt) return;
       if (job.attachmentCount > 0) {
         const files = attachmentRemovers(job.attachmentNames, true);
-        if (uploads || document.querySelector('input-container [role="progressbar"], input-area-v2 [role="progressbar"], mat-progress-spinner') || controls.length < job.attachmentCount || files.length !== controls.length || files.some(node => !controls.includes(node))) return;
+        if (uploadBusy() || controls.length < job.attachmentCount || files.length !== controls.length || files.some(node => !controls.includes(node))) return;
       } else if (!pending) return;
       const button = find('send');
       if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') button.click();
@@ -1045,6 +1045,11 @@
     /^(?:approve|allow|confirm|continue|review)\b/i.test(
       String(button.innerText ?? button.textContent ?? button.getAttribute?.('aria-label') ?? '').trim().split('\n')[0].trim()));
 
+  // Only a visible spinner in the composer means an upload. The side panel keeps a hidden spinner of its own for the chat list.
+  function uploadBusy() {
+    return uploads > 0 || [...document.querySelectorAll('input-container [role="progressbar"], input-area-v2 [role="progressbar"], input-container mat-progress-spinner, input-area-v2 mat-progress-spinner, input-container mat-spinner, input-area-v2 mat-spinner')].some(shown);
+  }
+
   function attachmentRemovers(names = [], includeDisabled = false) {
     return [...document.querySelectorAll('button')].filter(node => {
       if (!includeDisabled && (node.disabled || node.getAttribute('aria-disabled') === 'true')) return false;
@@ -1301,7 +1306,7 @@
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           // Recheck the complete attachment batch until Send, then fill the current composer.
           if (attachmentCount > 0) {
-            const pending = uploads > 0 || !!document.querySelector('input-container [role="progressbar"], input-area-v2 [role="progressbar"], mat-progress-spinner');
+            const pending = uploadBusy();
             const present = attachmentRemovers(job.attachmentNames, true).length >= attachmentCount;
             if (pending || !present) uploadQuietAt = Date.now();
             if (pending || !present || Date.now() - uploadQuietAt < 800) { await sleep(100); continue; }
@@ -1480,8 +1485,7 @@
       const composer = find('composer');
       const emptyTemporary = options.temporary && temporaryReady() && location.pathname === '/app' &&
         !assistantNodes().length && !userNodes().length && !(composer.value ?? composer.textContent).trim() &&
-        !uploads && !cancelledAttachments && !attachmentRemovers([], true).length &&
-        !document.querySelector('input-container [role="progressbar"], input-area-v2 [role="progressbar"], mat-progress-spinner') &&
+        !uploadBusy() && !cancelledAttachments && !attachmentRemovers([], true).length &&
         ![...document.querySelectorAll('input[type="file"]')].some(input => input.files?.length);
       media.clear();
       downloadActivation = null;
