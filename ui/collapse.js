@@ -17,7 +17,7 @@
   const EASE_FOLD = "cubic-bezier(0.5, 0, 0.2, 1)";
   const MODIFIERS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"]);
 
-  function create({ stack, bar, orb, seconds, blocked = () => false, motion = () => true, timings, drag, move, onCollapse, onExpand, onOpened }) {
+  function create({ stack, bar, orb, seconds, blocked = () => false, motion = () => true, timings, drag, move, onCollapse, onExpand, onOpened, onState }) {
     const root = document.documentElement;
     let state = "open"; // open | closing | closed | opening
     let timer = null, waitTimer = null, press = null, running = [], token = 0;
@@ -39,6 +39,7 @@
         delete root.dataset.collapseAnchor;
       }
       else root.dataset.collapse = next;
+      onState?.(next);
     }
 
     // Objects above the bar, top first. checkVisibility() without options still counts

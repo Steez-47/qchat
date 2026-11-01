@@ -1,6 +1,17 @@
 /* QChat chat window: a stack of floating glass objects, anchored to the bottom.
    Only the objects paint. Everything else in the window is transparent. */
 
+:root {
+  --ready-1: #4ADE80;
+  --ready-2: #16A34A;
+  --ready-badge: #15803D;
+  --attention-badge: color-mix(in srgb, rgb(var(--critical-rgb)) 62%, #000);
+}
+html[data-mode="light"] {
+  --ready-1: #22C55E;
+  --ready-2: #15803D;
+}
+
 .stage {
   position: fixed;
   inset: 0;
@@ -32,6 +43,9 @@
 
 /* Reasoning picker: a compact value chip, so a narrow bar still leaves the prompt room. */
 .reasoning-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   width: auto;
   min-width: 0;
   max-width: min(110px, calc(var(--bar-w) - 272px));
@@ -41,14 +55,117 @@
   color: var(--text-2);
   white-space: nowrap;
 }
+.reasoning-btn .reasoning-mark { flex: none; width: 13px; height: 13px; }
+.reasoning-btn .reasoning-chevron { flex: none; width: 7px; height: 7px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; opacity: .55; }
 .reasoning-btn .reasoning-label { pointer-events: none; min-width: 0; max-width: min(96px, calc(var(--bar-w) - 276px)); overflow: hidden; text-overflow: ellipsis; }
+.reasoning-btn[aria-expanded="true"] { background: var(--fill-2); color: var(--text-1); }
 
 @container (max-width: 360px) {
   .bar > .bar-btn:not(.reasoning-btn) { width: 20px; }
   .bar > .bar-btn .icon { font-size: 14px; }
   .bar > .bar-input { padding-inline: 0; }
-  .bar > .reasoning-btn { padding-inline: 2px; font-size: 10.5px; max-width: 68px; }
+  .bar > .reasoning-btn { padding-inline: 2px; font-size: 10.5px; max-width: 62px; gap: 3px; }
+  .bar > .reasoning-btn .reasoning-chevron { display: none; }
+  .bar > #btn-minimize { width: 18px; }
+  .bar:has(#btn-minimize:not([hidden])) > .reasoning-btn { max-width: 54px; }
+  .bar:has(#btn-minimize:not([hidden])) > .reasoning-btn .reasoning-label { max-width: 40px; }
 }
+
+/* Model and provider picker: one compact popover above the bar, never in the stack. */
+.picker {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--stack-gap, 8px));
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 244px;
+  max-width: 100%;
+  max-height: 340px;
+  padding: 8px;
+  border-radius: 16px;
+  transform-origin: 100% 100%;
+  animation: picker-in 140ms var(--ease-out);
+}
+@keyframes picker-in { from { opacity: 0; transform: translateY(6px); } }
+html[data-motion="off"] .picker { animation: none; }
+
+.picker-seg { display: flex; gap: 2px; }
+.picker-seg-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font: 500 11.5px/1 var(--font-small);
+  white-space: nowrap;
+}
+.picker-seg-btn:hover:not(:disabled) { color: var(--text-1); }
+.picker-seg-btn[aria-checked="true"] { background: var(--fill-2); color: var(--text-1); }
+.picker-seg-btn[aria-disabled="true"] { opacity: .45; }
+.picker-seg-btn .picker-mark { flex: none; width: 12px; height: 12px; }
+.picker-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: #F59E0B; }
+
+.picker-effort { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 4px 0 8px; }
+.picker-effort-label { color: var(--text-2); font-size: 11.5px; }
+.picker-effort-seg { margin-left: auto; display: flex; gap: 1px; }
+.picker-effort-step { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.picker-effort-step button {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font: 500 13px/1 var(--font-small);
+}
+.picker-effort-step button:hover:not(:disabled) { color: var(--text-1); background: var(--fill-2); }
+.picker-effort-step button:disabled { opacity: .35; }
+.picker-effort-value { min-width: 64px; text-align: center; color: var(--text-1); font: 500 11px/1 var(--font-small); }
+.picker-effort-seg button {
+  height: 22px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font: 500 11px/1 var(--font-small);
+}
+.picker-effort-seg button:hover:not(:disabled) { color: var(--text-1); }
+.picker-effort-seg button[aria-checked="true"] { background: var(--fill-2); color: var(--text-1); }
+
+.picker-body { display: flex; flex-direction: column; gap: 1px; }
+.picker-heading { padding: 6px 8px 2px; color: var(--text-3); font-size: 10.5px; font-weight: 600; letter-spacing: .02em; }
+.picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-1);
+  font: 400 12.5px/1.2 var(--font-small);
+  text-align: left;
+}
+.picker-row:hover:not(:disabled), .picker-row:focus-visible { background: var(--fill-2); }
+.picker-row:focus-visible { outline: none; }
+.picker-check { flex: none; width: 12px; min-width: 12px; font-size: 10px; color: var(--accent-text); visibility: hidden; }
+.picker-row[aria-selected="true"] .picker-check { visibility: visible; }
+.picker-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-meta { flex: none; color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.picker-row:disabled { opacity: .5; }
+.picker-empty { padding: 0 8px; height: 30px; display: flex; align-items: center; color: var(--text-3); font-size: 12px; }
 
 /* ---------------------------------------------------------------------------
    Bubble zone
@@ -478,8 +595,6 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
   line-height: 1.3;
 }
 .attachments .attachment-chip { animation: rise-in var(--t3) var(--ease-out) both, fade-in var(--t1) linear both; }
-.selection-chip > .icon { color: var(--accent-text, var(--text-2)); font-size: 14px; }
-.bubble-user .selection-chip { display: inline-flex; margin-left: 7px; vertical-align: middle; }
 .attachment-chip:has(.attachment-thumbnail) { padding-left: 3px; }
 .attachment-name { min-width: 0; overflow-wrap: anywhere; user-select: text; font-weight: 500; }
 .attachments .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
@@ -779,6 +894,43 @@ html[data-motion="off"] .history-panel { transition: none; }
 .stack[data-history] > .history-controls { position: relative; top: auto; }
 
 .attachments .attachment-chip { height: 28px; min-height: 28px; padding-block: 0; font-size: 11.5px; }
+
+.attachments .selection-chip,
+.bubble-user .selection-chip {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  height: auto;
+  min-height: 0;
+  padding: 0 0 0 8px;
+  border-left: 2px solid var(--text-2);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+.attachments .selection-chip .attachment-name,
+.bubble-user .selection-chip .attachment-name {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+}
+.bubble-user .selection-chip { margin: 0 0 4px; }
+.bubble-user .turn-content:has(> .selection-chip) { display: block; overflow: visible; }
+.bubble-user .selection-prompt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--user-lines, 6);
+  overflow: hidden;
+}
+.history-row .bubble-user .selection-prompt { display: block; overflow: visible; }
 .attachments .attachment-thumbnail { width: 22px; height: 22px; }
 
 .feature-list { border-radius: 16px; padding: 8px; margin: 0 var(--bar-inset) 8px; max-height: 340px; display: flex; flex-direction: column; }
@@ -968,6 +1120,8 @@ select.qinteractive-control option { background: #252b35; color: #eee; }
    hidden, they also drop out of hit-testing and the native blur.
    --------------------------------------------------------------------------- */
 html[data-collapse] .bar { overflow: clip; }
+/* The closed orb's task badge overlaps the circle's rim; only the resting state lets it out. */
+html[data-collapse="closed"] .bar { overflow: visible; }
 /* The composer reserves the full width; its chosen edge stays fixed as the bar narrows. */
 html[data-collapse-anchor="right"] .bar { margin-left: auto; }
 html[data-collapse="closed"] .bar { width: var(--bar-h); height: var(--bar-h); min-height: 0; border-radius: 50%; cursor: pointer; }
@@ -1004,3 +1158,78 @@ html[data-collapse][data-orbstyle="hidden"] .orb { width: 18px; margin: calc((va
 .update-chip .icon-btn[hidden] { display: none; }
 @keyframes update-chip-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .update-chip { animation: none; } }
+
+/* ---------------------------------------------------------------------------
+   Folded task state: a reply keeps running while the bar rests as its orb.
+   Working shows a thin spinning arc; a finished reply turns the orb green (or
+   critical for attention) and raises a small count badge.
+   --------------------------------------------------------------------------- */
+.orb::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(145deg, var(--ready-1), var(--ready-2));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms var(--ease-out);
+}
+html[data-orb-task="attention"] .orb::before { background: linear-gradient(145deg, color-mix(in srgb, rgb(var(--critical-rgb)) 76%, #fff), rgb(var(--critical-rgb))); }
+html[data-collapse][data-orb-task="ready"] .orb::before,
+html[data-collapse][data-orb-task="attention"] .orb::before { opacity: 1; }
+html[data-collapse][data-orb-task="ready"][data-orbstyle="ring"] .orb { box-shadow: inset 0 0 0 2px var(--ready-2); }
+html[data-collapse][data-orb-task="attention"][data-orbstyle="ring"] .orb { box-shadow: inset 0 0 0 2px rgb(var(--critical-rgb)); }
+html[data-collapse][data-orb-task="ready"][data-orbstyle="ring"] .orb::before,
+html[data-collapse][data-orb-task="attention"][data-orbstyle="ring"] .orb::before { inset: 2px; }
+html[data-motion="off"] .orb::before { transition: none; }
+
+html[data-collapse][data-orb-task] .status-dot { display: none; }
+
+html[data-collapse][data-orb-task="working"] .orb::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: conic-gradient(from 0deg, transparent 0deg 230deg, var(--orb-1) 300deg, var(--accent-2) 340deg, transparent 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  animation: orb-spin 1.1s linear infinite;
+}
+@keyframes orb-spin { to { transform: rotate(1turn); } }
+html[data-motion="off"][data-collapse][data-orb-task="working"] .orb::after {
+  animation: none;
+  opacity: .45;
+  background: conic-gradient(var(--accent-2), var(--accent-2));
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-collapse][data-orb-task="working"] .orb::after {
+    animation: none;
+    opacity: .45;
+    background: conic-gradient(var(--accent-2), var(--accent-2));
+  }
+}
+
+.orb-badge {
+  position: absolute;
+  /* Centred on the circle's rim at the top right, whatever the density or orb style. */
+  top: calc(50% - var(--bar-h) * .3536 - 7.5px);
+  left: calc(50% + var(--bar-h) * .3536 - 7.5px);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: var(--ready-badge);
+  color: #fff;
+  font: 700 10px/1 var(--font-small);
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 1.5px rgb(var(--rim-ink) / .35), 0 2px 4px rgb(0 0 0 / .35);
+  animation: orb-badge-in 200ms var(--ease-out);
+}
+html[data-orb-task="attention"] .orb-badge { background: var(--attention-badge); }
+@keyframes orb-badge-in { from { opacity: 0; transform: scale(.6); } }
+html[data-motion="off"] .orb-badge { animation: none; }
+@media (prefers-reduced-motion: reduce) { .orb-badge { animation: none; } }

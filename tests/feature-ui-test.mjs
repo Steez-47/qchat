@@ -128,12 +128,12 @@ try {
   check('chat switcher empty state', await evalJS(`document.querySelector('.feature-list').textContent.includes('No chats yet')`));
   await key('Escape');
   await type('/model'); await key('Enter');
-  check('model picker mock list', await waitFor(`document.querySelector('.feature-list').textContent.includes('Mock alternate')`));
+  check('model picker mock list', await waitFor(`document.getElementById('picker').textContent.includes('Mock alternate') && document.querySelector('.feature-list').hidden`));
   await mkdir(path.join(root,'.tmp/features'),{recursive:true});
   const modelShot = await cdp('Page.captureScreenshot',{format:'png'});
   await writeFile(path.join(root,'.tmp/features/feature-models-reviewed.png'),Buffer.from(modelShot.data,'base64'));
-  check('model rows mark the selection with an accent check glyph', await evalJS(`(()=>{const rows=[...document.querySelectorAll('.feature-list .feature-row')];if(rows.length!==2)return false;const a=rows[0],b=rows[1];return a.querySelector('.feature-check')&&a.querySelector('.feature-check').style.visibility==='visible'&&a.querySelector('.feature-title').textContent==='Mock model'&&b.querySelector('.feature-check')&&b.querySelector('.feature-check').style.visibility==='hidden'&&b.querySelector('.feature-title').textContent==='Mock alternate';})()`));
-  await evalJS(`[...document.querySelectorAll('.feature-choice')].find(n=>n.textContent==='Mock alternate').click()`);
+  check('model rows mark the selection with an accent check glyph', await evalJS(`(()=>{const rows=[...document.querySelectorAll('#picker .picker-row')];if(rows.length!==2)return false;const a=rows[0],b=rows[1];return a.getAttribute('aria-selected')==='true'&&getComputedStyle(a.querySelector('.picker-check')).visibility==='visible'&&a.querySelector('.picker-title').textContent==='Mock model'&&b.getAttribute('aria-selected')==='false'&&getComputedStyle(b.querySelector('.picker-check')).visibility==='hidden'&&b.querySelector('.picker-title').textContent==='Mock alternate';})()`));
+  await evalJS(`[...document.querySelectorAll('#picker .picker-row')].find(n=>n.querySelector('.picker-title').textContent==='Mock alternate').click()`);
   check('model choice label', await evalJS(`document.getElementById('model-chip').textContent==='Mock alternate'`));
   await type('/keys'); await key('Enter');
   await mkdir(path.join(root,'.tmp/features'),{recursive:true});
@@ -159,7 +159,7 @@ try {
   check('new clears mode label', await evalJS(`document.getElementById('mode-chip').hidden`));
   await open('/?mock=no-models', { settings: { animations: 'off', autoDismiss: 0 } });
   await type('/model'); await key('Enter');
-  check('model guest fallback has sign in', await waitFor(`document.querySelector('.feature-list').textContent.includes('Sign in to choose a model')`));
+  check('a signed-out provider offers sign in from the picker', await waitFor(`document.getElementById('picker').textContent.includes('Sign in to ChatGPT')`));
   await key('Escape');
   await evalJS(`__mock.emit('qchat://shown',null)`);
   check('command hint on shown', await evalJS(`document.getElementById('prompt-input').placeholder==='Ask anything · / commands'`));

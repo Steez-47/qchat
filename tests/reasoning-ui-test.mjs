@@ -92,12 +92,13 @@ try {
   };
   const type = (text) => evalJS(`(()=>{const i=document.getElementById('prompt-input');i.value=${JSON.stringify(text)};i.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   const key = (k, extra = {}) => evalJS(`(()=>{const t=document.activeElement&&document.activeElement!==document.body?document.activeElement:document.getElementById('prompt-input');t.dispatchEvent(new KeyboardEvent('keydown',${JSON.stringify({ key: k, bubbles: true, cancelable: true, ...extra })}));})()`);
-  const send = async (text) => { await type(text); await key('Enter'); };
+  const send = async (text) => { await evalJS(`document.getElementById('prompt-input').focus()`); await type(text); await key('Enter'); };
   const label = () => evalJS(`document.getElementById('btn-reasoning').querySelector('.reasoning-label').textContent`);
   const aria = () => evalJS(`document.getElementById('btn-reasoning').getAttribute('aria-label')`);
   const openPicker = () => evalJS(`document.getElementById('btn-reasoning').click()`);
   const press = (id) => evalJS(`(()=>{const n=document.getElementById(${JSON.stringify(id)});n.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));n.click();})()`);
-  const pick = (title) => evalJS(`[...document.querySelectorAll('.feature-list .feature-choice')].find(n=>n.querySelector('.feature-title').textContent===${JSON.stringify(title)}).click()`);
+  // The effort row of the compact picker. A pick leaves the popover open; the helper closes it so each step starts shut.
+  const pick = (title) => evalJS(`(()=>{[...document.querySelectorAll('#picker .picker-effort-seg button')].find(n=>n.textContent===${JSON.stringify(title)}).click();if(!document.getElementById('picker').hidden)document.getElementById('btn-reasoning').click();})()`);
   const lastSend = (keyName) => evalJS(`__mock.last('chat_send')?.args?.${keyName}`) ;
   const waitDone = () => waitFor(`(()=>{const rows=[...document.querySelectorAll('.turn-row[data-role=assistant]')];return rows.length>0&&rows.at(-1).dataset.status==='done'&&document.getElementById('btn-send').dataset.mode==='send';})()`, 8000);
   const setSettings = (patch) => evalJS(`__mock.emit('qchat://settings-changed', {...QSettings.settings, ...${JSON.stringify(patch)}})`);
@@ -123,14 +124,14 @@ try {
 
   await open('/', { settings: baseSettings });
   check('a new chat starts at Medium in the compact composer picker',
-    (await label()) === 'Medium' && (await aria()) === 'Reasoning: Medium' &&
+    (await label()) === 'Medium' && (await aria()) === 'ChatGPT, Medium. Change model' &&
     (await evalJS(`document.getElementById('btn-reasoning').dataset.value`)) === 'medium' &&
     (await evalJS(`!document.getElementById('btn-reasoning').hidden`)),
     `${await label()} / ${await aria()}`);
 
   await openPicker();
   check('the picker lists Low, Medium and High with one selected check',
-    await evalJS(`(()=>{const rows=[...document.querySelectorAll('.feature-list .feature-row')].filter(r=>r.querySelector('.feature-check'));const titles=rows.map(r=>r.querySelector('.feature-title').textContent);const checks=rows.filter(r=>{const c=r.querySelector('.feature-check');return c&&c.style.visibility==='visible';});return rows.length===3&&titles.join(',')==='Low,Medium,High'&&checks.length===1&&checks[0].querySelector('.feature-title').textContent==='Medium';})()`));
+    await evalJS(`(()=>{const rows=[...document.querySelectorAll('#picker .picker-effort-seg button')];const checks=rows.filter(r=>r.getAttribute('aria-checked')==='true');return rows.map(r=>r.textContent).join(',')==='Low,Medium,High'&&checks.length===1&&checks[0].textContent==='Medium'&&document.querySelector('.feature-list').hidden;})()`));
   await pick('Low');
   check('picking Low stores an explicit per-chat override',
     (await label()) === 'Low' &&
@@ -141,7 +142,7 @@ try {
   await waitDone();
 
   await openPicker();
-  check('the picker marks the chat override as selected', await evalJS(`(()=>{const on=[...document.querySelectorAll('.feature-list .feature-row')].filter(r=>r.querySelector('.feature-check')?.style.visibility==='visible');return on.length===1&&on[0].querySelector('.feature-title').textContent==='Low';})()`));
+  check('the picker marks the chat override as selected', await evalJS(`(()=>{const on=[...document.querySelectorAll('#picker .picker-effort-seg button')].filter(r=>r.getAttribute('aria-checked')==='true');return on.length===1&&on[0].textContent==='Low';})()`));
   await pick('High');
   await send('high effort');
   await waitFor(`__mock.count('chat_send')>1`);
@@ -157,17 +158,17 @@ try {
     (await evalJS(`JSON.parse(localStorage.getItem('qchat.settings')).defaultReasoning`)) === 'low' &&
     (await evalJS(`document.querySelector('[data-key="defaultReasoning"] button[data-value="low"]').getAttribute('aria-checked')`)) === 'true');
   await open('/', { keep: true });
-  check('an unoverridden chat loads with the saved default', (await label()) === 'Low' && (await aria()) === 'Reasoning: Low');
+  check('an unoverridden chat loads with the saved default', (await label()) === 'Low' && (await aria()) === 'ChatGPT, Low. Change model');
   await setSettings({ defaultReasoning: 'high' });
   await sleep(40);
-  check('a live default change updates the unoverridden current chat', (await label()) === 'High' && (await aria()) === 'Reasoning: High');
+  check('a live default change updates the unoverridden current chat', (await label()) === 'High' && (await aria()) === 'ChatGPT, High. Change model');
 
   await openPicker();
   await pick('Low');
   await setSettings({ defaultReasoning: 'high' });
   await sleep(40);
   check('an explicit override wins over a later default change', (await label()) === 'Low');
-  await type('/new'); await key('Enter');
+  await send('/new');
   await sleep(40);
   check('a new chat starts from the saved default again',
     (await label()) === 'High' &&
@@ -203,7 +204,7 @@ try {
     await evalJS(`document.getElementById('btn-reasoning').disabled`));
   await openPicker();
   check('a disabled picker cannot open while sending',
-    await evalJS(`document.querySelector('.feature-list').hidden`));
+    await evalJS(`document.getElementById('picker').hidden`));
   await setSettings({ defaultReasoning: 'high' });
   await sleep(40);
   check('the composer keeps the effort that was sent, not a midstream default',
@@ -215,32 +216,28 @@ try {
 
   // Keyboard path through the same popup: arrows, Enter and Escape.
   await openPicker();
-  check('opening the picker focuses the shared feature list', await evalJS(`document.activeElement===document.querySelector('.feature-list')`));
-  await key('ArrowDown');
-  await key('Enter');
+  check('opening the picker focuses the selected provider segment', await evalJS(`document.activeElement.dataset.pickerKey==='provider:chatgpt'`));
+  await evalJS(`document.querySelector('#picker .picker-effort-seg [aria-checked=true]').focus()`);
+  await key('ArrowLeft');
   await sleep(30);
-  check('ArrowDown and Enter choose an option without a pointer', (await label()) === 'Medium' && await evalJS(`document.querySelector('.feature-list').hidden`));
-  await openPicker();
+  check('arrow keys choose an effort without a pointer', (await label()) === 'Medium' && await evalJS(`!document.getElementById('picker').hidden`));
   await key('Escape');
   await sleep(30);
-  check('Escape closes the picker, keeps the value and returns focus to the prompt',
-    await evalJS(`document.querySelector('.feature-list').hidden && document.activeElement===document.getElementById('prompt-input')`) && (await label()) === 'Medium');
+  check('Escape closes the picker, keeps the value and returns focus to the pill',
+    await evalJS(`document.getElementById('picker').hidden && document.activeElement===document.getElementById('btn-reasoning')`) && (await label()) === 'Medium');
 
   // Toggle and close animation: a second press on the reasoning button closes
   // the open picker, and a pointer away fades it out instead of hiding it.
   await open('/', { settings: { ...baseSettings, animations: 'on' } });
   await press('btn-reasoning');
-  check('the reasoning button opens the picker', await evalJS(`!document.querySelector('.feature-list').hidden`));
+  check('the reasoning button opens the picker', await evalJS(`!document.getElementById('picker').hidden`));
   await press('btn-reasoning');
-  check('a pointer press on the open reasoning button starts a close instead of reopening it',
-    await evalJS(`(()=>{const list=document.querySelector('.feature-list');return !list.hidden&&list.hasAttribute('data-leaving')&&list.getAnimations().length>0;})()`));
-  check('the toggled picker finishes closing', await waitFor(`document.querySelector('.feature-list').hidden`, 1500));
+  check('a pointer press on the open reasoning button closes the picker instead of reopening it',
+    await waitFor(`document.getElementById('picker').hidden`, 1500));
 
   await openPicker();
   await evalJS(`document.getElementById('prompt-input').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);
-  check('a pointer away starts the picker close animation',
-    await evalJS(`(()=>{const list=document.querySelector('.feature-list');return !list.hidden&&list.hasAttribute('data-leaving');})()`));
-  check('the pointer-away close finishes', await waitFor(`document.querySelector('.feature-list').hidden`, 1500));
+  check('a pointer away closes the picker', await waitFor(`document.getElementById('picker').hidden`, 1500));
 
   check('appearance presets exclude and preserve the behavioural default', await evalJS(`(()=>{
     const before={...QSettings.DEFAULTS,defaultReasoning:'high'};

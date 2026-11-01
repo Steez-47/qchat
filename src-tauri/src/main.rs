@@ -476,6 +476,12 @@ fn validate_reasoning_effort(value: Option<&str>) -> Result<(), String> {
         _ => Err("invalid_reasoning_effort: Choose low, medium or high reasoning.".into()),
     }
 }
+fn validate_mode(value: Option<&str>) -> Result<(), String> {
+    match value {
+        None | Some("chat" | "work") => Ok(()),
+        _ => Err("invalid_mode: Choose chat or work mode.".into()),
+    }
+}
 
 #[cfg(test)]
 mod reasoning_tests {
@@ -488,6 +494,15 @@ mod reasoning_tests {
             assert!(super::validate_reasoning_effort(Some(value)).is_err());
         }
     }
+    #[test]
+    fn validate_mode_accepts_only_chat_and_work() {
+        for value in [None, Some("chat"), Some("work")] {
+            assert!(super::validate_mode(value).is_ok());
+        }
+        for value in ["", "CHAT", "Work", "work ", "agent", "spark"] {
+            assert!(super::validate_mode(Some(value)).is_err());
+        }
+    }
 }
 
 #[tauri::command]
@@ -497,9 +512,12 @@ async fn chat_send(
     prompt: String,
     attachment_ids: Option<Vec<String>>,
     reasoning_effort: Option<String>,
+    mode: Option<String>,
+    conversation_id: Option<String>,
     provider: Option<String>,
     temporary: Option<bool>,
 ) -> Result<(), String> {
+    validate_mode(mode.as_deref())?;
     validate_reasoning_effort(reasoning_effort.as_deref())?;
     chat_page(&app)?;
     resume(&app);
@@ -552,7 +570,7 @@ async fn chat_send(
         return Err("Send was cancelled".into());
     }
     let data = serde_json::to_string(
-        &serde_json::json!({"id":id,"prompt":prompt,"attachmentCount":attachment_ids.len(),"reasoningEffort":reasoning_effort,"temporary":temporary}),
+        &serde_json::json!({"id":id,"prompt":prompt,"attachmentCount":attachment_ids.len(),"reasoningEffort":reasoning_effort,"temporary":temporary,"mode":mode,"conversationId":conversation_id}),
     )
     .map_err(|e| e.to_string())?;
     let result = media::dispatch_turn(&app, &id, format!("(()=>{{const p={data}; if(window.__qchat) window.__qchat.send(p); else window.__QCHAT_EMIT__({{type:'error',id:p.id,code:'not_ready',message:'Provider page not loaded yet'}});}})()")).await;
@@ -587,7 +605,14 @@ fn chat_stop(app: tauri::AppHandle) -> Vec<String> {
     media::draft_uploads(&app)
 }
 #[tauri::command]
-fn chat_models(app: tauri::AppHandle) -> Result<(), String> { eval(&app, "if (window.__qchat) window.__qchat.listModels(); else if (window.__QCHAT_EMIT__) window.__QCHAT_EMIT__({type:'models',models:[],error:'unavailable'});") }
+fn chat_models(app: tauri::AppHandle, mode: Option<String>) -> Result<(), String> { validate_mode(mode.as_deref())?; let mode = serde_json::to_string(&mode).map_err(|e|e.to_string())?; eval(&app, &format!("if (window.__qchat) window.__qchat.listModels(undefined,{mode}); else if (window.__QCHAT_EMIT__) window.__QCHAT_EMIT__({{type:'models',models:[],error:'unavailable'}});")) }
+#[tauri::command]
+fn chat_modes(app: tauri::AppHandle) -> Result<(), String> { eval(&app, "if (window.__qchat) window.__qchat.listModes(); else if (window.__QCHAT_EMIT__) window.__QCHAT_EMIT__({type:'modes',available:false,modes:[]});") }
+#[tauri::command]
+fn chat_mode_set(app: tauri::AppHandle, mode: String) -> Result<(), String> {
+    validate_mode(Some(&mode))?;
+    eval(&app, &format!("window.__qchat && window.__qchat.setMode({})", serde_json::to_string(&mode).map_err(|e|e.to_string())?))
+}
 #[tauri::command]
 fn chat_model_choose(app: tauri::AppHandle, id: String) -> Result<(), String> { eval(&app, &format!("window.__qchat && window.__qchat.chooseModel({})", serde_json::to_string(&id).map_err(|e|e.to_string())?)) }
 #[tauri::command]
@@ -793,7 +818,7 @@ fn main() {
  .manage(Host(Mutex::new(Activity { active:"chatgpt".into(), providers:[("chatgpt".into(),ProviderActivity::default()),("gemini".into(),ProviderActivity::default())].into(), content: None, hidden:Instant::now(),flight_id:None,last_progress:Instant::now(),anchor:None,remember_position:true,always_on_top:true,positioned:Instant::now(),save_due:None,save_generation:0})))
 
  .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app,shortcut,event|{if event.state()==ShortcutState::Pressed{if selection::matches(app,shortcut) { selection::activate(app); } else { toggle(app); }}}).build())
- .invoke_handler(tauri::generate_handler![provider_set,provider_get,launch_info,show_main,surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,chat_list_conversations,surfaces::get_hotkey, surfaces::get_hotkey_available, selection::get_selection_hotkey_available,surfaces::set_hotkey,selection::get_selection_hotkey,selection::set_selection_hotkey,selection::set_selection_clipboard,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_models,chat_model_choose,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,conversation_export::conversation_export,clipboard::image_copy,snapshot::snapshot_capture,update::update_check,update::update_install])
+ .invoke_handler(tauri::generate_handler![provider_set,provider_get,launch_info,show_main,surfaces::surfaces_debug,surfaces::surfaces_set,surfaces::surfaces_set_blur,chat_list_conversations,surfaces::get_hotkey, surfaces::get_hotkey_available, selection::get_selection_hotkey_available,surfaces::set_hotkey,selection::get_selection_hotkey,selection::set_selection_hotkey,selection::set_selection_clipboard,surfaces::get_autostart,surfaces::set_autostart,bridge_event,chat_models,chat_modes,chat_mode_set,chat_model_choose,chat_send,chat_stop,chat_new,chat_status,hide_main,fit_window,open_settings,close_settings,reset_position,set_window_prefs,chat_open,chat_read_transcript,open_external,show_signin,quit_app,get_theme,attachment_begin,attachment_chunk,attachment_finish,attachment_remove,media_load,media_save,conversation_export::conversation_export,clipboard::image_copy,snapshot::snapshot_capture,update::update_check,update::update_install])
  .setup(|app|{
  surfaces::repair_autostart();
  app.add_capability(r#"{"identifier":"selection-settings","windows":["settings"],"permissions":["allow-get-selection-hotkey","allow-set-selection-hotkey","allow-get-hotkey","allow-set-hotkey","allow-get-autostart","allow-set-autostart"]}"#)?;

@@ -237,7 +237,8 @@ test('model list and choice close the synthetic menu without sending', async () 
   b.document.getElementById = id => id==='model-menu' && opened ? menu : null;
   let pending = b.listModels(); await b.tick(200); await pending;
   assert.equal(opened, false); assert.equal(b.events.at(-1).models[0].label, 'Synthetic model');
-  pending = b.chooseModel('Synthetic model'); await b.tick(200); await pending;
+  // A pick reads the list again afterwards, so it needs longer than the read above.
+  pending = b.chooseModel('Synthetic model'); await b.tick(800); await pending;
   assert.equal(chosen, true); assert.equal(opened, false); assert.equal(b.sendClicks(), 0);
 });
 test('model switcher that only opens from the keyboard is read, and radio items win over other menu rows', async () => {
