@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QChat · ChatGPT and Gemini, one keystroke away</title>
   <meta name="description" content="QChat is a tiny glass bar for Windows that chats with ChatGPT or Gemini through your own signed-in accounts. Press Alt+Q, ask, and get back to work.">
-  <meta name="theme-color" content="#08090d">
-  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#f3f2ee">
+  <meta name="color-scheme" content="light">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <meta property="og:type" content="website">
   <meta property="og:title" content="QChat · ChatGPT and Gemini, one keystroke away">
@@ -19,562 +19,483 @@
   <link rel="stylesheet" href="/styles.css">
   <script>document.documentElement.classList.replace("no-js", "js");</script>
   <script src="/lenis.min.js" defer></script>
-  <script src="/motion.js" defer></script>
-  <script src="/story.js" defer></script>
-  <script src="/scenes.js" defer></script>
-  <script src="/site.js" defer></script>
+  <script src="/main.js" defer></script>
 </head>
 <body>
-  <a class="skip" href="#features">Skip to features</a>
+  <a class="skip" href="#tour">Skip to the tour</a>
 
-  <!-- Reusable glyphs -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-    <symbol id="g-clip" viewBox="0 0 20 20"><path d="M13.5 6.5 7.8 12.2a1.6 1.6 0 0 0 2.3 2.3l6-6a3.2 3.2 0 0 0-4.5-4.5l-6 6a4.8 4.8 0 0 0 6.8 6.8l5.2-5.2"/></symbol>
-    <symbol id="g-cam" viewBox="0 0 20 20"><rect x="3" y="5.5" width="14" height="10.5" rx="2.5"/><path d="M7.5 5.5 8.6 3.8h2.8l1.1 1.7"/><circle cx="10" cy="10.7" r="2.6"/></symbol>
-    <symbol id="g-send" viewBox="0 0 20 20"><path d="M10 15.5v-11m0 0-4.5 4.5M10 4.5l4.5 4.5"/></symbol>
-    <symbol id="g-search" viewBox="0 0 20 20"><circle cx="9" cy="9" r="5"/><path d="m13 13 3.5 3.5"/></symbol>
-    <symbol id="g-quote" viewBox="0 0 20 20"><path d="M4 11.5c0-3 1.6-5 4.2-5.8M4 11.5h3.2v3.8H4zm7 0c0-3 1.6-5 4.2-5.8M11 11.5h3.2v3.8H11z"/></symbol>
-    <symbol id="g-pointer" viewBox="0 0 18 26"><path d="M1.5 1.5v19.2l4.8-4.6 3.3 7.6 3-1.3-3.3-7.4h6.9z"/></symbol>
-    <symbol id="g-dl" viewBox="0 0 20 20"><path d="M10 3v10m0 0-4-4m4 4 4-4M4 16h12"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 20 20"><path d="M13.5 6.5 7.8 12.2a1.6 1.6 0 0 0 2.3 2.3l6-6a3.2 3.2 0 0 0-4.5-4.5l-6 6a4.8 4.8 0 0 0 6.8 6.8l5.2-5.2"/></symbol>
+    <symbol id="i-cam" viewBox="0 0 20 20"><rect x="3" y="5.5" width="14" height="10.5" rx="2.5"/><path d="M7.5 5.5 8.6 3.8h2.8l1.1 1.7"/><circle cx="10" cy="10.7" r="2.6"/></symbol>
+    <symbol id="i-send" viewBox="0 0 20 20"><path d="M10 15.5v-11m0 0-4.5 4.5M10 4.5l4.5 4.5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 20 20"><circle cx="9" cy="9" r="5"/><path d="m13 13 3.5 3.5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 20 20"><circle cx="10" cy="10" r="6.5"/><path d="M10 6.5V10l2.4 1.6"/></symbol>
+    <symbol id="i-pointer" viewBox="0 0 18 26"><path d="M1.5 1.5v19.2l4.8-4.6 3.3 7.6 3-1.3-3.3-7.4h6.9z"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 20 20"><path d="M4 10h12m0 0-5-5m5 5-5 5"/></symbol>
+    <symbol id="i-down" viewBox="0 0 20 20"><path d="M10 3v10m0 0-4-4m4 4 4-4M4 16.5h12"/></symbol>
+    <symbol id="i-q" viewBox="0 0 64 64"><path d="M41.8 36.2A14.5 14.5 0 1 1 43.2 23.8" fill="none" stroke="currentColor" stroke-width="6.2" stroke-linecap="round"/><path d="M35.5 35.5 46.2 46.2" stroke="currentColor" stroke-width="6.4" stroke-linecap="round"/><circle cx="47.2" cy="30.2" r="2.4" fill="currentColor"/></symbol>
   </svg>
 
-  <header class="nav">
-    <a class="brand" href="/" aria-label="QChat home">
-      <img src="/icon.svg" width="26" height="26" alt="">
-      <span>QChat</span>
-    </a>
-    <nav class="nav-links" aria-label="Primary">
-      <a href="#scenes">Tour</a>
-      <a href="#features">Features</a>
-      <a href="#looks">Looks</a>
-      <a href="#install">Install</a>
-      <a href="https://github.com/Steez-47/qchat" rel="noopener">GitHub</a>
-    </nav>
-    <a class="btn btn-small btn-primary" href="/download" data-download>Download</a>
+  <header class="nav" id="nav">
+    <div class="wrap nav-in">
+      <a class="brand" href="/" aria-label="QChat home">
+        <img src="/icon.svg" width="26" height="26" alt="">
+        <span>QChat</span>
+      </a>
+      <nav class="nav-links" aria-label="Sections">
+        <a href="#tour">Tour</a>
+        <a href="#details">Details</a>
+        <a href="#looks">Looks</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/Steez-47/qchat">GitHub</a>
+      </nav>
+      <a class="btn btn-ink btn-sm" href="/download" data-dl>Download</a>
+    </div>
   </header>
 
   <main>
-    <!-- =====================================================================
-         The scroll story. Everything in .stage is driven by story.js.
-         ===================================================================== -->
-    <section class="story" id="story" aria-label="QChat in action">
-      <div class="stage">
-        <div class="screen" id="screen">
-          <div class="wallpaper" id="wallpaper" aria-hidden="true"></div>
-
-          <div class="copy">
-            <div class="caption caption-hero is-active" data-step="0">
-              <p class="eyebrow intro" style="--d:0">For Windows 10 &amp; 11</p>
-              <h1 class="intro-lines"><span><span>Ask, then get</span></span> <span><span>back to work.</span></span></h1>
-              <p class="lede intro" style="--d:3">QChat is a tiny glass bar that chats with ChatGPT or Gemini through your own signed-in accounts. It floats over whatever you&rsquo;re doing, and folds away when you&rsquo;re done.</p>
-              <div class="cta-row intro" style="--d:4">
-                <a class="btn btn-primary" href="/download" data-download><svg aria-hidden="true"><use href="#g-dl"/></svg>Download for Windows</a>
-                <a class="btn btn-ghost" href="#scenes">Take the tour</a>
-              </div>
-              <p class="meta intro" style="--d:5" data-release-meta>Free &middot; Windows 10 22H2 &amp; 11 &middot; x64</p>
-            </div>
-
-            <div class="caption" data-step="1">
-              <p class="step-num">01 &mdash; Open</p>
-              <h2>Press <kbd>Alt</kbd><kbd>Q</kbd> anywhere.</h2>
-              <p>The orb opens into a single bar, right over the app you&rsquo;re in. No browser tab, no window to manage.</p>
-            </div>
-            <div class="caption" data-step="2">
-              <p class="step-num">02 &mdash; Ask</p>
-              <h2>Ask with your own account.</h2>
-              <p>QChat talks to chatgpt.com and gemini.google.com through your signed-in session, so you get your models and your history. No API keys.</p>
-            </div>
-            <div class="caption" data-step="3">
-              <p class="step-num">03 &mdash; Read</p>
-              <h2>Replies that read calmly.</h2>
-              <p>Answers arrive block by block, so code, tables and maths settle in place instead of jumping around while you read.</p>
-            </div>
-            <div class="caption" data-step="4">
-              <p class="step-num">04 &mdash; Return</p>
-              <h2>Recent chats ride along.</h2>
-              <p>Your last few conversations pop out of the bar as tabs, each marked with the provider it lives on.</p>
-            </div>
-            <div class="caption" data-step="5">
-              <p class="step-num">05 &mdash; Fold</p>
-              <h2>Click away. It folds.</h2>
-              <p>A few seconds out of focus and everything sinks into the bar, then the bar closes into its orb. Your work is right where you left it.</p>
-            </div>
+    <!-- ================================================================ Hero -->
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <p class="eyebrow" data-reveal>For Windows 10 &amp; 11</p>
+        <h1 class="display" data-split>Ask, then get back to&nbsp;work.</h1>
+        <div class="hero-side">
+          <p class="lede" data-reveal>QChat is a small glass bar that talks to ChatGPT or Gemini through the accounts you already use. It floats over whatever you&rsquo;re doing and folds away when you&rsquo;re done.</p>
+          <div class="cta-row" data-reveal>
+            <a class="btn btn-ink" href="/download" data-dl>
+              <svg class="ic" aria-hidden="true"><use href="#i-down"/></svg>
+              Download for Windows
+            </a>
+            <a class="link-arrow" href="#story">See it work <svg class="ic" aria-hidden="true"><use href="#i-arrow"/></svg></a>
           </div>
-
-          <div class="demo" aria-hidden="true">
-            <!-- The app QChat floats over. -->
-            <div class="desk-win win win-dark" id="desk-win">
-              <div class="win-bar"><span class="win-ico"></span><span class="win-title">search.js</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
-              <div class="win-body editor"><span class="ed-hl" id="ed-hl"></span>
-<pre><span class="ed-n">1</span><b class="k">import</b> { fetchResults } <b class="k">from</b> <b class="s">"./api.js"</b>;
-<span class="ed-n">2</span>
-<span class="ed-n">3</span><b class="k">const</b> input = document.<b class="f">querySelector</b>(<b class="s">"#search"</b>);
-<span class="ed-n">4</span><b class="k">const</b> list = document.<b class="f">querySelector</b>(<b class="s">"#results"</b>);
-<span class="ed-n">5</span>
-<span class="ed-n">6</span><b class="c" id="ed-todo">// TODO: this fires on every keystroke</b>
-<span class="ed-n">7</span>input.<b class="f">addEventListener</b>(<b class="s">"input"</b>, <b class="f ed-fix" id="ed-fix"></b><b class="k">async</b> (e) =&gt; {
-<span class="ed-n">8</span>  <b class="k">const</b> items = <b class="k">await</b> <b class="f">fetchResults</b>(e.target.value);
-<span class="ed-n">9</span>  list.<b class="f">replaceChildren</b>(...items.<b class="f">map</b>(render));
-<span class="ed-n">10</span>}<b id="ed-fix2"></b>);
-<span class="ed-n">11</span>
-<span class="ed-n">12</span><b class="k">function</b> <b class="f">render</b>(item) {
-<span class="ed-n">13</span>  <b class="k">const</b> li = document.<b class="f">createElement</b>(<b class="s">"li"</b>);
-<span class="ed-n">14</span>  li.textContent = item.title;
-<span class="ed-n">15</span>  <b class="k">return</b> li;
-<span class="ed-n">16</span>}</pre>
-              </div>
-            </div>
-
-            <div class="app" id="app">
-              <div class="msg-user glass" id="msg-user"><p>What&rsquo;s a clean way to debounce a search box?</p></div>
-
-              <div class="msg-reply glass" id="msg-reply">
-                <div class="thinking" id="thinking"><i></i><i></i><i></i></div>
-                <div class="reply-body" id="reply-body">
-                  <p class="blk" data-kind="words">Wait until the person stops typing, then search. A tiny helper keeps it tidy:</p>
-                  <pre class="blk code" data-kind="lines"><span class="ln"><b class="k">function</b> <b class="f">debounce</b>(fn, ms = <b class="n">250</b>) {</span>
-<span class="ln">  <b class="k">let</b> timer;</span>
-<span class="ln">  <b class="k">return</b> (...args) =&gt; {</span>
-<span class="ln">    <b class="f">clearTimeout</b>(timer);</span>
-<span class="ln">    timer = <b class="f">setTimeout</b>(() =&gt; fn(...args), ms);</span>
-<span class="ln">  };</span>
-<span class="ln">}</span></pre>
-                  <p class="blk" data-kind="words">Wrap your input handler with it. Around <code>250 ms</code> feels like a natural typing pause.</p>
-                </div>
-              </div>
-
-              <div class="tabs" id="tabs">
-                <div class="tabs-inner" id="tabs-inner">
-                  <span class="tab is-current"><span class="tab-logo"></span>Debounce search</span>
-                  <span class="tab"><span class="tab-logo gem"></span>Kyoto trip, 3 days<em>2h</em></span>
-                  <span class="tab"><span class="tab-logo"></span>Email regex<em>1d</em></span>
-                </div>
-              </div>
-
-              <div class="bar qbar glass" id="bar">
-                <span class="orb" id="orb"></span>
-                <span class="qfield">
-                  <span class="ph" id="placeholder">Ask anything &middot; / commands</span>
-                  <span class="typed" id="typed"></span><span class="caret" id="caret"></span>
-                </span>
-                <span class="qtools" id="bar-tools">
-                  <span class="chip">Medium</span>
-                  <span class="tool"><svg><use href="#g-clip"/></svg></span>
-                  <span class="tool"><svg><use href="#g-cam"/></svg></span>
-                  <span class="send" id="send">
-                    <svg class="i-send"><use href="#g-send"/></svg>
-                    <svg class="i-stop" viewBox="0 0 20 20"><rect x="6.5" y="6.5" width="7" height="7" rx="1.6"/></svg>
-                  </span>
-                </span>
-              </div>
-
-              <div class="keys" id="keys"><kbd>Alt</kbd><span>+</span><kbd>Q</kbd></div>
-              <span class="ripple" id="ripple"></span>
-            </div>
-          </div>
-
-          <div class="rail" aria-hidden="true">
-            <i data-rail="1"></i><i data-rail="2"></i><i data-rail="3"></i><i data-rail="4"></i><i data-rail="5"></i>
-          </div>
-          <p class="scroll-hint" id="scroll-hint" aria-hidden="true">Scroll</p>
+          <p class="meta" data-reveal>Free &middot; x64 &middot; <span data-release-line>Latest release</span></p>
         </div>
       </div>
     </section>
 
-    <!-- =====================================================================
-         Feature tour. Each scene is pinned and scrubbed by scenes.js.
-         ===================================================================== -->
-    <div class="scenes" id="scenes">
-      <div class="scenes-intro section-head">
-        <p class="eyebrow" data-reveal>The tour</p>
-        <h2 data-split>Built for the ten seconds between tasks.</h2>
-        <p data-reveal>Five things QChat does that a browser tab can&rsquo;t. Keep scrolling.</p>
-      </div>
+    <!-- ================================================================ Story (pinned) -->
+    <section class="story" id="story" aria-label="How QChat works">
+      <div class="story-pin">
+        <div class="wrap story-in">
+          <div class="screen story-screen" data-screen>
+            <div class="canvas" id="story-canvas" data-step="0">
+              <div class="win win-editor">
+                <div class="win-bar"><span class="win-title">search.js &mdash; Code</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
+                <pre class="code" aria-hidden="true"><span class="ln">1</span><b class="k">import</b> { fetchResults } <b class="k">from</b> <b class="s">"./api.js"</b>;
+<span class="ln">2</span>
+<span class="ln">3</span><b class="k">const</b> input = document.<b class="f">querySelector</b>(<b class="s">"#search"</b>);
+<span class="ln">4</span><b class="k">const</b> list = document.<b class="f">querySelector</b>(<b class="s">"#results"</b>);
+<span class="ln">5</span>
+<span class="ln">6</span><b class="c">// TODO: this fires on every keystroke</b>
+<span class="ln">7</span>input.<b class="f">addEventListener</b>(<b class="s">"input"</b>, <b class="k">async</b> (e) =&gt; {
+<span class="ln">8</span>  <b class="k">const</b> items = <b class="k">await</b> <b class="f">fetchResults</b>(e.target.value);
+<span class="ln">9</span>  list.<b class="f">replaceChildren</b>(...items.<b class="f">map</b>(render));
+<span class="ln">10</span>});
+<span class="ln">11</span>
+<span class="ln">12</span><b class="k">function</b> <b class="f">render</b>(item) {
+<span class="ln">13</span>  <b class="k">const</b> li = document.<b class="f">createElement</b>(<b class="s">"li"</b>);
+<span class="ln">14</span>  li.textContent = item.title;
+<span class="ln">15</span>  <b class="k">return</b> li;
+<span class="ln">16</span>}</pre>
+              </div>
 
-      <!-- Scene 1: selected text -->
-      <section class="scene" data-scene="select" aria-labelledby="sc-select">
-        <div class="scene-stage">
-          <div class="scene-copy">
-            <p class="step-num">Selected text</p>
-            <h2 id="sc-select">Ask about what you&rsquo;ve highlighted.</h2>
-            <p>Select text in any app and press <kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Q</kbd>. QChat opens with it quoted, ready for your question. No copying, no pasting.</p>
-            <div class="scene-progress"><i></i></div>
-          </div>
-          <div class="scene-card" aria-hidden="true">
-            <div class="scene-wall w-1"></div>
-            <div class="vig" data-w="720" data-h="500">
-              <div class="win win-light" style="left:90px;top:26px;width:540px;height:286px">
-                <div class="win-bar"><span class="win-ico doc"></span><span class="win-title">Q3 update.txt</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
-                <div class="win-body doc-body">
-                  <p>Hi team, a quick update on the launch.</p>
-                  <p class="sel-target">We missed the launch date because the vendor shipped late, and honestly that&rsquo;s on them, not us.</p>
-                  <p>The new date is October 14. I&rsquo;ll share the revised plan on Friday.</p>
+              <div class="hud" aria-hidden="true"><kbd>Alt</kbd><span>+</span><kbd>Q</kbd></div>
+
+              <div class="qc" aria-hidden="true">
+                <div class="qc-stack">
+                  <div class="bubble bubble-user">What&rsquo;s a clean way to debounce a search box?</div>
+                  <div class="bubble bubble-reply">
+                    <p data-words>Wait until the person stops typing, then search. A tiny helper keeps it tidy:</p>
+                    <pre class="code code-glass"><b class="k">function</b> <b class="f">debounce</b>(fn, ms = 250) {
+  <b class="k">let</b> timer;
+  <b class="k">return</b> (...args) =&gt; {
+    <b class="f">clearTimeout</b>(timer);
+    timer = <b class="f">setTimeout</b>(() =&gt; fn(...args), ms);
+  };
+}</pre>
+                    <p data-words>Wrap your input handler with it. Around 250&nbsp;ms feels like a natural pause.</p>
+                  </div>
                 </div>
-              </div>
-              <svg class="pointer" data-el="pointer"><use href="#g-pointer"/></svg>
-
-              <div class="keys keys-float" data-el="keys"><kbd>Ctrl</kbd><span>+</span><kbd>Alt</kbd><span>+</span><kbd>Q</kbd></div>
-
-              <div class="qbubble user glass" data-el="user" style="right:130px;max-width:400px">
-                <span class="quote-line"><svg><use href="#g-quote"/></svg>We missed the launch date because the vendor&hellip;</span>
-                Make this sound friendlier
-              </div>
-              <div class="qbubble reply glass" data-el="reply" style="left:130px;width:460px">
-                <p class="blk" data-kind="words">Our launch is moving a little later because a vendor delivery ran behind. We&rsquo;re working closely with them, and we&rsquo;re back on track for October 14.</p>
-              </div>
-              <div class="sel-chip glass" data-el="chip"><svg><use href="#g-quote"/></svg><span>We missed the launch date because the vendor&hellip;</span></div>
-              <div class="qbar glass" data-el="bar" style="left:130px;bottom:30px;width:460px">
-                <span class="orb"></span>
-                <span class="qfield"><span class="ph">Ask about the selection</span><span class="typed"></span><span class="caret"></span></span>
-                <span class="qtools"><span class="tool"><svg><use href="#g-clip"/></svg></span><span class="tool"><svg><use href="#g-cam"/></svg></span><span class="send"><svg><use href="#g-send"/></svg></span></span>
+                <div class="tabs">
+                  <span class="tab"><svg class="ic"><use href="#i-clock"/></svg></span>
+                  <span class="tab">Debounce search</span>
+                  <span class="tab">Kyoto trip, 3 days <em>2h</em></span>
+                  <span class="tab">Email regex <em>1d</em></span>
+                </div>
+                <div class="bar glass">
+                  <span class="orb"></span>
+                  <span class="bar-field">
+                    <span class="ph">Ask anything &middot; / commands</span>
+                    <span class="typed" id="story-typed"></span><span class="caret"></span>
+                  </span>
+                  <span class="bar-btn"><svg class="ic"><use href="#i-cam"/></svg></span>
+                  <span class="bar-btn"><svg class="ic"><use href="#i-clip"/></svg></span>
+                  <span class="send"><svg class="ic"><use href="#i-send"/></svg></span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </section>
 
-      <!-- Scene 2: snapshot -->
-      <section class="scene" data-scene="snap" aria-labelledby="sc-snap">
-        <div class="scene-stage">
-          <div class="scene-copy">
-            <p class="step-num">Snapshots</p>
-            <h2 id="sc-snap">Show it what you&rsquo;re looking at.</h2>
-            <p>One click on the camera captures the window behind QChat and attaches it. Ask about a chart, an error, a design, whatever&rsquo;s on screen.</p>
-            <div class="scene-progress"><i></i></div>
+          <div class="story-caps">
+            <ol class="story-ticks" aria-hidden="true"><li></li><li></li><li></li><li></li><li></li></ol>
+            <div class="caps">
+              <div class="cap is-on"><span class="cap-n">01</span><h2>Press <kbd>Alt</kbd> <kbd>Q</kbd> anywhere.</h2><p>The orb opens into a single bar over the app you&rsquo;re in. No browser tab, no window to manage.</p></div>
+              <div class="cap"><span class="cap-n">02</span><h2>Ask with your own account.</h2><p>It talks to chatgpt.com and gemini.google.com through your signed-in session. Your models, your history, no API keys.</p></div>
+              <div class="cap"><span class="cap-n">03</span><h2>Replies that read calmly.</h2><p>Answers arrive block by block, so code, tables and maths settle in place instead of jumping while you read.</p></div>
+              <div class="cap"><span class="cap-n">04</span><h2>Recent chats ride along.</h2><p>Your last few conversations sit on the bar as little tabs. One click and you&rsquo;re back in.</p></div>
+              <div class="cap"><span class="cap-n">05</span><h2>Click away. It folds.</h2><p>A few seconds out of focus and it all sinks back into the orb. Your chat is right where you left it.</p></div>
+            </div>
           </div>
-          <div class="scene-card" aria-hidden="true">
-            <div class="scene-wall w-2"></div>
-            <div class="vig" data-w="720" data-h="500">
-              <div class="win win-light chart-win" data-el="win" style="left:90px;top:24px;width:540px;height:300px">
-                <div class="win-bar"><span class="win-ico sheet"></span><span class="win-title">Monthly sales.xlsx</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
-                <div class="win-body chart">
-                  <div class="chart-head"><strong>Units sold</strong><span>Jan &ndash; Jun</span></div>
-                  <div class="bars">
-                    <i style="--h:42%"><b>Jan</b></i><i style="--h:55%"><b>Feb</b></i><i style="--h:36%"><b>Mar</b></i><i style="--h:63%"><b>Apr</b></i><i style="--h:74%"><b>May</b></i><i style="--h:88%"><b>Jun</b></i>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================================ Tour -->
+    <section class="tour" id="tour">
+      <div class="wrap">
+        <header class="sec-head">
+          <p class="eyebrow" data-reveal>The tour</p>
+          <h2 class="h-xl" data-split>Built for the ten seconds between tasks.</h2>
+        </header>
+
+        <div class="tour-grid">
+          <div class="tour-steps">
+            <article class="step" data-step="0">
+              <span class="step-n">01 / Selected text</span>
+              <h3>Ask about what you&rsquo;ve highlighted.</h3>
+              <p>Select text in any app and press <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Q</kbd>. QChat opens with it quoted and ready for your question. No copy, no paste.</p>
+              <div class="step-slot"></div>
+            </article>
+            <article class="step" data-step="1">
+              <span class="step-n">02 / Snapshots</span>
+              <h3>Show it what you&rsquo;re looking at.</h3>
+              <p>One click on the camera captures the window behind QChat and attaches it. Ask about a chart, an error, a design, anything on screen.</p>
+              <div class="step-slot"></div>
+            </article>
+            <article class="step" data-step="2">
+              <span class="step-n">03 / Commands</span>
+              <h3>Slash for everything.</h3>
+              <p>Type <kbd>/</kbd> to switch between ChatGPT and Gemini, start a temporary chat, export to Markdown and more. <kbd>Ctrl</kbd> <kbd>K</kbd> opens the same menu.</p>
+              <div class="step-slot"></div>
+            </article>
+            <article class="step" data-step="3">
+              <span class="step-n">04 / Files</span>
+              <h3>Drag it in. Drop it on.</h3>
+              <p>Drop files on the bar, paste an image or use the paperclip. Up to ten attachments a message, with previews before you send.</p>
+              <div class="step-slot"></div>
+            </article>
+            <article class="step" data-step="4">
+              <span class="step-n">05 / History</span>
+              <h3>Every chat, one search away.</h3>
+              <p><kbd>Ctrl</kbd> <kbd>P</kbd> searches the chats on this PC, then everything else on your account. Pick one and the whole conversation opens.</p>
+              <div class="step-slot"></div>
+            </article>
+          </div>
+
+          <div class="tour-stage">
+            <div class="screen tour-scr" data-screen id="tour-screen">
+              <div class="canvas">
+                <!-- 1. Selection -->
+                <div class="layer" data-layer="0">
+                  <div class="win win-doc">
+                    <div class="win-bar"><span class="win-title">Q3 update.txt &mdash; Notepad</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
+                    <div class="doc">
+                      <p>Hi team, a quick update on the launch.</p>
+                      <p><mark class="sel">We missed the launch date because the vendor shipped late, and honestly that&rsquo;s on them, not us.</mark></p>
+                      <p>The new date is October 14. I&rsquo;ll share the revised plan on Friday.</p>
+                    </div>
+                  </div>
+                  <div class="hud t-hud"><kbd>Ctrl</kbd><span>+</span><kbd>Alt</kbd><span>+</span><kbd>Q</kbd></div>
+                  <div class="qc t-qc">
+                    <div class="qc-stack">
+                      <div class="bubble bubble-user t-user"><span class="quote">We missed the launch date because the vendor&hellip;</span>Make this sound friendlier</div>
+                      <div class="bubble bubble-reply t-reply"><p data-words>Our launch is moving a little later because a vendor delivery ran behind. We&rsquo;re working closely with them, and we&rsquo;re on track for October 14.</p></div>
+                    </div>
+                    <div class="chip glass t-chip"><span class="quote-mark">&ldquo;</span>We missed the launch date because the vendor&hellip;</div>
+                    <div class="bar glass">
+                      <span class="orb"></span>
+                      <span class="bar-field"><span class="type t-type" style="--n:26">Make this sound friendlier</span><span class="ph t-ph">Ask anything &middot; / commands</span></span>
+                      <span class="bar-btn"><svg class="ic"><use href="#i-cam"/></svg></span>
+                      <span class="send t-send"><svg class="ic"><use href="#i-send"/></svg></span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 2. Snapshot -->
+                <div class="layer" data-layer="1">
+                  <div class="win win-sheet">
+                    <div class="win-bar"><span class="win-title">Monthly sales.xlsx &mdash; Excel</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
+                    <div class="sheet">
+                      <p class="sheet-h">Units sold, Jan&ndash;Jun</p>
+                      <div class="chart">
+                        <i style="--h:42%"></i><i style="--h:55%"></i><i style="--h:38%"></i><i style="--h:64%"></i><i style="--h:76%"></i><i style="--h:90%"></i>
+                      </div>
+                      <div class="chart-x"><span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span><span>May</span><span>Jun</span></div>
+                    </div>
+                    <div class="flash"></div>
+                  </div>
+                  <div class="qc t-qc2">
+                    <div class="qc-stack">
+                      <div class="bubble bubble-user s-user"><span class="thumb"></span>Summarize this chart in one line</div>
+                      <div class="bubble bubble-reply s-reply"><p data-words>Sales climbed steadily from January to June, with one dip in March before reaching the half-year high.</p></div>
+                    </div>
+                    <div class="chip glass s-chip"><span class="thumb"></span>Snapshot.png</div>
+                    <div class="bar glass">
+                      <span class="orb"></span>
+                      <span class="bar-field"><span class="type s-type" style="--n:32">Summarize this chart in one line</span></span>
+                      <span class="bar-btn s-cam"><svg class="ic"><use href="#i-cam"/></svg></span>
+                      <span class="send s-send"><svg class="ic"><use href="#i-send"/></svg></span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 3. Commands -->
+                <div class="layer" data-layer="2">
+                  <div class="win win-doc">
+                    <div class="win-bar"><span class="win-title">Kyoto ideas.txt &mdash; Notepad</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
+                    <div class="doc">
+                      <p><strong>Kyoto, three days in May</strong></p>
+                      <p>Temples early, before the crowds. Philosopher&rsquo;s Path on day two.</p>
+                      <p>Somewhere quiet for dinner near Gion. Day trip to Nara?</p>
+                    </div>
+                  </div>
+                  <div class="qc t-qc3">
+                    <div class="qc-stack">
+                      <div class="menu glass c-menu">
+                        <span class="menu-hl"></span>
+                        <div class="mi"><b>/chatgpt</b><span>Switch to ChatGPT</span></div>
+                        <div class="mi"><b>/gemini</b><span>Switch to Gemini</span></div>
+                        <div class="mi"><b>/temp</b><span>Temporary chat</span></div>
+                        <div class="mi"><b>/export</b><span>Save as Markdown</span></div>
+                        <div class="mi"><b>/chats</b><span>All chats</span></div>
+                        <div class="mi"><b>/keys</b><span>Keyboard shortcuts</span></div>
+                      </div>
+                    </div>
+                    <div class="chip glass c-toast">Now chatting with Gemini</div>
+                    <div class="bar glass">
+                      <span class="orb"></span>
+                      <span class="bar-field"><span class="type c-type" style="--n:7">/gemini</span><span class="ph c-ph">Ask Gemini</span></span>
+                      <span class="pill c-pill">Gemini</span>
+                      <span class="send"><svg class="ic"><use href="#i-send"/></svg></span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 4. Files -->
+                <div class="layer" data-layer="3">
+                  <div class="win win-files">
+                    <div class="win-bar"><span class="win-title">Downloads &mdash; File Explorer</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
+                    <div class="files">
+                      <div class="file f-beach"><span class="fi fi-img"></span>beach.jpg</div>
+                      <div class="file f-pdf"><span class="fi fi-pdf">PDF</span>itinerary.pdf</div>
+                      <div class="file"><span class="fi fi-txt"></span>notes.txt</div>
+                      <div class="file"><span class="fi fi-txt"></span>budget.csv</div>
+                    </div>
+                  </div>
+                  <div class="drag" aria-hidden="true">
+                    <span class="fi fi-img"></span><span class="fi fi-pdf">PDF</span>
+                    <svg class="pointer"><use href="#i-pointer"/></svg>
+                  </div>
+                  <div class="qc t-qc4">
+                    <div class="drop glass">Drop to attach</div>
+                    <div class="chips f-chips">
+                      <div class="chip glass"><span class="fi fi-img sm"></span>beach.jpg <em>2.4 MB</em></div>
+                      <div class="chip glass"><span class="fi fi-pdf sm">PDF</span>itinerary.pdf <em>380 KB</em></div>
+                    </div>
+                    <div class="bar glass">
+                      <span class="orb"></span>
+                      <span class="bar-field"><span class="type f-type" style="--n:23">Plan a day around these</span></span>
+                      <span class="bar-btn"><svg class="ic"><use href="#i-clip"/></svg></span>
+                      <span class="send f-send"><svg class="ic"><use href="#i-send"/></svg></span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 5. History -->
+                <div class="layer" data-layer="4">
+                  <div class="win win-doc">
+                    <div class="win-bar"><span class="win-title">May trip.txt &mdash; Notepad</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
+                    <div class="doc">
+                      <p><strong>Japan, May 12&ndash;20</strong></p>
+                      <p>Tokyo 12&ndash;15. Kyoto 15&ndash;18, need a plan for those days. Osaka 18&ndash;20.</p>
+                      <p>Rail pass? Book the ryokan this week.</p>
+                    </div>
+                  </div>
+                  <div class="hud h-hud"><kbd>Ctrl</kbd><span>+</span><kbd>P</kbd></div>
+                  <div class="qc t-qc5">
+                    <div class="qc-stack">
+                      <div class="palette glass h-pal">
+                        <div class="pal-in"><svg class="ic"><use href="#i-search"/></svg><span class="type h-type" style="--n:5">kyoto</span><span class="ph h-ph">Search chats</span></div>
+                        <p class="pal-h">On this PC</p>
+                        <div class="pi hit is-sel">Kyoto trip, 3 days <em>2h</em></div>
+                        <div class="pi miss">Debounce search <em>5m</em></div>
+                        <div class="pi miss">Email regex <em>1d</em></div>
+                        <p class="pal-h">From your account</p>
+                        <div class="pi hit">Kyoto restaurants near Gion <em>3w</em></div>
+                        <div class="pi miss">Birthday ideas for Sam <em>1mo</em></div>
+                      </div>
+                      <div class="bubble bubble-user h-user">Plan three days in Kyoto for May</div>
+                      <div class="bubble bubble-reply h-reply"><p data-words><strong>Day 1, Higashiyama.</strong> Kiyomizu-dera early, then wander down Sannenzaka to Gion for dinner.</p></div>
+                    </div>
+                    <div class="bar glass">
+                      <span class="orb"></span>
+                      <span class="bar-field"><span class="ph">Ask anything &middot; / commands</span></span>
+                      <span class="bar-btn"><svg class="ic"><use href="#i-cam"/></svg></span>
+                      <span class="send"><svg class="ic"><use href="#i-send"/></svg></span>
+                    </div>
                   </div>
                 </div>
               </div>
-              <div class="snap-frame" data-el="frame" style="left:90px;top:24px;width:540px;height:300px"><i></i><i></i><i></i><i></i></div>
-              <div class="snap-flash" data-el="flash" style="left:90px;top:24px;width:540px;height:300px"></div>
-              <div class="snap-fly" data-el="fly"></div>
-              <svg class="pointer" data-el="pointer"><use href="#g-pointer"/></svg>
-
-              <div class="qbubble user glass" data-el="user" style="right:130px">
-                <span class="thumb-sm"></span>
-                Summarize this chart in one line
-              </div>
-              <div class="qbubble reply glass" data-el="reply" style="left:130px;width:460px">
-                <p class="blk" data-kind="words">Sales climbed steadily from January to June, with a single dip in March before reaching the half-year high.</p>
-              </div>
-              <div class="att-chip glass" data-el="chip" style="left:152px;bottom:82px"><span class="thumb" data-el="thumb"></span><span><strong>Snapshot.png</strong><em>Monthly sales.xlsx</em></span></div>
-              <div class="qbar glass" data-el="bar" style="left:130px;bottom:30px;width:460px">
-                <span class="orb"></span>
-                <span class="qfield"><span class="ph">Ask anything &middot; / commands</span><span class="typed"></span><span class="caret"></span></span>
-                <span class="qtools"><span class="tool"><svg><use href="#g-clip"/></svg></span><span class="tool cam" data-el="cam"><svg><use href="#g-cam"/></svg></span><span class="send"><svg><use href="#g-send"/></svg></span></span>
-              </div>
             </div>
           </div>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <!-- Scene 3: slash commands and providers -->
-      <section class="scene" data-scene="slash" aria-labelledby="sc-slash">
-        <div class="scene-stage">
-          <div class="scene-copy">
-            <p class="step-num">Commands</p>
-            <h2 id="sc-slash">Slash for everything.</h2>
-            <p>Type <kbd>/</kbd> to switch between ChatGPT and Gemini, start a temporary chat that stays out of your history, export to Markdown and more. <kbd>Ctrl</kbd><kbd>K</kbd> opens the same menu.</p>
-            <div class="scene-progress"><i></i></div>
-          </div>
-          <div class="scene-card" aria-hidden="true">
-            <div class="scene-wall w-3"></div>
-            <div class="vig" data-w="720" data-h="500">
-              <div class="win win-light" style="left:90px;top:26px;width:540px;height:250px">
-                <div class="win-bar"><span class="win-ico doc"></span><span class="win-title">Kyoto ideas.txt</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
-                <div class="win-body doc-body">
-                  <p><strong>Kyoto, three days in May</strong></p>
-                  <p>Temples early, before the crowds. Philosopher&rsquo;s Path on day two. Somewhere quiet for dinner near Gion. Ask about a day trip to Nara?</p>
+    <!-- ================================================================ Details -->
+    <section class="details" id="details">
+      <div class="wrap">
+        <header class="sec-head">
+          <p class="eyebrow" data-reveal>And the details</p>
+          <h2 class="h-xl" data-split>Small on screen. Thorough underneath.</h2>
+        </header>
+        <ul class="grid-list" data-stagger>
+          <li data-reveal><h3>Real glass</h3><p>The desktop really is blurred behind it, and clicks pass straight through the empty space around the bar.</p></li>
+          <li data-reveal><h3>Code and maths, rendered</h3><p>Highlighted code, typeset maths, tables and images. Hover a reply to copy or retry it.</p></li>
+          <li data-reveal><h3>Temporary chats</h3><p><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>N</kbd> starts a chat that stays out of your history.</p></li>
+          <li data-reveal><h3>Kept on your PC</h3><p>Up to 50 chats are saved locally so they open instantly, and unsent drafts survive a restart.</p></li>
+          <li data-reveal><h3>Six-second undo</h3><p>Removing a chat, <code>/clear</code> and <code>/discard</code> can all be undone for six seconds.</p></li>
+          <li data-reveal><h3>Copy and export</h3><p><code>/copy</code> puts the conversation on your clipboard as Markdown. <code>/export</code> saves it to Downloads.</p></li>
+          <li data-reveal><h3>Open at startup</h3><p>Starts quietly in the tray when you log in, so <kbd>Alt</kbd> <kbd>Q</kbd> works from the first minute.</p></li>
+          <li data-reveal><h3>Recovers by itself</h3><p>A dropped connection retries when the network returns, with your draft and files kept exactly as they were.</p></li>
+        </ul>
+
+        <div class="keys">
+          <h3 class="keys-h" data-reveal>Your hands never leave the keys.</h3>
+          <dl class="keys-list" data-stagger>
+            <div data-reveal><dt><kbd>Alt</kbd> <kbd>Q</kbd></dt><dd>Show or hide QChat</dd></div>
+            <div data-reveal><dt><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Q</kbd></dt><dd>Ask about the selected text</dd></div>
+            <div data-reveal><dt><kbd>Ctrl</kbd> <kbd>K</kbd></dt><dd>Command menu</dd></div>
+            <div data-reveal><dt><kbd>Ctrl</kbd> <kbd>P</kbd></dt><dd>Search saved chats</dd></div>
+            <div data-reveal><dt><kbd>Ctrl</kbd> <kbd>F</kbd></dt><dd>Find in the conversation</dd></div>
+            <div data-reveal><dt><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>N</kbd></dt><dd>New temporary chat</dd></div>
+            <div data-reveal><dt><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>C</kbd></dt><dd>Copy the latest reply</dd></div>
+            <div data-reveal><dt><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>X</kbd></dt><dd>Copy the last code block</dd></div>
+          </dl>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================================ Looks -->
+    <section class="looks" id="looks">
+      <div class="wrap looks-grid">
+        <div class="looks-copy">
+          <p class="eyebrow" data-reveal>Make it yours</p>
+          <h2 class="h-xl" data-split>Twenty looks, one material.</h2>
+          <p class="body-l" data-reveal>Pick a look, then tune glass opacity, density, font and motion in Settings. An optional guard keeps text at 4.5:1 contrast on any wallpaper.</p>
+          <div class="swatches" id="swatches" role="radiogroup" aria-label="Looks" data-reveal></div>
+          <p class="swatch-name" id="swatch-name" aria-live="polite"></p>
+        </div>
+        <div class="screen looks-screen" data-screen data-reveal>
+          <div class="canvas canvas-sq" id="looks-preview">
+            <div class="qc qc-looks">
+              <div class="qc-stack">
+                <div class="bubble bubble-user">Ideas for a rainy Sunday?</div>
+                <div class="bubble bubble-reply">
+                  <p>Three easy ones:</p>
+                  <ul><li>Bake something you&rsquo;ve never tried</li><li>Start a 1,000-piece puzzle</li><li>Call someone you miss</li></ul>
                 </div>
               </div>
-              <div class="toast glass" data-el="toast"><span class="tab-logo gem"></span><span data-el="toast-text">Now chatting with Gemini</span></div>
-              <div class="slash glass" data-el="menu" style="left:130px;width:340px">
-                <div class="slash-item" data-cmd="chatgpt"><code>/chatgpt</code><span>Switch to ChatGPT</span></div>
-                <div class="slash-item" data-cmd="gemini"><code>/gemini</code><span>Switch to Gemini</span></div>
-                <div class="slash-item" data-cmd="temp"><code>/temp</code><span>Temporary chat</span></div>
-                <div class="slash-item" data-cmd="export"><code>/export</code><span>Save conversation</span></div>
-                <div class="slash-item" data-cmd="chats"><code>/chats</code><span>Chats</span></div>
-                <div class="slash-item" data-cmd="keys"><code>/keys</code><span>Keyboard shortcuts</span></div>
+              <div class="tabs">
+                <span class="tab"><svg class="ic"><use href="#i-clock"/></svg></span>
+                <span class="tab">Rainy Sunday</span>
+                <span class="tab">Sourdough tips <em>3d</em></span>
               </div>
-              <div class="tabs" data-el="tabs" style="left:152px;bottom:74px;width:416px">
-                <div class="tabs-inner" style="transform:none">
-                  <span class="tab is-current"><span class="tab-logo" data-el="logo-gpt"></span><span class="tab-logo gem" data-el="logo-gem"></span><span data-el="tab-text">New chat</span></span>
-                </div>
-              </div>
-              <div class="qbar glass" data-el="bar" style="left:130px;bottom:30px;width:460px">
+              <div class="bar glass">
                 <span class="orb"></span>
-                <span class="mode-pill" data-el="mode">Temporary</span>
-                <span class="qfield"><span class="ph">Ask anything &middot; / commands</span><span class="typed"></span><span class="caret"></span></span>
-                <span class="qtools"><span class="chip">Medium</span><span class="tool"><svg><use href="#g-clip"/></svg></span><span class="send"><svg><use href="#g-send"/></svg></span></span>
+                <span class="bar-field"><span class="typed-static">Something cosy</span></span>
+                <span class="bar-btn"><svg class="ic"><use href="#i-cam"/></svg></span>
+                <span class="send is-ready"><svg class="ic"><use href="#i-send"/></svg></span>
               </div>
             </div>
           </div>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <!-- Scene 4: drop files -->
-      <section class="scene" data-scene="drop" aria-labelledby="sc-drop">
-        <div class="scene-stage">
-          <div class="scene-copy">
-            <p class="step-num">Files</p>
-            <h2 id="sc-drop">Drag it in. Drop it on.</h2>
-            <p>Drop files onto the chat, paste an image, or use the paperclip. Up to ten attachments a message, with previews before you send.</p>
-            <div class="scene-progress"><i></i></div>
+    <!-- ================================================================ Install -->
+    <section class="install" id="install">
+      <div class="wrap">
+        <header class="sec-head">
+          <p class="eyebrow" data-reveal>Install</p>
+          <h2 class="h-xl" data-split>Up and running in a minute.</h2>
+        </header>
+        <ol class="install-steps" data-stagger>
+          <li data-reveal><span class="n">1</span><h3>Download the installer</h3><p>One file, with the WebView2 runtime included. Nothing else to install.</p></li>
+          <li data-reveal><span class="n">2</span><h3>Run it</h3><p>It installs for your Windows user and adds a Start menu shortcut. Upgrades keep your settings, chats and sign-in.</p></li>
+          <li data-reveal><span class="n">3</span><h3>Press <kbd>Alt</kbd> <kbd>Q</kbd></h3><p>Sign in from Settings or the tray icon and you&rsquo;re set. Type <code>/keys</code> to see every shortcut.</p></li>
+        </ol>
+
+        <div class="dl-panel" data-reveal>
+          <div class="dl-info">
+            <h3>QChat for Windows</h3>
+            <p>Windows 11 or Windows 10 22H2 &middot; x64 &middot; <span data-release-line>Latest release</span></p>
           </div>
-          <div class="scene-card" aria-hidden="true">
-            <div class="scene-wall w-4"></div>
-            <div class="vig" data-w="720" data-h="500">
-              <div class="file" data-el="f1" style="left:112px;top:52px"><span class="file-img"></span><span>beach.jpg</span></div>
-              <div class="file" data-el="f2" style="left:112px;top:168px"><span class="file-pdf">PDF</span><span>itinerary.pdf</span></div>
-              <div class="drop-zone" data-el="zone"><span>Drop to attach</span></div>
-              <div class="att-chip glass" data-el="c1" style="left:152px;bottom:82px"><span class="thumb img"></span><span><strong>beach.jpg</strong><em>2.4 MB</em></span></div>
-              <div class="att-chip glass" data-el="c2" style="left:330px;bottom:82px"><span class="thumb pdf">PDF</span><span><strong>itinerary.pdf</strong><em>380 KB</em></span></div>
-              <div class="ghost" data-el="ghost"><span class="file-img" data-el="ghost-img"></span><span class="file-pdf" data-el="ghost-pdf">PDF</span></div>
-              <svg class="pointer" data-el="pointer"><use href="#g-pointer"/></svg>
-              <div class="qbar glass" data-el="bar" style="left:130px;bottom:30px;width:460px">
-                <span class="orb"></span>
-                <span class="qfield"><span class="ph">Ask anything &middot; / commands</span><span class="typed"></span><span class="caret"></span></span>
-                <span class="qtools"><span class="chip">Medium</span><span class="tool"><svg><use href="#g-clip"/></svg></span><span class="send"><svg><use href="#g-send"/></svg></span></span>
-              </div>
-            </div>
+          <div class="dl-actions">
+            <a class="btn btn-paper" href="/download" data-dl>
+              <svg class="ic" aria-hidden="true"><use href="#i-down"/></svg>
+              Download for Windows
+            </a>
+            <a class="link-arrow on-ink" href="https://github.com/Steez-47/qchat/releases">All files &amp; checksums <svg class="ic" aria-hidden="true"><use href="#i-arrow"/></svg></a>
           </div>
-        </div>
-      </section>
-
-      <!-- Scene 5: search every chat -->
-      <section class="scene" data-scene="search" aria-labelledby="sc-search">
-        <div class="scene-stage">
-          <div class="scene-copy">
-            <p class="step-num">History</p>
-            <h2 id="sc-search">Every chat, one search away.</h2>
-            <p><kbd>Ctrl</kbd><kbd>P</kbd> searches the chats on this PC, then every other chat on your account. Pick one and it opens with its whole conversation.</p>
-            <div class="scene-progress"><i></i></div>
-          </div>
-          <div class="scene-card" aria-hidden="true">
-            <div class="scene-wall w-5"></div>
-            <div class="vig" data-w="720" data-h="500">
-              <div class="keys keys-float" data-el="keys"><kbd>Ctrl</kbd><span>+</span><kbd>P</kbd></div>
-              <div class="qbubble user glass" data-el="user" style="right:130px">Plan three days in Kyoto for May</div>
-              <div class="qbubble reply glass" data-el="reply" style="left:130px;width:460px">
-                <p class="blk" data-kind="words"><strong>Day 1</strong> Higashiyama: Kiyomizu-dera in the morning, then wander down Sannenzaka to Gion for dinner.</p>
-              </div>
-              <div class="search glass" data-el="panel" style="left:130px;width:460px">
-                <div class="search-field"><svg><use href="#g-search"/></svg><span class="typed" data-el="q"></span><span class="caret"></span><span class="ph" data-el="q-ph">Search chats</span></div>
-                <p class="search-group" data-group="pc">On this PC</p>
-                <div class="search-item" data-match="Kyoto trip, 3 days"><span class="tab-logo gem"></span><span class="t">Kyoto trip, 3 days</span><em>2h</em></div>
-                <div class="search-item" data-match="Debounce search"><span class="tab-logo"></span><span class="t">Debounce search</span><em>5m</em></div>
-                <div class="search-item" data-match="Email regex"><span class="tab-logo"></span><span class="t">Email regex</span><em>1d</em></div>
-                <p class="search-group" data-group="acct">From your account</p>
-                <div class="search-item" data-match="Kyoto restaurants near Gion"><span class="tab-logo"></span><span class="t">Kyoto restaurants near Gion</span><em>3w</em></div>
-                <div class="search-item" data-match="Birthday ideas for Sam"><span class="tab-logo"></span><span class="t">Birthday ideas for Sam</span><em>1mo</em></div>
-              </div>
-              <div class="tabs" data-el="tabs" style="left:152px;bottom:74px;width:416px">
-                <div class="tabs-inner" style="transform:none">
-                  <span class="tab" data-el="tab-new"><span class="tab-logo gem"></span>Kyoto trip, 3 days</span>
-                  <span class="tab is-current" data-el="tab-cur"><span class="tab-logo"></span>Debounce search</span>
-                  <span class="tab"><span class="tab-logo"></span>Email regex<em>1d</em></span>
-                </div>
-              </div>
-              <div class="qbar glass" data-el="bar" style="left:130px;bottom:30px;width:460px">
-                <span class="orb"></span>
-                <span class="qfield"><span class="ph">Ask anything &middot; / commands</span><span class="caret"></span></span>
-                <span class="qtools"><span class="chip">Medium</span><span class="tool"><svg><use href="#g-clip"/></svg></span><span class="send"><svg><use href="#g-send"/></svg></span></span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-    </div>
-
-    <!-- =====================================================================
-         Details
-         ===================================================================== -->
-    <section class="section features" id="features">
-      <div class="section-head">
-        <p class="eyebrow" data-reveal>And the details</p>
-        <h2 data-split>Small on screen. Thorough underneath.</h2>
-      </div>
-      <ul class="feature-grid">
-        <li data-reveal style="--i:0">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M3.5 9.5h17"/></svg>
-          <h3>Real glass</h3>
-          <p>The desktop really is blurred behind it, and clicks pass straight through the empty space around the bar.</p>
-        </li>
-        <li data-reveal style="--i:1">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5.5l-3 13"/></svg>
-          <h3>Code and maths, rendered</h3>
-          <p>Highlighted code, typeset maths, tables and images, in the same calm bubbles. Hover a reply to copy or retry it.</p>
-        </li>
-        <li data-reveal style="--i:2">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke-dasharray="3 3"/><path d="M12 7.5V12l3 2"/></svg>
-          <h3>Temporary chats</h3>
-          <p><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>N</kbd> starts a chat that stays out of history. It waits for the provider to confirm before sending.</p>
-        </li>
-        <li data-reveal style="--i:3">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 5 6.5v5c0 4.3 2.9 7.6 7 9 4.1-1.4 7-4.7 7-9v-5z"/><path d="m9 12 2 2 4-4"/></svg>
-          <h3>Kept on your PC</h3>
-          <p>Up to 50 chats are saved locally, and unsent drafts survive a restart. Your sign-in stays saved too.</p>
-        </li>
-        <li data-reveal style="--i:4">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4.5 9.5 9 5"/><path d="M4.5 9.5H14a5.5 5.5 0 0 1 0 11h-3"/></svg>
-          <h3>Six-second undo</h3>
-          <p>Removing a chat, <code>/clear</code> and <code>/discard</code> can all be undone for six seconds.</p>
-        </li>
-        <li data-reveal style="--i:5">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5M9 13h6M9 16.5h4"/></svg>
-          <h3>Copy and export</h3>
-          <p><code>/copy</code> puts the conversation on your clipboard as Markdown. <code>/export</code> saves it to Downloads.</p>
-        </li>
-        <li data-reveal style="--i:6">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v8"/><path d="M7.5 6.5a7 7 0 1 0 9 0"/></svg>
-          <h3>Open at startup</h3>
-          <p>Starts quietly in the tray when you log in, so <kbd>Alt</kbd><kbd>Q</kbd> works from the first minute.</p>
-        </li>
-        <li data-reveal style="--i:7">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"/></svg>
-          <h3>Recovers by itself</h3>
-          <p>A dropped connection retries when the network returns, keeping your draft and files exactly as they were.</p>
-        </li>
-      </ul>
-    </section>
-
-    <section class="section keys-section" id="keys">
-      <div class="section-head">
-        <p class="eyebrow" data-reveal>Keyboard</p>
-        <h2 data-split>Your hands never leave the keys.</h2>
-      </div>
-      <dl class="shortcuts">
-        <div data-reveal style="--i:0"><dt><kbd>Alt</kbd><kbd>Q</kbd></dt><dd>Show or hide QChat</dd></div>
-        <div data-reveal style="--i:1"><dt><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Q</kbd></dt><dd>Ask about the selected text</dd></div>
-        <div data-reveal style="--i:2"><dt><kbd>Ctrl</kbd><kbd>K</kbd></dt><dd>Command menu</dd></div>
-        <div data-reveal style="--i:3"><dt><kbd>Ctrl</kbd><kbd>P</kbd></dt><dd>Search saved chats</dd></div>
-        <div data-reveal style="--i:4"><dt><kbd>Ctrl</kbd><kbd>F</kbd></dt><dd>Find in the conversation</dd></div>
-        <div data-reveal style="--i:5"><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>N</kbd></dt><dd>New temporary chat</dd></div>
-        <div data-reveal style="--i:6"><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>C</kbd></dt><dd>Copy the latest reply</dd></div>
-        <div data-reveal style="--i:7"><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>X</kbd></dt><dd>Copy the last code block</dd></div>
-      </dl>
-    </section>
-
-    <section class="section looks" id="looks">
-      <div class="looks-copy">
-        <p class="eyebrow" data-reveal>Make it yours</p>
-        <h2 data-split>Twenty looks, one material.</h2>
-        <p data-reveal>Pick a look, then tune glass opacity, density, font and motion in Settings. An optional guard keeps text at 4.5:1 contrast on any wallpaper.</p>
-        <div class="swatches" role="radiogroup" aria-label="Preview a look" id="swatches" data-reveal></div>
-      </div>
-      <div class="looks-preview" id="looks-preview" aria-hidden="true" data-reveal>
-        <div class="lp-wall"></div>
-        <div class="lp-stack">
-          <div class="lp-reply"><p>Sure. Here are three quick ideas for a rainy Sunday:</p><ol><li>Bake something new</li><li>Start a puzzle</li><li>Call someone you miss</li></ol></div>
-          <div class="lp-user">Ideas for a rainy Sunday?</div>
-          <div class="lp-bar"><span class="lp-orb"></span><span class="lp-ph">Ask anything</span><span class="lp-send"><svg><use href="#g-send"/></svg></span></div>
+          <p class="dl-note">The build isn&rsquo;t code-signed yet, so Windows may show a SmartScreen warning. Choose <strong>More info</strong>, then <strong>Run anyway</strong>. Every release lists SHA256 checksums you can check the file against.</p>
         </div>
       </div>
     </section>
 
-    <section class="section install" id="install">
-      <div class="section-head">
-        <p class="eyebrow" data-reveal>Install</p>
-        <h2 data-split>Up and running in a minute.</h2>
-      </div>
-      <ol class="steps">
-        <li data-reveal style="--i:0">
-          <span class="step-num">01</span>
-          <h3>Download the installer</h3>
-          <p>One file, with the WebView2 runtime included. Nothing else to install.</p>
-        </li>
-        <li data-reveal style="--i:1">
-          <span class="step-num">02</span>
-          <h3>Run it</h3>
-          <p>It installs for your Windows user and adds a Start menu shortcut. Upgrading keeps your settings, chats and sign-in.</p>
-        </li>
-        <li data-reveal style="--i:2">
-          <span class="step-num">03</span>
-          <h3>Press <kbd>Alt</kbd><kbd>Q</kbd></h3>
-          <p>Sign in from Settings or the tray icon, and you&rsquo;re set. Type <kbd>/keys</kbd> to see every shortcut.</p>
-        </li>
-      </ol>
-
-      <div class="download-card" data-reveal>
-        <div>
-          <h3>QChat for Windows</h3>
-          <p class="meta" data-release-detail>Windows 11 or Windows 10 22H2 &middot; x64</p>
+    <!-- ================================================================ FAQ -->
+    <section class="faq" id="faq">
+      <div class="wrap faq-grid">
+        <header>
+          <p class="eyebrow" data-reveal>Questions</p>
+          <h2 class="h-xl" data-split>Good to know.</h2>
+        </header>
+        <div class="faq-list" data-stagger>
+          <details data-reveal><summary>Do I need an API key?</summary><p>No. QChat uses the ChatGPT or Gemini account you sign in with, in a hidden window, so you get that account&rsquo;s models and history. Without signing in it chats as a ChatGPT guest.</p></details>
+          <details data-reveal><summary>What does it cost?</summary><p>QChat itself is free. Your ChatGPT or Gemini plan&rsquo;s own limits still apply, the same as on their websites.</p></details>
+          <details data-reveal><summary>Where are my chats stored?</summary><p>Your conversations live in your ChatGPT or Gemini account as usual. QChat also keeps up to 50 recent chats on this PC so they open instantly, and you can turn local history off. Temporary chats stay out of both.</p></details>
+          <details data-reveal><summary>Why does Windows warn me when I install it?</summary><p>The installer isn&rsquo;t code-signed yet. Choose <strong>More info</strong>, then <strong>Run anyway</strong>. Each release lists SHA256 checksums if you&rsquo;d like to verify the file first.</p></details>
+          <details data-reveal><summary>Is there a Mac or Linux version?</summary><p>Not yet. QChat runs on Windows 11 and Windows 10 22H2, x64.</p></details>
+          <details data-reveal><summary>Is QChat made by OpenAI or Google?</summary><p>No. It&rsquo;s an independent app and isn&rsquo;t affiliated with either.</p></details>
         </div>
-        <div class="cta-row">
-          <a class="btn btn-primary" href="/download" data-download><svg aria-hidden="true"><use href="#g-dl"/></svg>Download for Windows</a>
-          <a class="btn btn-ghost" href="https://github.com/Steez-47/qchat/releases/latest" rel="noopener" data-release-link>All files &amp; checksums</a>
-        </div>
-      </div>
-      <p class="fineprint" data-reveal>The build isn&rsquo;t code-signed yet, so Windows may show a SmartScreen warning. Choose <em>More info</em>, then <em>Run anyway</em>. Every release lists SHA256 checksums you can check the file against.</p>
-    </section>
-
-    <section class="section faq" id="faq">
-      <div class="section-head">
-        <p class="eyebrow" data-reveal>Questions</p>
-        <h2 data-split>Good to know.</h2>
-      </div>
-      <div class="faq-list">
-        <details data-reveal style="--i:0">
-          <summary>Do I need an API key?</summary>
-          <div><p>No. QChat uses the ChatGPT or Gemini account you sign in with, in a hidden window, so you get that account&rsquo;s models and history. Without signing in it chats as a ChatGPT guest.</p></div>
-        </details>
-        <details data-reveal style="--i:1">
-          <summary>What does it cost?</summary>
-          <div><p>QChat itself is free. Your ChatGPT or Gemini plan&rsquo;s own limits still apply, the same as on their websites.</p></div>
-        </details>
-        <details data-reveal style="--i:2">
-          <summary>Where are my chats stored?</summary>
-          <div><p>Your conversations live in your ChatGPT or Gemini account as usual. QChat also keeps up to 50 recent chats on this PC so they open instantly, and you can turn local history off. Temporary chats stay out of both.</p></div>
-        </details>
-        <details data-reveal style="--i:3">
-          <summary>Why does Windows warn me when I install it?</summary>
-          <div><p>The installer isn&rsquo;t code-signed yet. Choose <em>More info</em>, then <em>Run anyway</em>. Each release lists SHA256 checksums if you&rsquo;d like to verify the file first.</p></div>
-        </details>
-        <details data-reveal style="--i:4">
-          <summary>Is there a Mac or Linux version?</summary>
-          <div><p>Not yet. QChat runs on Windows 11 and Windows 10 22H2, x64.</p></div>
-        </details>
-        <details data-reveal style="--i:5">
-          <summary>Is QChat made by OpenAI or Google?</summary>
-          <div><p>No. It&rsquo;s an independent app and isn&rsquo;t affiliated with either.</p></div>
-        </details>
       </div>
     </section>
 
-    <!-- Closing: the CTA is a QChat bar. -->
-    <section class="finale" id="finale">
-      <div class="finale-glow" aria-hidden="true"></div>
-      <h2 data-split>Your next question is one keystroke away.</h2>
-      <a class="finale-bar glass" href="/download" data-download id="finale-bar">
-        <span class="orb"></span>
-        <span class="qfield"><span class="typed" id="finale-typed"></span><span class="caret"></span></span>
-        <span class="finale-send"><svg aria-hidden="true"><use href="#g-dl"/></svg></span>
-        <span class="sr-only">Download QChat for Windows</span>
-      </a>
-      <p class="meta" data-release-meta>Free &middot; Windows 10 22H2 &amp; 11 &middot; x64</p>
+    <!-- ================================================================ Final -->
+    <section class="final">
+      <div class="wrap">
+        <h2 class="display final-h" data-split>Your next question is one keystroke away.</h2>
+        <div class="cta-row" data-reveal>
+          <a class="btn btn-ink" href="/download" data-dl>
+            <svg class="ic" aria-hidden="true"><use href="#i-down"/></svg>
+            Download QChat
+          </a>
+          <span class="meta">Free &middot; Windows 10 22H2 &amp; 11 &middot; x64</span>
+        </div>
+      </div>
     </section>
   </main>
 
-  <footer class="footer">
-    <div class="brand">
-      <img src="/icon.svg" width="22" height="22" alt="">
-      <span>QChat</span>
+  <footer class="foot">
+    <div class="wrap foot-in">
+      <a class="brand" href="/"><img src="/icon.svg" width="22" height="22" alt=""><span>QChat</span></a>
+      <nav aria-label="Project">
+        <a href="https://github.com/Steez-47/qchat">GitHub</a>
+        <a href="https://github.com/Steez-47/qchat/releases">Releases</a>
+        <a href="https://github.com/Steez-47/qchat/blob/main/CHANGELOG.md">Changelog</a>
+      </nav>
+      <p>An independent app, not affiliated with OpenAI or Google.</p>
     </div>
-    <nav aria-label="Footer">
-      <a href="https://github.com/Steez-47/qchat" rel="noopener">GitHub</a>
-      <a href="https://github.com/Steez-47/qchat/releases" rel="noopener">Releases</a>
-      <a href="https://github.com/Steez-47/qchat/blob/main/CHANGELOG.md" rel="noopener">Changelog</a>
-    </nav>
-    <p>An independent app, not affiliated with OpenAI or Google.</p>
   </footer>
 </body>
 </html>
