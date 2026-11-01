@@ -5,6 +5,8 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 ## [Unreleased]
 
 ### Changed
+- Long replies stream far more smoothly. A long technical answer used to freeze the window for up to a second at a time as it grew; it now streams without a hitch and uses about a third of the processor time.
+- Scrolling a long History is lighter.
 - Smoother motion throughout. The picker, command menu, All chats, find and rename bars, the Latest chip, the thinking chip and Settings pages ease in; menus and notices fade out where they stood instead of vanishing, without ever delaying what you do next.
 - Picking a provider, mode or effort slides the selection across, and the picker eases to its new height when its list changes.
 - Copy buttons pop their check mark in and back.
@@ -12,6 +14,9 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ### Fixed
 - Reply text no longer shows through the picker and command menu.
+- Table columns aligned to the centre or right in a reply now line up that way.
+- Task lists show their checkboxes without a bullet beside them.
+- Keyboard shortcuts written as keys, like Ctrl + C, show as keys instead of plain text.
 
 ## [1.5.0] - 2026-11-01
 

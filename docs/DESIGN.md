@@ -40,7 +40,7 @@ One material everywhere. No neon, no marble, no competing highlights.
 
 ## Type
 
-Segoe UI Variable. Body 15/1.65 in replies, measure capped at 72ch; the bar uses the same size at 1.45. Secondary text `--text-2` at .86 alpha, tertiary `--text-3` at .72. Reply headings keep a clear hierarchy without rules or extra colour: h1 1.45em, h2 1.25em, h3 1.08em semibold. Inline code is the text colour on a quiet fill; accent stays on links and list markers. Code is Cascadia. Numerals in timestamps are tabular.
+Segoe UI Variable. Body 15/1.65 in replies, measure capped at 72ch; the bar uses the same size at 1.45. Secondary text `--text-2` at .86 alpha, tertiary `--text-3` at .72. Reply headings keep a clear hierarchy without rules or extra colour: h1 1.45em, h2 1.25em, h3 1.08em semibold. Inline code is the text colour on a quiet fill; accent stays on links and list markers. Code is Cascadia. Numerals in timestamps are tabular. Table columns keep their Markdown alignment, so figures line up on the right. Task lists show a checkbox in the bullet's place, and keyboard keys are small keycaps.
 
 ## Motion
 

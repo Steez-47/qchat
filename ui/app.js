@@ -743,9 +743,12 @@
       if (item.role === "assistant" && item.stopped) {
         if (!stoppedNote) row.append(make("div", "turn-note", "Stopped"));
       } else if (stoppedNote) stoppedNote.remove();
-      // Completed messages are immutable during a stream; avoid reparsing them.
-      const fingerprint = JSON.stringify([item.text, item.selectionTexts, item.hasMedia, item.media, item.sources, item.stopped]);
-      if (row._historyFingerprint === fingerprint) continue;
+      // Completed messages are immutable during a stream; avoid reparsing them. This runs every
+      // streamed frame while history is open, so the text, the bulk of it, is compared as is
+      // (usually the very same string) instead of being serialised again for every message.
+      const fingerprint = JSON.stringify([item.selectionTexts, item.hasMedia, item.media, item.sources, item.stopped]);
+      if (row._historyText === item.text && row._historyFingerprint === fingerprint) continue;
+      row._historyText = item.text;
       row._historyFingerprint = fingerprint;
       row._copyText = item.text;
       row._userTurn = item.role === "user" ? item : null;

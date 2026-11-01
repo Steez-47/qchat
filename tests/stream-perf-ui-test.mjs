@@ -133,6 +133,21 @@ try {
   check('the same text in another language is highlighted for that language', await evalJS(`(()=>{const a=document.createElement('code'),b=document.createElement('code');QHighlight.highlightInto(a,'def f(): return 1','py');QHighlight.highlightInto(b,'def f(): return 1','text');return a.querySelector('.tok-keyword')&&!b.querySelector('span')})()`));
   check('the final reply keeps every word', await evalJS(`document.querySelector('[data-role=assistant] .turn-content').textContent.includes('Same block again')`));
 
+  // Surfaces keep their candidate list between frames; structure changes must still show up at once.
+  await open('/?mock=1', { settings: { animations: 'off', autoDismiss: 0, idleCollapse: 0 } });
+  await sleep(300);
+  const covers = (sel) => `(()=>{const n=document.querySelector(${JSON.stringify(sel)});if(!n)return false;const r=n.getBoundingClientRect();return (__mock.last('surfaces_set')?.args.rects||[]).some(s=>s.x<=r.left+1&&s.y<=r.top+1&&s.x+s.w>=r.right-1&&s.y+s.h>=r.bottom-1)})()`;
+  await evalJS(`document.getElementById('btn-reasoning').click()`);
+  check('an opened picker becomes a surface within a frame or two', await waitFor(covers('#picker'), 200));
+  const pickerBox = await evalJS(`(()=>{const r=document.getElementById('picker').getBoundingClientRect();return [r.left,r.top,r.right,r.bottom]})()`);
+  await key('Escape');
+  check('a closed picker stops being a surface', await waitFor(`!(__mock.last('surfaces_set')?.args.rects||[]).some(s=>s.x<=${pickerBox[0]}+1&&s.y<=${pickerBox[1]}+1&&s.x+s.w>=${pickerBox[2]}-1&&s.y+s.h>=${pickerBox[3]}-1)`, 200));
+  await evalJS(`(()=>{const d=document.createElement('div');d.id='late-glass';d.className='glass';d.style.cssText='position:fixed;left:20px;top:20px;width:60px;height:40px';document.body.append(d)})()`);
+  check('a glass object added later becomes a surface', await waitFor(covers('#late-glass'), 200));
+  await evalJS(`document.getElementById('late-glass').classList.remove('glass')`);
+  check('losing its glass class drops it again', await waitFor(`!${covers('#late-glass')}`, 200));
+  await evalJS(`document.getElementById('late-glass').remove()`);
+
   check('no runtime errors',problems.length===0,problems.join(' | '));
 } catch (e) {
   console.error(e); failed++;
