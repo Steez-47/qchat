@@ -451,3 +451,11 @@ html[data-motion="off"] .fine-tune > summary::before { transition: none; }
 
 .sheet:focus-visible { outline: none; }
 [hidden] { display: none !important; }
+
+/* A page settles in when it is picked, and a Fine-tune group when it opens. Opacity and a
+   few pixels of rise only, so nothing reflows. Searching shows pages without motion. */
+@keyframes page-in { from { opacity: 0; transform: translateY(6px); } }
+.section-scroll:not([data-searching]) .section:not([data-off-page]) { animation: page-in var(--t2) var(--ease-out) both; }
+.section-scroll:not([data-searching]) .fine-tune[open] > .group { animation: page-in var(--t2) var(--ease-out) both; }
+html[data-motion="off"] .section-scroll .section,
+html[data-motion="off"] .section-scroll .fine-tune > .group { animation: none !important; }

@@ -86,12 +86,18 @@ html[data-mode="light"] {
   padding: 8px;
   border-radius: 16px;
   transform-origin: 100% 100%;
-  animation: picker-in 140ms var(--ease-out);
+  animation: picker-in var(--t2) var(--ease-out) both;
 }
-@keyframes picker-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes picker-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } }
 html[data-motion="off"] .picker { animation: none; }
 
-.picker-seg { display: flex; gap: 2px; }
+.picker-seg { position: relative; display: flex; gap: 2px; }
+.picker-effort-seg { position: relative; }
+.picker-seg-btn, .picker-effort-seg button { position: relative; z-index: 1; }
+/* A changed choice's fill slides over from the old one (app.js, smoothPicker). */
+.picker-pill { position: absolute; z-index: 0; border-radius: 8px; background: var(--fill-2); pointer-events: none; }
+.picker-effort-seg .picker-pill { border-radius: 6px; }
+.picker [data-sliding] > [aria-checked="true"] { background: transparent; }
 .picker-seg-btn {
   flex: 1 1 0;
   min-width: 0;
@@ -1149,14 +1155,14 @@ html[data-collapse][data-orbstyle="hidden"] .orb { width: 18px; margin: calc((va
   position: absolute; bottom: calc(100% + var(--stack-gap)); left: 0;
   display: flex; align-items: center; gap: 2px; padding: 3px;
   border-radius: var(--r-chip); white-space: nowrap; pointer-events: auto;
-  animation: update-chip-in var(--t2) var(--ease-out);
+  transform-origin: 0 100%;
+  animation: menu-in var(--t2) var(--ease-out) both;
 }
 .update-chip[hidden] { display: none; }
 .stack[data-update-chip] .tabs { visibility: hidden; }
 .update-chip .btn { display: inline-flex; align-items: center; min-height: 28px; }
 .update-chip .icon-btn { width: 28px; height: 28px; }
 .update-chip .icon-btn[hidden] { display: none; }
-@keyframes update-chip-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .update-chip { animation: none; } }
 
 /* ---------------------------------------------------------------------------
@@ -1233,3 +1239,25 @@ html[data-orb-task="attention"] .orb-badge { background: var(--attention-badge);
 @keyframes orb-badge-in { from { opacity: 0; transform: scale(.6); } }
 html[data-motion="off"] .orb-badge { animation: none; }
 @media (prefers-reduced-motion: reduce) { .orb-badge { animation: none; } }
+
+/* ---------------------------------------------------------------------------
+   Small entrances. Popovers and chips that open over the stack rise a few pixels
+   out of the bar as they fade in; closing ones leave as an inert ghost (app.js,
+   leaveAsGhost) so state changes at once. Transform and opacity only, ease-out,
+   never on hover or press.
+   --------------------------------------------------------------------------- */
+@keyframes menu-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } }
+@keyframes chip-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes jump-in { from { opacity: 0; transform: translate(-50%, 6px) scale(0.96); } }
+@keyframes thinking-in { from { opacity: 0; transform: translateY(3px) scale(0.9); } }
+.slash-menu { animation: menu-in var(--t2) var(--ease-out) both; }
+.feature-list:not([data-leaving]) { transform-origin: 50% 100%; animation: menu-in var(--t2) var(--ease-out) both; }
+.jump-chip { animation: jump-in var(--t2) var(--ease-out) both; }
+.find-bar, .rename-bar, .mode-chip { animation: chip-in var(--t2) var(--ease-out) both; }
+.thinking { transform-origin: 0 100%; animation: thinking-in var(--t2) var(--ease-out) both; }
+[data-ghost] { pointer-events: none; }
+/* Popovers open over the conversation, which the native blur never reaches: like the
+   Latest chip and the reply tools, they turn near-solid so reply text cannot show through. */
+.picker, .slash-menu, .update-chip { --fill-alpha: max(var(--glass-a), 0.94); }
+html[data-motion="off"] :is(.slash-menu, .feature-list, .update-chip, .jump-chip, .find-bar, .rename-bar, .mode-chip, .thinking) { animation: none !important; }
+html[data-motion="off"] [data-ghost] { display: none; }

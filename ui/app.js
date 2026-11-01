@@ -29,6 +29,47 @@
     return cancel;
   }
 
+  // A closing popover leaves as a ghost. The real node hides at once, so focus, state and
+  // hit-testing change immediately, and an inert copy fades out where it stood. The ghost
+  // takes no pointer events, so it also drops out of the click-through and blur surfaces.
+  // Call this before the node is hidden or emptied. Absolutely positioned nodes only: an
+  // in-flow copy would push the stack around while it fades.
+  const LEAVE_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+  const ghosts = new WeakMap();
+  function dropGhost(node) {
+    const ghost = ghosts.get(node);
+    if (!ghost) return;
+    ghosts.delete(node);
+    ghost.getAnimations().forEach((a) => a.cancel());
+    ghost.remove();
+  }
+  function leaveAsGhost(node, transform = "translateY(4px) scale(0.98)") {
+    // Already closed: a repeated close leaves the ghost of the first one fading.
+    if (node.hidden) return;
+    dropGhost(node);
+    if (!QSettings.motionOn || !node.isConnected || !node.getClientRects().length) return;
+    const ghost = node.cloneNode(true);
+    for (const n of [ghost, ...ghost.querySelectorAll("[id]")]) n.removeAttribute("id");
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.removeAttribute("role");
+    ghost.inert = true;
+    ghost.dataset.ghost = "";
+    ghost.style.pointerEvents = "none";
+    ghost.style.animation = "none";
+    node.after(ghost);
+    ghost.scrollTop = node.scrollTop;
+    ghosts.set(node, ghost);
+    const base = getComputedStyle(node).transform;
+    const from = base === "none" ? "none" : base;
+    const to = base === "none" ? transform : `${base} ${transform}`;
+    const animation = ghost.animate(
+      [{ opacity: 1, transform: from }, { opacity: 0, transform: to }],
+      { duration: Math.max(1, Math.round(QSettings.timings.t1 * 1.1)), easing: LEAVE_EASE, fill: "forwards" }
+    );
+    const done = () => { if (ghosts.get(node) === ghost) ghosts.delete(node); ghost.remove(); };
+    animation.finished.then(done, done);
+  }
+
   // ---------------------------------------------------------------------------
   // 1. Theme
   // ---------------------------------------------------------------------------
@@ -1836,7 +1877,11 @@
   function syncScrollState(entry) {
     const { scroller, row, jump } = entry;
     const capped = row.hasAttribute("data-capped");
-    jump.hidden = !capped || scrollGap(scroller) <= 2 || (!userScrolledUp && QSettings.settings.followStream !== false);
+    const hide = !capped || scrollGap(scroller) <= 2 || (!userScrolledUp && QSettings.settings.followStream !== false);
+    if (hide !== jump.hidden) {
+      if (hide) leaveAsGhost(jump, "translateY(6px) scale(0.96)"); else dropGhost(jump);
+      jump.hidden = hide;
+    }
     scroller.toggleAttribute("data-above", capped && scroller.scrollTop > 2);
     scroller.toggleAttribute("data-below", capped && scrollGap(scroller) > 2);
   }
@@ -2061,6 +2106,7 @@
     jump.append(makeIcon(GLYPH.down), document.createTextNode("Latest"));
     jump.addEventListener("click", () => {
       userScrolledUp = false;
+      leaveAsGhost(jump, "translateY(6px) scale(0.96)");
       jump.hidden = true;
       scroller.scrollTop = scroller.scrollHeight;
       const entry = turnNodes.get(turn.id);
@@ -3093,6 +3139,7 @@
     closeSlashMenu();
     hideClearConfirm();
     pickerOpen = true;
+    dropGhost(el.picker);
     el.picker.hidden = false;
     el.btnReasoning.setAttribute("aria-expanded", "true");
     renderPicker();
@@ -3107,6 +3154,7 @@
     if (!pickerOpen) return;
     pickerOpen = false;
     cancelModelRequest();
+    leaveAsGhost(el.picker);
     el.picker.hidden = true;
     el.picker.replaceChildren();
     el.btnReasoning.setAttribute("aria-expanded", "false");
@@ -3491,10 +3539,61 @@
     return group;
   }
 
+  // Where each segmented control's selection sat before a re-render, relative to its group.
+  function segmentSelections() {
+    const spots = new Map();
+    for (const group of el.picker.querySelectorAll('[role="radiogroup"]')) {
+      const on = group.querySelector('[aria-checked="true"]');
+      if (!on) continue;
+      const box = group.getBoundingClientRect(), b = on.getBoundingClientRect();
+      spots.set(group.getAttribute("aria-label"), { x: b.left - box.left, w: b.width });
+    }
+    return spots;
+  }
+
+  // After a re-render, a changed choice slides its pill across from the old one, and the
+  // popover eases to its new height instead of snapping. Both are small and absolutely
+  // placed, so the stack never reflows.
+  function smoothPicker(spots, oldHeight) {
+    if (!QSettings.motionOn) return;
+    const duration = Math.max(1, QSettings.timings.t2);
+    for (const group of el.picker.querySelectorAll('[role="radiogroup"]')) {
+      const from = spots.get(group.getAttribute("aria-label"));
+      const on = group.querySelector('[aria-checked="true"]');
+      if (!from || !on) continue;
+      const box = group.getBoundingClientRect(), b = on.getBoundingClientRect();
+      const to = { x: b.left - box.left, w: b.width };
+      if (Math.abs(from.x - to.x) < 1 && Math.abs(from.w - to.w) < 1) continue;
+      const pill = make("span", "picker-pill");
+      pill.setAttribute("aria-hidden", "true");
+      pill.style.top = `${b.top - box.top}px`;
+      pill.style.height = `${b.height}px`;
+      group.prepend(pill);
+      group.dataset.sliding = "";
+      const slide = pill.animate(
+        [{ left: `${from.x}px`, width: `${from.w}px` }, { left: `${to.x}px`, width: `${to.w}px` }],
+        { duration, easing: LEAVE_EASE, fill: "forwards" }
+      );
+      const done = () => { pill.remove(); delete group.dataset.sliding; };
+      slide.finished.then(done, done);
+    }
+    const height = el.picker.getBoundingClientRect().height;
+    if (oldHeight && Math.abs(height - oldHeight) > 1) {
+      el.picker.animate(
+        [{ height: `${oldHeight}px`, overflowY: "hidden" }, { height: `${height}px`, overflowY: "hidden" }],
+        { duration, easing: LEAVE_EASE }
+      );
+    }
+  }
+
   function renderPicker() {
     if (!pickerOpen) return;
     const focusedKey = el.picker.contains(document.activeElement) ? document.activeElement.dataset.pickerKey : null;
     const scroll = el.picker.scrollTop;
+    const spots = segmentSelections();
+    // Only a picker already on screen eases its height; the first render rises in instead.
+    const oldHeight = el.picker.childElementCount ? el.picker.getBoundingClientRect().height : 0;
+    el.picker.getAnimations().forEach((a) => { if (!a.animationName) a.cancel(); });
     const provider = activeProvider;
     const mode = effectiveMode();
     const temporary = Boolean(chats.current.temporary);
@@ -3569,6 +3668,7 @@
       if (next && !next.disabled) pickerFocus(next);
     }
     el.picker.scrollTop = scroll;
+    smoothPicker(spots, oldHeight);
   }
 
   document.addEventListener("pointerdown", (event) => {
@@ -3757,6 +3857,7 @@
 
   function closeSlashMenu() {
     commandMenu = false;
+    leaveAsGhost(el.slashMenu);
     el.slashMenu.hidden = true;
     el.slashMenu.replaceChildren();
     slashMatches = [];
@@ -3796,6 +3897,7 @@
       item.addEventListener("mousedown", (e) => { e.preventDefault(); runCommand(cmd); });
       return item;
     }));
+    if (!wasOpen) dropGhost(el.slashMenu);
     el.slashMenu.hidden = false;
     el.promptInput.setAttribute("aria-expanded", "true");
     paintSlashSelection();
@@ -4290,15 +4392,27 @@
       buttonEl._prevTitle = buttonEl.title;
       if (label) buttonEl._prevLabel = label.textContent;
     }
-    if (icon) icon.textContent = GLYPH.check;
+    if (icon) { icon.textContent = GLYPH.check; popIcon(icon); }
     if (label) label.textContent = "Copied";
     buttonEl.title = "Copied";
     buttonEl._copyTimer = setTimeout(() => {
       buttonEl._copyTimer = null;
-      if (icon) icon.textContent = GLYPH.copy;
+      if (icon) { icon.textContent = GLYPH.copy; popIcon(icon, 0.8); }
       if (label) label.textContent = buttonEl._prevLabel;
       buttonEl.title = buttonEl._prevTitle;
     }, 1200);
+    return true;
+  }
+
+  // A glyph that just changed meaning (copy to check and back) settles in from a little
+  // smaller. The icon is a few pixels wide, so it scales on its own small layer.
+  function popIcon(icon, from = 0.6) {
+    if (!QSettings.motionOn || !icon.animate) return;
+    icon.getAnimations().forEach((a) => a.cancel());
+    icon.animate(
+      [{ opacity: 0.35, transform: `scale(${from})` }, { opacity: 1, transform: "none" }],
+      { duration: Math.max(1, QSettings.timings.t2), easing: LEAVE_EASE }
+    );
   }
 
   // ---------------------------------------------------------------------------
