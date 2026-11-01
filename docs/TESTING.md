@@ -41,7 +41,7 @@ Highlights:
 - `node tests/gemini-bridge-test.mjs`: Gemini sending, streaming and Markdown conversion on synthetic pages.
 - `node tests/provider-ui-test.mjs`: provider picker, switching, per-chat providers and startup settings.
 - `node tests/picker-ui-test.mjs`: the compact picker's rows, modes, keyboard use, dismissal and layout stability.
-- `node tests/popover-motion-ui-test.mjs`: popover and chip entrances, ghost exits that never delay state, copy feedback, Settings page motion and motion off.
+- `node tests/popover-motion-ui-test.mjs`: popover, chip and notice entrances, ghost exits that never delay state (including while the bar folds), copy feedback, Settings page motion and motion off.
 - `node tests/orb-task-ui-test.mjs`: minimizing during a reply, and the orb's working, ready and attention states.
 - `node tests/mode-bridge-test.mjs`: Work and Task detection, switching and safe refusal on synthetic pages.
 

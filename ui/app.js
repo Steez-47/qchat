@@ -32,9 +32,12 @@
   // A closing popover leaves as a ghost. The real node hides at once, so focus, state and
   // hit-testing change immediately, and an inert copy fades out where it stood. The ghost
   // takes no pointer events, so it also drops out of the click-through and blur surfaces.
-  // Call this before the node is hidden or emptied. Absolutely positioned nodes only: an
-  // in-flow copy would push the stack around while it fades.
+  // Call this before the node is hidden or emptied. An in-flow node's copy is pinned by its
+  // bottom edge, because the stack grows up from the bar: the copy stays where the node was
+  // while the layout settles at once, as leaving bubbles do.
   const LEAVE_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+  // Notices sink a little toward the bar they came out of.
+  const NOTICE_LEAVE = "translateY(6px) scale(0.98)";
   const ghosts = new WeakMap();
   function dropGhost(node) {
     const ghost = ghosts.get(node);
@@ -56,6 +59,16 @@
     ghost.dataset.ghost = "";
     ghost.style.pointerEvents = "none";
     ghost.style.animation = "none";
+    if (!/absolute|fixed/.test(getComputedStyle(node).position)) {
+      const parent = node.offsetParent;
+      if (!parent || node.parentElement !== parent) return;
+      Object.assign(ghost.style, {
+        position: "absolute", top: "auto", margin: "0",
+        // The used width, unrounded and untransformed: a rounded one can rewrap the text.
+        left: `${node.offsetLeft}px`, width: getComputedStyle(node).width,
+        bottom: `${parent.clientHeight - node.offsetTop - node.offsetHeight}px`
+      });
+    }
     node.after(ghost);
     ghost.scrollTop = node.scrollTop;
     ghosts.set(node, ghost);
@@ -3920,6 +3933,7 @@
     if (["ArrowLeft", "ArrowRight"].includes(e.key)) { e.preventDefault(); (document.activeElement === el.btnClearYes ? el.btnClearNo : el.btnClearYes).focus(); }
   });
   function showClearConfirm() {
+    dropGhost(el.clearConfirm);
     el.clearConfirm.hidden = false;
     syncMenuFlag();
     queueSizes();
@@ -3928,6 +3942,7 @@
 
   function hideClearConfirm() {
     if (el.clearConfirm.hidden) return;
+    leaveAsGhost(el.clearConfirm, NOTICE_LEAVE);
     el.clearConfirm.hidden = true;
     syncMenuFlag();
     queueSizes();
@@ -4010,7 +4025,11 @@
       el.guestTitle.textContent = "Guest mode";
       el.guestMessage.textContent = "Sign in to use your models and history.";
     }
-    if (el.guestNotice.hidden === show) { el.guestNotice.hidden = !show; queueSizes(); }
+    if (el.guestNotice.hidden === show) {
+      if (show) dropGhost(el.guestNotice); else leaveAsGhost(el.guestNotice, NOTICE_LEAVE);
+      el.guestNotice.hidden = !show;
+      queueSizes();
+    }
   }
 
   function updateIdleChips() {
@@ -4027,6 +4046,7 @@
     el.btnErrorSignin.textContent = retry ? "Try again" : "Sign in";
     el.btnErrorSignin.dataset.action = retry ? "retry-connect" : "signin";
     connectErrorShown = retry;
+    dropGhost(el.globalError);
     el.globalError.hidden = false;
     setStatusError();
     queueSizes();
@@ -4035,6 +4055,7 @@
   function hideGlobalError() {
     if (el.globalError.hidden) return;
     globalErrorRevision++;
+    leaveAsGhost(el.globalError, NOTICE_LEAVE);
     el.globalError.hidden = true;
     el.globalErrorText.textContent = "";
     el.btnErrorSignin.hidden = true;
@@ -4125,6 +4146,7 @@
     clearTimeout(undoExpiryTimer);
     pendingChatUndo = pendingChatUndo.filter(item => item.expires > Date.now());
     if (!pendingChatUndo.length) {
+      leaveAsGhost(commandFeedback, NOTICE_LEAVE);
       commandFeedback.hidden = true;
     } else {
       const latest = pendingChatUndo[pendingChatUndo.length - 1];
@@ -4133,6 +4155,7 @@
       button.type = "button";
       button.addEventListener("click", () => void undoChatChange());
       commandFeedback.append(button);
+      dropGhost(commandFeedback);
       commandFeedback.hidden = false;
       undoExpiryTimer = setTimeout(() => paintChatUndo(), Math.max(1, Math.min(...pendingChatUndo.map(item => item.expires)) - Date.now()));
     }
@@ -4258,6 +4281,7 @@
     copyGeneration++;
     clearTimeout(commandFeedbackTimer);
     if (pendingChatUndo.length) { paintChatUndo(); return; }
+    leaveAsGhost(commandFeedback, NOTICE_LEAVE);
     commandFeedback.hidden = true;
     syncMenuFlag();
     queueSizes();
@@ -4270,6 +4294,7 @@
       return;
     }
     commandFeedback.textContent = message;
+    dropGhost(commandFeedback);
     commandFeedback.hidden = false;
     syncMenuFlag();
     queueSizes();

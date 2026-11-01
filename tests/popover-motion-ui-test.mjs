@@ -122,6 +122,25 @@ try {
   await key('Escape');
   await sleep(await leaveMs() + 120);
 
+  // Notices leave in place: the copy is pinned where the notice stood while layout settles.
+  await evalJS(`document.getAnimations().forEach(a=>a.finish())`);
+  const noticeBox = await evalJS(`(()=>{const r=document.getElementById('guest-notice').getBoundingClientRect();return [r.left,r.top,r.width,r.height]})()`);
+  await evalJS(`document.getElementById('btn-guest-dismiss').click()`);
+  check('dismissing the guest notice hides it at once', await evalJS(`document.getElementById('guest-notice').hidden`));
+  check('its copy fades exactly where it stood', await evalJS(`(()=>{const g=document.querySelector('[data-ghost].notice');if(!g)return false;g.getAnimations().forEach(a=>{a.pause();a.currentTime=0});const r=g.getBoundingClientRect(),b=${JSON.stringify(noticeBox)};const ok=getComputedStyle(g).position==='absolute'&&Math.abs(r.left-b[0])<1&&Math.abs(r.top-b[1])<1&&Math.abs(r.width-b[2])<1&&Math.abs(r.height-b[3])<1;g.getAnimations().forEach(a=>a.play());return ok})()`));
+  await sleep(await leaveMs() + 120);
+  check('the notice copy is cleaned up', await ghosts() === 0);
+  await evalJS(`__mock.emit('bridge',{type:'error',code:'network',message:'First problem'})`);
+  if (await waitFor(`!document.getElementById('global-error').hidden`, 2000)) {
+    await evalJS(`document.getElementById('btn-error-dismiss').click()`);
+    check('a dismissed error leaves as a copy that keeps its text', await evalJS(`document.getElementById('global-error').hidden&&document.querySelector('[data-ghost].notice-error')?.textContent.includes('First problem')&&!document.getElementById('global-error-text').textContent`));
+    await evalJS(`__mock.emit('bridge',{type:'error',code:'network',message:'Second problem'})`);
+    await waitFor(`!document.getElementById('global-error').hidden`, 2000);
+    check('an error shown again drops the fading copy at once', await evalJS(`!document.querySelector('[data-ghost].notice-error')`));
+    await evalJS(`document.getElementById('btn-error-dismiss').click()`);
+    await sleep(await leaveMs() + 120);
+  }
+
   // A changed segment slides its fill across; the picker eases to a new height.
   await evalJS(`document.getElementById('btn-reasoning').click()`);
   await waitFor(`document.querySelector('[data-picker-key="effort:high"]')`);
@@ -174,6 +193,18 @@ try {
 
   await evalJS(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true}))`);
   if (await waitFor(`document.querySelector('.find-bar:not([hidden])')`, 1500)) check('find bar rises in', await anim('.find-bar:not([hidden])') === 'chip-in');
+
+  // A notice fading out as the bar folds is left to finish on its own.
+  await open('/?mock=1', { settings: { animations: 'on' } });
+  await waitFor(`!document.getElementById('guest-notice').hidden`, 3000);
+  await evalJS(`document.getElementById('btn-guest-dismiss').click()`);
+  const orb = await evalJS(`(()=>{const r=document.getElementById('orb').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()`);
+  for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await cdp('Input.dispatchMouseEvent', { type, x: orb[0], y: orb[1], button: type === 'mouseMoved' ? 'none' : 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: type === 'mouseMoved' ? 0 : 1 });
+  if (await waitFor(`document.documentElement.dataset.collapse`, 1500)) {
+    check('folding leaves a fading notice copy alone', await evalJS(`(()=>{const g=document.querySelector('[data-ghost].notice');return !g||g.getAnimations().length===1})()`));
+    check('the bar still folds into its orb', await waitFor(`document.documentElement.dataset.collapse==='closed'`, 3000));
+    check('no copy outlives the fold', await ghosts() === 0);
+  } else check('orb click folds the bar', false);
 
   // --- Motion off --------------------------------------------------------------
   await open('/?mock=1', { settings: { animations: 'off' } });
