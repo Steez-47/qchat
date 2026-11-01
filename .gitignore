@@ -16,3 +16,6 @@ src-tauri/resources/THIRD-PARTY-NOTICES.txt
 Thumbs.db
 .vscode/
 .idea/
+
+# Vercel
+.vercel/

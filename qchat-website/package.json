@@ -1,0 +1,12 @@
+{
+  "name": "qchat-website",
+  "private": true,
+  "type": "module",
+  "description": "Landing page for QChat, deployed on Vercel.",
+  "scripts": {
+    "dev": "node dev-server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
