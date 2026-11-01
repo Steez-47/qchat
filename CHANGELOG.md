@@ -4,6 +4,8 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-02
+
 ### Changed
 - Long replies stream far more smoothly. A long technical answer used to freeze the window for up to a second at a time as it grew; it now streams without a hitch and uses about a third of the processor time.
 - A long History opens at once with its newest messages and fills in the rest, and scrolling it is lighter.
@@ -151,6 +153,7 @@ First beta: Snapshot attachments, per-chat reasoning, file attachments and media
 [0.1.2]: https://github.com/Steez-47/qchat/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Steez-47/qchat/releases/tag/v0.1.1
 
+[1.5.1]: https://github.com/Steez-47/qchat/releases/tag/v1.5.1
 [1.5.0]: https://github.com/Steez-47/qchat/releases/tag/v1.5.0
 [1.4.2]: https://github.com/Steez-47/qchat/releases/tag/v1.4.2
 [1.4.1]: https://github.com/Steez-47/qchat/releases/tag/v1.4.1
