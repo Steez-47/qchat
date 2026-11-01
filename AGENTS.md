@@ -1,30 +1,13 @@
 # Agent instructions
 
-This project uses a multi-model hierarchy in T3 Code. One **orchestrator** thread plans and verifies; cheaper **worker** models do most of the hands-on work.
+QChat is a Windows desktop app (Tauri 2 + vanilla JS) that puts ChatGPT and Gemini in a small glass bar. The landing page lives in `qchat-website/`.
 
-## Which one are you?
+The user talks to one model at a time and tells it what to do. There is no orchestrator, worker hierarchy or delegation setup in this project. Don't create one, and don't add or restore `.agents/` planning or ledger files.
 
-- **Worker**: you were started by `delegate_task` or a native subagent call, and your prompt is a task brief. Follow "Worker rules" below and ignore the rest of the hierarchy docs.
-- **Orchestrator**: the user is talking to you directly in a top-level thread. Read `.agents/ORCHESTRATOR.md` now and follow it for the whole project. It overrides any generic model-routing guidance in your global instructions for this project.
+## Working here
 
-## Worker rules
-
-1. Do exactly the briefed task. Stay inside the files the brief says you own; touch nothing else.
-2. Do not start subagents, delegate, or open new threads.
-3. Follow the project's existing conventions (read neighbouring code before writing).
-4. Run the acceptance check named in the brief. If it fails, fix the cause and rerun it. Do not weaken or delete tests to make them pass.
-5. If the brief is ambiguous or the task is harder than described, stop and report the gap. Do not guess at architecture.
-6. Never put secrets, API keys or `.env` contents into code, logs or your reply.
-7. End with a short report in this shape:
-
-```
-STATUS: done | partial | blocked
-CHANGED: <file list>
-CHECK: <command run> -> <pass/fail + key output line>
-NOTES: <anything the orchestrator must know, max 5 lines>
-```
-
-## Project state
-
-- Plan and task list: `.agents/PLAN.md` (orchestrator keeps it current).
-- Provider usage and rate-limit log: `.agents/LEDGER.md`.
+- Read neighbouring code before writing and follow its conventions.
+- `ui/` is the front end, `src-tauri/` the Rust side and the provider bridges, `tests/` the test suite, `tools/` build scripts.
+- Design rules for the app are in `docs/DESIGN.md`. Testing notes are in `docs/TESTING.md`.
+- Checks: `npm test` (JS suite) and `npm run test:rust`. Run what covers your change before you call it done. Don't weaken or delete tests to make them pass.
+- Never put secrets, API keys or `.env` contents into code, logs or replies.

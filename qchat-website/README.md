@@ -23,11 +23,9 @@ Serves `public/` and the `api/` handlers on http://localhost:3000 with no depend
 ```
 public/
   index.html     The page
-  styles.css     All styles. The demos' glass, geometry and timings follow docs/DESIGN.md
-  motion.js      Motion core: Lenis smooth scroll, the scrub engine, reveals, demo helpers
-  story.js       The hero scroll story (orb → bar → reply → tabs → fold)
-  scenes.js      The pinned feature tour: selected text, snapshots, commands, files, search
-  site.js        Release info, the look picker and the closing bar
+  styles.css     All styles. Paper and ink for the page; the demos use the app's glass from docs/DESIGN.md
+  main.js        Everything interactive: Lenis smooth scroll, demo canvas fitting, the pinned story,
+                 the feature tour, reveals, the look picker and live release info
   lenis.min.js   Lenis 1.3.26 smooth scrolling, vendored (MIT, see lenis.LICENSE.txt)
   icon.svg       Favicon (copy of assets/icon.svg)
   og.png         Share image
@@ -38,10 +36,17 @@ lib/release.js   GitHub latest-release lookup shared by both
 vercel.json      Output dir, the /download rewrite, caching and security headers
 ```
 
-The download buttons link to `/download`. Once `/api/release` answers, `site.js` swaps in the direct installer URL and shows the version and size. If GitHub can't be reached, `/download` falls back to the releases page, so the button always goes somewhere useful.
+The download buttons link to `/download`. Once `/api/release` answers, `main.js` swaps in the direct installer URL and shows the version and size. If GitHub can't be reached, `/download` falls back to the releases page, so the button always goes somewhere useful.
 
-Every demo frame is a pure function of scroll progress, so all of it scrubs backwards as well as forwards. `QS.scrub(section, { paint, measure })` in `motion.js` is the one engine behind the story and every scene; to add a scene, add a `<section class="scene" data-scene="name">` and a matching builder in `scenes.js`. With *reduce motion* on, smooth scrolling, zooms and parallax are off and reveals become plain fades.
+### Demos
 
-The look picker's colours are copied from `ui/settings-core.js`. Update `LOOKS` in `site.js` if those change.
+Every demo is laid out on a fixed-size canvas (`--cw` × `--ch` on its `.screen`) and scaled as a whole to fit, so nothing inside can reflow or spill out at odd widths. Phones get a narrower canvas with its own positions.
+
+- **Story** (`#story`): a tall section with a sticky stage. Scroll progress sets state classes on `#story-canvas` (`is-open`, `is-typing`, `is-sent`, `is-reply`, `is-tabs`, `is-fold`), and CSS transitions animate between them, so scrolling back reverses smoothly.
+- **Tour** (`#tour`): on wide screens the five `.layer`s share one sticky screen and the step nearest the middle of the viewport plays. Below 900px each layer moves into its own screen under its step. Each scene is a short CSS keyframe sequence started by `.play`.
+
+With *reduce motion* on, smooth scrolling is off and every sequence jumps to its end state.
+
+The look picker's colours are copied from `ui/settings-core.js`. Update `LOOKS` in `main.js` if those change.
 
 Once the site has a domain, make `og:image` in `index.html` an absolute URL (for example `https://qchat.example/og.png`). Some social networks ignore relative image URLs.
