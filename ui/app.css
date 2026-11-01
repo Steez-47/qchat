@@ -968,6 +968,8 @@ select.qinteractive-control option { background: #252b35; color: #eee; }
    hidden, they also drop out of hit-testing and the native blur.
    --------------------------------------------------------------------------- */
 html[data-collapse] .bar { overflow: clip; }
+/* The composer reserves the full width; its chosen edge stays fixed as the bar narrows. */
+html[data-collapse-anchor="right"] .bar { margin-left: auto; }
 html[data-collapse="closed"] .bar { width: var(--bar-h); height: var(--bar-h); min-height: 0; border-radius: 50%; cursor: pointer; }
 html[data-collapse="closed"] .bar > :not(.orb, .sr-only),
 html[data-collapse="closed"] .stack > :not(.composer) { visibility: hidden; opacity: 0; }

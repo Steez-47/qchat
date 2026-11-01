@@ -32,7 +32,10 @@
 
     function setState(next) {
       state = next;
-      if (next === "open") delete root.dataset.collapse;
+      if (next === "open") {
+        delete root.dataset.collapse;
+        delete root.dataset.collapseAnchor;
+      }
       else root.dataset.collapse = next;
     }
 
@@ -63,6 +66,10 @@
       clearTimeout(timer); timer = null;
       onCollapse?.();
       const from = bar.getBoundingClientRect();
+      // Screen coordinates share CSS pixels, including monitors left of the primary one.
+      // Choose once: dragging the folded orb or reversing a fold must keep the same edge.
+      const screenLeft = window.screen.availLeft || 0;
+      root.dataset.collapseAnchor = window.screenX + from.left + from.width / 2 >= screenLeft + window.screen.availWidth / 2 ? "right" : "left";
       const radius = style(bar).borderTopLeftRadius;
       const size = parseFloat(style(bar).minHeight) || from.height;
       const folding = parts(), inside = contents();

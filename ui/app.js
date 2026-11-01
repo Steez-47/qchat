@@ -4109,8 +4109,8 @@
     stack: el.stack, bar: el.bar, orb: el.orb,
     // Hide-on-blur already takes the window away, and a hidden window has nothing to fold.
     seconds: () => (QSettings.settings.hideOnBlur || windowHidden ? 0 : QSettings.settings.idleCollapse),
-    // The settings window previews on the live bar, so it never folds while that is open.
-    blocked: () => isBusy() || filePickerOpen || snapshotCapturing || settingsOpen || document.visibilityState === "hidden",
+    // Keep drafts visible, including whitespace; Settings also previews on the live bar.
+    blocked: () => el.promptInput.value.length > 0 || isBusy() || filePickerOpen || snapshotCapturing || settingsOpen || document.visibilityState === "hidden",
     motion: () => QSettings.motionOn,
     timings: () => QSettings.timings,
     drag: dragWindow,

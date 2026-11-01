@@ -95,6 +95,7 @@ try {
     await cdp('Page.bringToFront');
     // The page cannot lose real OS focus here, so focus is a flag the test flips.
     await evalJS(`window.__focused=true;document.hasFocus=()=>window.__focused;window.__drags=0;window.__TAURI__.window={getCurrentWindow:()=>({startDragging:async()=>{window.__drags++;}})}`);
+    await screenPosition(0);
     await mouse('mouseMoved', 4, 4);
     await sleep(60);
   };
@@ -102,7 +103,9 @@ try {
   const blur = () => evalJS(`window.__focused=false;window.dispatchEvent(new Event('blur'))`);
   const focus = () => evalJS(`window.__focused=true;window.dispatchEvent(new Event('focus'))`);
   const state = () => evalJS(`document.documentElement.dataset.collapse||'open'`);
-  const rect = (sel) => evalJS(`(()=>{const r=document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,cx:r.x+r.width/2,cy:r.y+r.height/2,bottom:r.bottom}})()`);
+  // CSS-pixel geometry, including monitors to the left of the primary screen.
+  const screenPosition = (x, left = 0, width = 1920) => evalJS(`Object.defineProperty(window,'screenX',{configurable:true,value:${x}});Object.defineProperty(screen,'availLeft',{configurable:true,value:${left}});Object.defineProperty(screen,'availWidth',{configurable:true,value:${width}})`);
+  const rect = (sel) => evalJS(`(()=>{const r=document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,cx:r.x+r.width/2,cy:r.y+r.height/2,right:r.right,bottom:r.bottom}})()`);
   const type = (text) => evalJS(`(()=>{const i=document.getElementById('prompt-input');i.value=${JSON.stringify(text)};i.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   const key = (k) => evalJS(`(()=>{const t=document.activeElement&&document.activeElement!==document.body?document.activeElement:document.getElementById('prompt-input');t.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(k)},bubbles:true,cancelable:true}));})()`);
   const send = async (text) => { await type(text); await key('Enter'); };
@@ -113,7 +116,7 @@ try {
   // Visible on screen, counting visibility and opacity, as the hit-test pass does.
   const shown = (sel) => evalJS(`(()=>{const n=document.querySelector(${JSON.stringify(sel)});return !!n&&n.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})})()`);
   const frames = (ms) => evalJS(`new Promise(resolve=>{const out=[];const start=performance.now();
-    function sample(now){const b=document.getElementById('bar').getBoundingClientRect();out.push({t:now-start,w:b.width,h:b.height,s:document.documentElement.dataset.collapse||'open',z:+getComputedStyle(document.getElementById('bubble-zone')).opacity});
+    function sample(now){const b=document.getElementById('bar').getBoundingClientRect();out.push({t:now-start,x:b.x,right:b.right,w:b.width,h:b.height,s:document.documentElement.dataset.collapse||'open',z:+getComputedStyle(document.getElementById('bubble-zone')).opacity});
       if(now-start<${ms})requestAnimationFrame(sample);else resolve(out);}
     requestAnimationFrame(sample);})`);
   const shot = async (name) => {
@@ -130,11 +133,27 @@ try {
   check('idle collapse defaults to five seconds', await evalJS(`QSettings.DEFAULTS.idleCollapse===5 && QSettings.sanitize({}).idleCollapse===5`));
   check('idle collapse is a behaviour setting that presets keep', await evalJS(`!QSettings.APPEARANCE_KEYS.includes('idleCollapse') && QSettings.applyPreset({...QSettings.DEFAULTS,idleCollapse:12},'compact').idleCollapse===12`));
 
-  // --- Fold after the delay ------------------------------------------------------------------
+  // --- A draft keeps the composer visible ----------------------------------------------------
   await open();
   await send('Collapse fixture');
   await finishReply();
-  await type('A draft that survives\nthe fold');
+  const draft = 'A draft that stays visible\nwhile unfocused';
+  await type(draft);
+  await evalJS(`document.getElementById('prompt-input').setSelectionRange(2,12,'backward')`);
+  await blur();
+  await sleep(1500);
+  check('draft text prevents idle collapse after losing focus', await state() === 'open' && await shown('#prompt-input'));
+  check('unfocused draft and selection stay intact', await evalJS(`(()=>{const i=document.getElementById('prompt-input');return i.value===${JSON.stringify(draft)} && i.selectionStart===2 && i.selectionEnd===12 && i.selectionDirection==='backward'})()`));
+  await type('');
+  const cleared = Date.now();
+  await sleep(500);
+  check('clearing a draft starts a fresh idle delay', await state() === 'open');
+  await folded();
+  check('empty composer folds after the fresh delay', Date.now() - cleared >= 1000);
+  await focus();
+  await opened();
+
+  // --- Fold after the delay ------------------------------------------------------------------
   await sleep(250);
   const before = { reply: await rect('.bubble-response'), bar: await rect('#bar'), orb: await rect('#orb'), input: await rect('#prompt-input'), fits: await evalJS(`__mock.fits.length`), lastFit: await evalJS(`JSON.stringify(__mock.fit)`) };
   check('tabs and reply are on screen before folding', await shown('.tab') && await shown('.bubble-response'));
@@ -150,6 +169,7 @@ try {
   const closingWidths = foldFrames.filter((f) => f.s === 'closing').map((f) => f.w);
   check('fold animates the bar through intermediate widths', closingWidths.some((w) => w > 60 && w < before.bar.w - 40), JSON.stringify(closingWidths.map(Math.round)));
   check('bar only narrows while folding', closingWidths.every((w, i) => i === 0 || w <= closingWidths[i - 1] + 0.5), JSON.stringify(closingWidths.map(Math.round)));
+  check('left-side fold keeps the left edge fixed throughout', foldFrames.filter(f => f.s === 'closing').every(f => Math.abs(f.x - before.bar.x) < 0.6));
   const shut = { bar: await rect('#bar'), orb: await rect('#orb') };
   check('folded bar is a circle the height of the bar', Math.abs(shut.bar.w - 44) < 0.5 && Math.abs(shut.bar.h - 44) < 0.5 && await evalJS(`getComputedStyle(document.getElementById('bar')).borderTopLeftRadius==='50%'`), JSON.stringify(shut.bar));
   check('orb sits centred in the circle', Math.abs(shut.orb.cx - shut.bar.cx) < 0.6 && Math.abs(shut.orb.cy - shut.bar.cy) < 0.6, `${JSON.stringify(shut.orb)} ${JSON.stringify(shut.bar)}`);
@@ -178,8 +198,8 @@ try {
   check('reply fades back in while opening', openFrames.some((f) => f.s === 'opening' && f.z > 0.05 && f.z < 0.95));
   const reopened = { bar: await rect('#bar'), input: await rect('#prompt-input') };
   check('bar returns to its full size', Math.abs(reopened.bar.w - before.bar.w) < 0.5 && Math.abs(reopened.bar.h - before.bar.h) < 0.5, `${JSON.stringify(reopened.bar)} vs ${JSON.stringify(before.bar)}`);
-  check('composer is focused with the draft intact', await evalJS(`document.activeElement===document.getElementById('prompt-input') && document.getElementById('prompt-input').value==='A draft that survives\\nthe fold'`));
-  check('draft keeps its height', Math.abs(reopened.input.h - before.input.h) < 0.5, `${reopened.input.h} vs ${before.input.h}`);
+  check('empty composer is focused after reopening', await evalJS(`document.activeElement===document.getElementById('prompt-input') && document.getElementById('prompt-input').value===''`));
+  check('composer keeps its height', Math.abs(reopened.input.h - before.input.h) < 0.5, `${reopened.input.h} vs ${before.input.h}`);
   check('reply and tabs are back', await shown('.bubble-response') && await shown('.tab') && await shown('#btn-attach'));
   check('reply opens at the height it had', Math.abs((await rect('.bubble-response')).h - before.reply.h) < 0.5);
   check('no animations are left behind', await evalJS(`document.getAnimations().filter(a=>a.playState!=='finished'&&a.effect?.getTiming().iterations!==Infinity).length===0 && !document.getElementById('bar').getAnimations().length`));
@@ -208,14 +228,36 @@ try {
   check('focus from the shortcut or tray opens it at once', await state() === 'opening' || await state() === 'open');
   await opened();
 
+  // --- Screen-side anchoring, including a monitor at negative coordinates ---------------------
+  for (const [side, x, left] of [['right', 1100, 0], ['left', -1900, -1920], ['right', -800, -1920]]) {
+    await screenPosition(x, left);
+    const full = await rect('#bar');
+    const edge = side === 'right' ? 'right' : 'x';
+    await blur();
+    const closing = await frames(1550);
+    await folded();
+    const circle = await rect('#bar');
+    check(`${side} fold holds the screen-facing edge (monitor ${left})`, Math.abs(circle[edge] - full[edge]) < 0.6 && closing.some(f => f.s === 'closing' && f.w > 60 && f.w < full.w - 40) && closing.filter(f => f.s === 'closing').every(f => Math.abs(f[edge] - full[edge]) < 0.6), JSON.stringify({ full, circle }));
+    const orb = await rect('#orb');
+    check(`${side} folded orb is centred (monitor ${left})`, Math.abs(orb.cx - circle.cx) < 0.6 && Math.abs(orb.cy - circle.cy) < 0.6);
+    await sleep(100);
+    const surfaces = await evalJS(`__mock.last('surfaces_set')?.args.rects`);
+    check(`${side} hit-test and blur follow the folded orb (monitor ${left})`, surfaces?.length === 1 && Math.abs(surfaces[0].x - circle.x) < 0.6 && Math.abs(surfaces[0].w - circle.w) < 0.6, JSON.stringify(surfaces));
+    await shot(`${side}-folded-monitor-${left}`);
+    await focus();
+    const opening = await frames(700);
+    await opened();
+    const restored = await rect('#bar');
+    check(`${side} expansion keeps its edge and restores position (monitor ${left})`, opening.some(f => f.s === 'opening') && opening.filter(f => f.s === 'opening').every(f => Math.abs(f[edge] - full[edge]) < 0.6) && Math.abs(restored.x - full.x) < 0.6 && Math.abs(restored.w - full.w) < 0.6, JSON.stringify({ full, restored }));
+  }
+
   // --- Reverse mid-fold ----------------------------------------------------------------------
   await blur();
-  await until(`document.documentElement.dataset.collapse==='closing' && document.getElementById('bar').getBoundingClientRect().width<300`, 'mid-fold', 300);
-  await shot('2-folding');
-  const mid = (await rect('#bar')).w;
-  await focus();
+  // Sample and focus in the same frame; screenshot encoding must not let the fold finish first.
+  const reversal = await evalJS(`new Promise((resolve,reject)=>{const start=performance.now();function sample(){const bar=document.getElementById('bar');const from=bar.getBoundingClientRect();if(document.documentElement.dataset.collapse==='closing' && from.width>60 && from.width<300){window.__focused=true;window.dispatchEvent(new Event('focus'));const to=bar.getBoundingClientRect();resolve({from:from.width,to:to.width,right:from.right,toRight:to.right,state:document.documentElement.dataset.collapse});return;}if(performance.now()-start>3500){reject(new Error('No intermediate closing frame'));return;}requestAnimationFrame(sample);}requestAnimationFrame(sample);})`);
   const reverse = await frames(120);
-  check('coming back mid-fold reverses from where it is', reverse[0].s === 'opening' && Math.abs(reverse[0].w - mid) < 40, `${mid} -> ${JSON.stringify(reverse.slice(0, 3))}`);
+  check('coming back mid-fold reverses from where it is', reversal.state === 'opening' && Math.abs(reversal.to - reversal.from) < 0.6 && reverse.some(f => f.s === 'opening' && f.w > reversal.from && f.w < before.bar.w), JSON.stringify(reversal));
+  check('right-side reversal keeps the right edge fixed', Math.abs(reversal.toRight - reversal.right) < 0.6 && reverse.every(f => Math.abs(f.right - reversal.right) < 0.6));
   await opened();
   check('reversal ends at full size', Math.abs((await rect('#bar')).w - before.bar.w) < 0.5);
 
@@ -228,6 +270,16 @@ try {
   await opened();
 
   // --- Things that keep it open --------------------------------------------------------------
+  await blur();
+  await sleep(600);
+  await type('A draft entered after the idle timer started');
+  await sleep(1200);
+  check('draft added during the idle delay prevents collapse', await state() === 'open' && await shown('#prompt-input'));
+  await type('   \n');
+  await sleep(1300);
+  check('whitespace in the text box also keeps it open', await state() === 'open');
+  await focus();
+  await type('');
   await evalJS(`__mock.hold=true`);
   await send('Streaming fixture');
   await until(`__mock.last('chat_send') && document.getElementById('btn-send').dataset.mode==='stop'`, 'streaming');
@@ -273,7 +325,7 @@ try {
   await blur();
   await folded();
   await evalJS(`__mock.emit('qchat://hidden',null)`);
-  check('hiding a folded window resets it at once', await state() === 'open' && Math.abs((await rect('#bar')).w - before.bar.w) < 0.5);
+  check('hiding a folded window resets it at once', await state() === 'open' && Math.abs((await rect('#bar')).w - before.bar.w) < 0.5 && await evalJS(`!document.documentElement.dataset.collapseAnchor`));
   await evalJS(`__mock.emit('qchat://shown',null)`);
   await focus();
 
@@ -296,10 +348,13 @@ try {
 
   // --- Reduced motion and the hidden orb style -----------------------------------------------
   await open({ animations: 'off', orbStyle: 'hidden' }, { chats: null });
+  await screenPosition(-800, -1920);
+  const quietFull = await rect('#bar');
   await blur();
   await until(`document.documentElement.dataset.collapse`, 'any collapse state', 300);
   check('motion off folds without an animation', await state() === 'closed' && !await evalJS(`document.getElementById('bar').getAnimations().length`));
   const quiet = { bar: await rect('#bar'), orb: await rect('#orb') };
+  check('motion off also folds toward the screen-facing edge', Math.abs(quiet.bar.right - quietFull.right) < 0.6);
   check('hidden orb style still shows the orb when folded', Math.abs(quiet.orb.w - 18) < 0.5 && Math.abs(quiet.orb.cx - quiet.bar.cx) < 0.6 && await evalJS(`getComputedStyle(document.getElementById('orb')).backgroundImage!=='none'`));
   await focus();
   check('motion off opens without an animation', await state() === 'open');
