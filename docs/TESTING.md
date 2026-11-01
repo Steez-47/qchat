@@ -42,7 +42,7 @@ Highlights:
 - `node tests/provider-ui-test.mjs`: provider picker, switching, per-chat providers and startup settings.
 - `node tests/picker-ui-test.mjs`: the compact picker's rows, modes, keyboard use, dismissal and layout stability.
 - `node tests/popover-motion-ui-test.mjs`: popover, chip and notice entrances, ghost exits that never delay state (including while the bar folds), copy feedback, Settings page motion and motion off.
-- `node tests/stream-perf-ui-test.mjs`: delta bursts coalesce into one pass per frame without flashing unfinished text, finished code blocks keep their nodes, and cached highlighting matches a fresh one, and the surface list still follows structure changes at once.
+- `node tests/stream-perf-ui-test.mjs`: delta bursts coalesce into one pass per frame without flashing unfinished text, finished code blocks keep their nodes, and cached highlighting matches a fresh one, the surface list still follows structure changes at once, and a long History opens newest first, fills in without moving the row being read, restores a saved place among old messages and is complete for Find.
 - `node tests/reply-format-ui-test.mjs`: no raw Markdown, shrinking text or shrinking bubble on any frame in every stream style, table column alignment, task lists and keyboard keys.
 - `node tests/orb-task-ui-test.mjs`: minimizing during a reply, and the orb's working, ready and attention states.
 - `node tests/mode-bridge-test.mjs`: Work and Task detection, switching and safe refusal on synthetic pages.

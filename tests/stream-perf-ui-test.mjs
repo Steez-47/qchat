@@ -148,6 +148,43 @@ try {
   check('losing its glass class drops it again', await waitFor(`!${covers('#late-glass')}`, 200));
   await evalJS(`document.getElementById('late-glass').remove()`);
 
+  // A long History opens with its newest messages and fills in older ones above, in place.
+  {
+    const para = 'A long saved reply paragraph that keeps going for a while. '.repeat(40);
+    const transcript = [];
+    for (let i = 0; i < 40; i++) transcript.push({ id: `q${i}`, role: 'user', text: `Question ${i}` }, { id: `a${i}`, role: 'assistant', text: `Answer ${i}. ${para}` });
+    const chats = { v: 1, current: { key: 'a', conversationId: null, title: 'Long', lastActive: Date.now(), lastPrompt: 'Question 39', lastResponse: `Answer 39. ${para}`, transcript, createdAt: 1 },
+      recent: [{ key: 'b', conversationId: null, title: 'Other', lastActive: Date.now() - 5000, lastPrompt: 'Other q', lastResponse: 'Other reply', transcript: [{ id: 'bq', role: 'user', text: 'Other q' }, { id: 'ba', role: 'assistant', text: 'Other reply' }], createdAt: 1 }] };
+    await cdp('Page.navigate', { url: `${base}/` });
+    await waitFor(`document.readyState==='complete'`);
+    await evalJS(`localStorage.clear();localStorage.setItem('qchat.settings',${JSON.stringify(JSON.stringify({ animations: 'off', autoDismiss: 0, idleCollapse: 0, keepHistory: true }))});localStorage.setItem('qchat.chats',${JSON.stringify(JSON.stringify(chats))})`);
+    await cdp('Page.navigate', { url: `${base}/?mock=1` });
+    await waitFor(`document.readyState==='complete' && window.QSettings`);
+    await sleep(400);
+    const opened = await evalJS(`(()=>{document.getElementById('btn-history').click();const p=document.getElementById('history-panel');const rows=[...p.querySelectorAll('.history-row')];return {n:rows.length,last:rows.at(-1)?.dataset.id,bottom:p.scrollHeight-p.scrollTop-p.clientHeight<=2}})()`);
+    check('History opens with only its newest messages', opened.n > 0 && opened.n < 80, JSON.stringify(opened));
+    check('the newest message is there at once, at the bottom', opened.last === 'a39' && opened.bottom, JSON.stringify(opened));
+    // Read upward while older messages are still arriving: the row on screen must not move.
+    const held = await evalJS(`(()=>{const p=document.getElementById('history-panel');p.scrollTop=0;p.dispatchEvent(new Event('scroll'));const r=p.querySelector('.history-row');return {id:r.dataset.id,top:r.getBoundingClientRect().top-p.getBoundingClientRect().top}})()`);
+    check('older messages fill in', await waitFor(`document.querySelectorAll('#history-panel .history-row').length===80`, 4000));
+    check('the row being read stays put while older ones arrive above it', await evalJS(`(()=>{const p=document.getElementById('history-panel');const r=p.querySelector('[data-id="${held.id}"]');return Math.abs(r.getBoundingClientRect().top-p.getBoundingClientRect().top-(${held.top}))<=2})()`));
+    check('every message is in order', await evalJS(`[...document.querySelectorAll('#history-panel .history-row')].map(r=>r.dataset.id).join()===${JSON.stringify(transcript.map(t => t.id).join())}`));
+    // A saved place among the oldest messages comes back after switching chats.
+    const mark = await evalJS(`(()=>{const p=document.getElementById('history-panel');p.scrollTop=40;p.dispatchEvent(new Event('scroll'));const top=p.getBoundingClientRect().top;const r=[...p.children].find(n=>n.dataset.id&&n.getBoundingClientRect().bottom>top);return {id:r.dataset.id,offset:r.getBoundingClientRect().top-top}})()`);
+    await evalJS(`document.querySelector('#tabs [data-key="b"]').click()`);
+    await waitFor(`JSON.parse(localStorage.getItem('qchat.chats')).current.key==='b'`, 3000);
+    await waitFor(`document.querySelector('#tabs [data-key="a"]:not(:disabled)')`, 3000);
+    await evalJS(`document.querySelector('#tabs [data-key="a"]').click()`);
+    await waitFor(`JSON.parse(localStorage.getItem('qchat.chats')).current.key==='a'`, 3000);
+    await sleep(100);
+    check('a place among the oldest messages is restored', await evalJS(`(()=>{const p=document.getElementById('history-panel');const r=p.querySelector('[data-id="${mark.id}"]');return !p.hidden&&!!r&&Math.abs(r.getBoundingClientRect().top-p.getBoundingClientRect().top-(${mark.offset}))<=2})()`), JSON.stringify(mark));
+    // Find searches every message straight away, including the oldest.
+    await evalJS(`document.getElementById('btn-history').click()`);
+    await waitFor(`document.getElementById('history-panel').hidden`, 2000);
+    await evalJS(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true}))`);
+    check('Find opens on a fully rendered History', await waitFor(`!document.getElementById('history-panel').hidden`, 2000) && await evalJS(`document.querySelectorAll('#history-panel .history-row').length===80`));
+  }
+
   check('no runtime errors',problems.length===0,problems.join(' | '));
 } catch (e) {
   console.error(e); failed++;

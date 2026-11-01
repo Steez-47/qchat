@@ -35,7 +35,7 @@ One material everywhere. No neon, no marble, no competing highlights.
 - **Tabs:** sit flush on the bar's top edge and read as one shape with it: rounded top corners, no bottom rim, no shadow, concave 8px fillets where they meet the bar. 24px tall, 11.5px text, the clock glyph quiet at 10px. Title capped at 24 characters then the elapsed time.
 - **Bubbles:** the user's bubble is the only tinted one, and only lightly. Replies are plain glass.
 - **History pill and Latest chip:** small quiet glass chips that never cover reply text.
-- **History:** the whole conversation from the account's own record (the rendered page is the fallback), in the same bubbles as the live view, with its images. That record replaces the local copy when a chat opens. "All chats" lists this PC's chats, then every other chat on the account, searchable. A small clock tab beside the recent tabs opens it.
+- **History:** the whole conversation from the account's own record (the rendered page is the fallback), in the same bubbles as the live view, with its images. That record replaces the local copy when a chat opens. A long History opens with its newest messages and fills in older ones above within a moment, without moving what is on screen; Find and a restored reading place get every message at once. "All chats" lists this PC's chats, then every other chat on the account, searchable. A small clock tab beside the recent tabs opens it.
 - **Errors:** plain glass with a 1px critical-coloured hairline and critical-coloured title. No muddy red fill.
 
 ## Type

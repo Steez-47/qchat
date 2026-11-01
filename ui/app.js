@@ -457,6 +457,8 @@
   let autoDismissTimer = null;
   let historyOpen = false;
   let historyChatKey = null;
+  // How many of the newest history items to render; Infinity once all are in (growHistory).
+  let historyLimit = Infinity, historyGrowth = 0;
   let historyHideTimer = null;
   let historyHeld = false;
   const readingPositions = new Map();
@@ -482,7 +484,8 @@
   const stopBackend = () => invoke("chat_stop").catch(() => {});
   const finder = window.QFind.create({
     panel: el.historyPanel, controls: el.historyControls,
-    onOpen: () => { setHistoryOpen(true); historyHeld = true; },
+    // A search needs every message, so it does not wait for older ones to fill in.
+    onOpen: () => { setHistoryOpen(true); completeHistory(); historyHeld = true; },
     onClose: () => el.promptInput.focus({ preventScroll: true }),
     onHold: () => { historyHeld = true; },
     onLayout: queueSizes
@@ -721,7 +724,9 @@
       return;
     }
     el.historyControls.hidden = false;
-    const items = historyItems();
+    const all = historyItems();
+    // Opening a long chat shows its newest messages first; older ones fill in above (growHistory).
+    const items = all.length > historyLimit ? all.slice(-historyLimit) : all;
     const panel = el.historyPanel;
     if (historyChatKey !== chats.current.key) {
       panel.replaceChildren();
@@ -895,6 +900,8 @@
     if (state.history) {
       setHistoryOpen(true, { focus: false });
       const panel = el.historyPanel;
+      // The saved place may be among the older messages that fill in after opening.
+      if (state.anchor && ![...panel.children].some(node => node.dataset.id === state.anchor.id)) completeHistory();
       const row = state.anchor && [...panel.children].find(node => node.dataset.id === state.anchor.id);
       historyHeld = Boolean(row);
       if (row) panel.scrollTop += row.getBoundingClientRect().top - panel.getBoundingClientRect().top + state.anchor.offset;
@@ -909,6 +916,37 @@
         syncScrollState(entry);
       }
     }
+  }
+
+  // Every row is parsed when History opens, which froze a long chat for a moment. The newest
+  // messages that fill the panel render at once, then older ones are added above a few per
+  // frame; renderHistory keeps the reader's place as they arrive, as it does for backfills.
+  const HISTORY_FIRST_CHARS = 9000, HISTORY_STEP_CHARS = 7000;
+  // How many of the newest items hold about `chars` characters, never fewer than four.
+  function historyTail(items, from, chars) {
+    let count = from, total = 0;
+    while (count < items.length && (count - from < 4 || total < chars)) total += (items[items.length - 1 - count++].text || "").length + 200;
+    return count;
+  }
+  // Everything at once, for a caller that needs a row that may not be in yet.
+  function completeHistory() {
+    if (historyLimit === Infinity) return;
+    historyGrowth++;
+    historyLimit = Infinity;
+    renderHistory();
+  }
+  function growHistory() {
+    const mine = ++historyGrowth;
+    const step = () => {
+      if (mine !== historyGrowth || !historyOpen) return;
+      const items = historyItems();
+      if (historyLimit >= items.length) { historyLimit = Infinity; return; }
+      historyLimit = historyTail(items, historyLimit, HISTORY_STEP_CHARS);
+      if (historyLimit >= items.length) historyLimit = Infinity;
+      renderHistory();
+      if (historyLimit !== Infinity) nextFrame(step);
+    };
+    nextFrame(step);
   }
 
   function setHistoryOpen(open, { focus = true } = {}) {
@@ -928,7 +966,11 @@
       historyHeld = false;
       el.stack.toggleAttribute("data-history", true);
       panel.hidden = false;
+      const items = historyItems();
+      historyLimit = historyTail(items, 0, HISTORY_FIRST_CHARS);
+      if (historyLimit >= items.length) historyLimit = Infinity;
       renderHistory();
+      if (historyLimit !== Infinity) growHistory();
       updateBubbleMax();
       syncHistoryHeight();
       panel.scrollTop = panel.scrollHeight;
@@ -944,6 +986,8 @@
     } else {
       const bottom = el.stack.getBoundingClientRect().bottom - panel.getBoundingClientRect().bottom;
       historyOpen = false;
+      historyGrowth++;
+      historyLimit = Infinity;
       el.stack.toggleAttribute("data-history", false);
       setHistoryStatus("");
       if (QSettings.motionOn) {
