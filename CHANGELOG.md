@@ -2,6 +2,13 @@
 
 Notable changes to QChat. Downloads, checksums and full verification notes for each version are on the [releases page](https://github.com/Steez-47/qchat/releases).
 
+## [Unreleased]
+
+### Changed
+- Settings overhaul. The sidebar groups 13 pages under Basics, Look & feel and Account, and only one page shows at a time. Each page has a one-line description and titled groups, and every option has a plain-English name ("Shaded" quotes, "From theme" accent, "Clock icon on tabs").
+- A dot in the sidebar marks pages you've changed, and each page has its own "Reset page" button.
+- Search (Ctrl+F) looks across every page and opens Fine-tune when a match is inside it. The custom colour pickers only appear once you choose Custom. Preset save, import and export sit behind a disclosure. Settings reopens on the page you last used.
+
 ## [1.4.1] - 2026-11-01
 
 ### Fixed
