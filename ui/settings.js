@@ -262,6 +262,8 @@
     row.append(text, button);
     return row;
   }
+  const FIT_LABELS = { small: "a small screen", medium: "a 1080p-class screen", large: "a large screen" };
+  const fitNote = () => `Text, bar and reply sizes, set for ${FIT_LABELS[QSettings.screenFit]}. Fit measures again`;
   function actionButton(id, label, onClick, className = "pill-btn") {
     const button = make("button", className, label);
     button.type = "button";
@@ -648,7 +650,14 @@
       groups: [
         { title: "Size", rows: [
           S("replyWidth", "Reply width", "Separate from the bar width"),
-          S("maxHeightPct", "Maximum height", "Share of your screen height. Longer replies scroll")
+          S("maxHeightPct", "Maximum height", "Share of your screen height. Longer replies scroll"),
+          () => {
+            const note = make("small", "", fitNote());
+            return actionRow("Fit to this screen", note, actionButton("btn-fit-screen", "Fit", () => {
+              setAll(QSettings.fitScreen(settings));
+              note.textContent = fitNote();
+            }));
+          }
         ] },
         { title: "Your messages", rows: [
           S("userAlign", "Alignment"),

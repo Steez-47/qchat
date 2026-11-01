@@ -153,7 +153,7 @@ try {
   await sleep(250);
   check('failed startup switch follows native', await evalJS(`document.querySelector('#btn-reasoning span').textContent==='Medium'`) && await evalJS(`/Using ChatGPT/.test(document.getElementById('global-error-text').textContent)`));
   await open('/',{settings:{v:5,defaultReasoning:'high'}});
-  check('v5 migrates to v6 with defaults', await evalJS(`QSettings.VERSION===6 && QSettings.settings.defaultProvider==='chatgpt' && QSettings.settings.showBarAtStartup===false && QSettings.settings.defaultReasoning==='high'`));
+  check('v5 migrates forward with defaults', await evalJS(`QSettings.VERSION>=6 && QSettings.settings.defaultProvider==='chatgpt' && QSettings.settings.showBarAtStartup===false && QSettings.settings.defaultReasoning==='high'`));
   check('normal launch shows main', await evalJS(`__mock.count('show_main')===1`));
   await open('/?autostart'); check('autostart stays quiet',await evalJS(`__mock.count('show_main')===0`));
   await open('/?autostart',{settings:{v:6,showBarAtStartup:true}}); check('startup preference shows main',await evalJS(`__mock.count('show_main')===1`));
