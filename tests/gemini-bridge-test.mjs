@@ -625,13 +625,31 @@ test('every selected attachment must register before Gemini can submit', async (
 test('upload activity resuming while Send is disabled delays Gemini submission again', async () => {
   const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
   gland(b, 0); b.sendButton.setAttribute('aria-disabled', 'true');
-  const progress = makeEl('mat-progress-spinner');
+  const progress = makeEl('input-container', {}, [makeEl('mat-spinner', { role: 'progressbar' })]);
   b.later(() => { b.body.append(progress); b.document.execCommand('selectAll', false); b.document.activeElement.textContent = ''; }, 1500);
   b.later(() => b.sendButton.setAttribute('aria-disabled', 'false'), 1700);
   b.later(() => progress.remove(), 3000);
   const sent = b.api.send({ id: 'resumed', prompt: GPROMPT, attachmentCount: 1 });
   await b.tick(2900); assert.deepEqual(submissions, []);
   await b.tick(1500); await sent;
+  assert.deepEqual(submissions, [{ text: GPROMPT, attachments: 1 }]);
+});
+test("the side panel's spinners never hold back an image send", async () => {
+  for (const style of ['display: none', '']) {
+    const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+    b.body.append(makeEl('side-navigation-content', {}, [makeEl('mat-progress-spinner', { role: 'progressbar', style })]));
+    gland(b, 500);
+    const sent = b.api.send({ id: 'side-spinner', prompt: GPROMPT, attachmentCount: 1 });
+    await b.tick(3000); await sent;
+    assert.deepEqual(submissions, [{ text: GPROMPT, attachments: 1 }], `side panel spinner style: "${style}"`);
+  }
+});
+test('a hidden composer spinner does not count as an upload', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  b.body.append(makeEl('input-container', {}, [makeEl('mat-spinner', { role: 'progressbar', style: 'display: none' })]));
+  gland(b, 500);
+  const sent = b.api.send({ id: 'hidden-spinner', prompt: GPROMPT, attachmentCount: 1 });
+  await b.tick(3000); await sent;
   assert.deepEqual(submissions, [{ text: GPROMPT, attachments: 1 }]);
 });
 test('an attachment that never registers fails without submitting text alone', async () => {
