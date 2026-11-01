@@ -888,6 +888,13 @@
     const composer = find('composer');
     return composer?.closest('form') || composer?.parentElement?.parentElement;
   }
+  // The model menu's Power slider says where it is, for example "Light, 2 of 5."
+  const effortSlider = () => document.querySelector('[data-reasoning-slider="true"]');
+  function effortStops() {
+    const text = (effortSlider()?.getAttribute('aria-describedby') || '').split(/\s+/).map(id => document.getElementById(id)?.textContent || '').find(Boolean) || '';
+    const match = /^(.+?),\s*(\d+)\s+of\s+(\d+)/.exec(text.trim());
+    return match ? { label: match[1], index: Number(match[2]) - 1, count: Number(match[3]) } : null;
+  }
   // Chat and Work are read from the page's own switch. Only that exact control is clicked.
   const MODE_MESSAGE = "ChatGPT Work isn't available on this account right now.";
   const modeSelector = '[role="tab"], [role="radio"], [role="menuitemradio"], button, a[role]';
@@ -947,6 +954,15 @@
     ] };
   }
   function listModes() { emit(modeReport()); }
+  // Reading a list for one mode needs the page on that mode. Silent: the send path reports failures.
+  async function matchMode(mode) {
+    if (mode !== 'chat' && mode !== 'work') return false;
+    const controls = modeControls(), state = modeState(controls);
+    if (!state || state === mode || !controls[mode]) return false;
+    modeClick(controls[mode]);
+    for (let i = 0; i < 30 && modeState(modeControls()) !== mode; i++) await sleep(100);
+    return true;
+  }
   function modeClick(node) {
     for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'])
       node.dispatchEvent(new (type.startsWith('pointer') ? PointerEvent : MouseEvent)(type, { bubbles: true, cancelable: true, button: 0 }));
@@ -1600,12 +1616,14 @@
       if (location.pathname !== path || !find('composer')) { location.assign(path); return; }
       await sleep(300); await status();
     },
-    async listModels(chooseId) {
-      let switcher, opened = false;
+    async listModels(chooseId, mode) {
+      let switcher, opened = false, relist = false;
       const unavailable = () => { if (chooseId === undefined) emit({type:'models',models:[],error:'unavailable'}); };
       const click = node => { for(const type of ['pointerdown','mousedown','pointerup','mouseup','click']) node.dispatchEvent(new (type.startsWith('pointer') ? PointerEvent : MouseEvent)(type,{bubbles:true,cancelable:true,button:0})); };
       try {
         if(active) { unavailable(); return; }
+        // The composer rebuilds its model button after a switch; it opens nothing until that settles.
+        if(chooseId === undefined && mode && await matchMode(mode)) await sleep(1200);
         let candidates = [...document.querySelectorAll('[data-testid*="model-switcher"], button[aria-label="Select ChatGPT model"]')];
         if(!candidates.length) candidates = [...document.querySelectorAll('header [aria-haspopup]')].filter(node => /model|chatgpt|gpt/i.test((node.textContent||'')+(node.getAttribute('aria-label')||'')));
         if(candidates.length !== 1) { unavailable(); return; }
@@ -1631,12 +1649,32 @@
         }
         if(!nodes.length) { unavailable(); return; }
         const models=nodes.map(node=>{const text=(node.innerText||node.textContent||'').trim();return {id:text,label:text.split('\n')[0].trim(),selected:node.getAttribute('aria-checked')==='true'};});
+        // Effort moves one stop at a time on the page's own keyboard path, checked against its readout.
+        const step=/^__effort:(down|up)$/.exec(chooseId ?? '');
+        if(step) {
+          const before=effortStops();
+          if(before) {
+            const slider=effortSlider(), key=step[1]==='up' ? 'ArrowRight' : 'ArrowLeft';
+            slider.focus?.();
+            await sleep(60);
+            slider.dispatchEvent(new KeyboardEvent('keydown',{key,code:key,bubbles:true,cancelable:true}));
+            for(let i=0;i<20 && effortStops()?.index===before.index;i++) await sleep(50);
+          }
+          emit({type:'models',models,effort:effortStops()});
+          return;
+        }
         if(chooseId !== undefined) {
           const matches=models.map((m,i)=>m.id===chooseId ? i : -1).filter(i=>i>=0);
-          if(matches.length===1) {click(nodes[matches[0]]);emit({type:'model-chosen',model:models[matches[0]]});}
-        } else emit({type:'models',models});
+          if(matches.length===1) {
+            click(nodes[matches[0]]);
+            emit({type:'model-chosen',model:models[matches[0]]});
+            // Each model has its own stops, so the picker needs them again.
+            relist=true;
+          }
+        } else emit({type:'models',models,effort:effortStops()});
       } catch(_) { unavailable(); }
       finally {if(opened && switcher?.getAttribute('aria-expanded') === 'true') (document.activeElement || switcher).dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true}));}
+      if(relist) { await sleep(250); await window.__qchat.listModels(); }
     },
     async chooseModel(id) { return window.__qchat.listModels(id); },
     async newChat(options = {}) {

@@ -605,7 +605,7 @@ fn chat_stop(app: tauri::AppHandle) -> Vec<String> {
     media::draft_uploads(&app)
 }
 #[tauri::command]
-fn chat_models(app: tauri::AppHandle) -> Result<(), String> { eval(&app, "if (window.__qchat) window.__qchat.listModels(); else if (window.__QCHAT_EMIT__) window.__QCHAT_EMIT__({type:'models',models:[],error:'unavailable'});") }
+fn chat_models(app: tauri::AppHandle, mode: Option<String>) -> Result<(), String> { validate_mode(mode.as_deref())?; let mode = serde_json::to_string(&mode).map_err(|e|e.to_string())?; eval(&app, &format!("if (window.__qchat) window.__qchat.listModels(undefined,{mode}); else if (window.__QCHAT_EMIT__) window.__QCHAT_EMIT__({{type:'models',models:[],error:'unavailable'}});")) }
 #[tauri::command]
 fn chat_modes(app: tauri::AppHandle) -> Result<(), String> { eval(&app, "if (window.__qchat) window.__qchat.listModes(); else if (window.__QCHAT_EMIT__) window.__QCHAT_EMIT__({type:'modes',available:false,modes:[]});") }
 #[tauri::command]

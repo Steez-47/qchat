@@ -33,7 +33,7 @@
     levels: [],
     modes: {
       chatgpt: {available:true, modes:[{id:"chat",label:"Chat",selected:true},{id:"work",label:"Work",selected:false}]},
-      gemini: {available:true, modes:[{id:"chat",label:"Chat",selected:true},{id:"work",label:"Spark",selected:false}]}
+      gemini: {available:true, modes:[{id:"chat",label:"Chat",selected:true},{id:"work",label:"Task",selected:false}]}
     },
     modeUnavailable: false,
     sendError: null,
@@ -199,13 +199,14 @@
           case "image_copy": return null;
           case "chat_models":
             if (mock.silentModels || params.get("mock") === "silent-models") return null;
-            emitMock("bridge", { type: "models", levels:mock.provider === "gemini" ? mock.levels : undefined, models: mock.models[mock.provider] || (params.get("mock") === "no-models" ? [] : [{ id: "0", label: "Mock model", selected: true }, { id: "1", label: "Mock alternate", selected: false }]) }); return null;
+            mock.effortStops ||= { labels: ["Minimal", "Light", "Medium", "High", "Extra High"], index: 1 };
+            emitMock("bridge", { type: "models", effort: mock.provider === "chatgpt" && args.mode === "work" ? { label: mock.effortStops.labels[mock.effortStops.index], index: mock.effortStops.index, count: mock.effortStops.labels.length } : undefined, levels:mock.provider === "gemini" ? mock.levels : undefined, models: mock.models[mock.provider] || (params.get("mock") === "no-models" ? [] : [{ id: "0", label: "Mock model", selected: true }, { id: "1", label: "Mock alternate", selected: false }]) }); return null;
           case "chat_modes":
             emitModes(); return null;
           case "chat_mode_set": {
             const state = mock.modes[mock.provider] || mock.modes.chatgpt;
             if (mock.modeUnavailable || state.available === false) {
-              emitMock("bridge", { type: "error", provider: mock.provider, code: "mode_unavailable", mode: args.mode, message: `${mock.provider === "gemini" ? "Gemini Spark" : "ChatGPT Work"} isn't available on this account yet.` });
+              emitMock("bridge", { type: "error", provider: mock.provider, code: "mode_unavailable", mode: args.mode, message: `${mock.provider === "gemini" ? "Gemini Task" : "ChatGPT Work"} isn't available on this account yet.` });
               return null;
             }
             state.modes = state.modes.map(mode => ({...mode, selected: mode.id === args.mode}));
@@ -214,6 +215,12 @@
           }
           case "chat_model_choose":
             if (mock.failModel) throw new Error("unavailable");
+            if (String(args.id).startsWith("__effort:")) {
+              const stops = mock.effortStops;
+              stops.index = Math.max(0, Math.min(stops.labels.length - 1, stops.index + (args.id.endsWith("up") ? 1 : -1)));
+              emitMock("bridge", { type: "models", models: mock.models.chatgpt || [{ id: "0", label: "Mock model", selected: true }], effort: { label: stops.labels[stops.index], index: stops.index, count: stops.labels.length } });
+              return null;
+            }
             if (mock.modelHold) await new Promise(resolve => { mock.releaseModel = resolve; });
             if (mock.provider === "gemini") { mock.model = mock.models.gemini.find(m=>m.id===args.id)?.label || args.id; emitMock("bridge",{type:"model-chosen",short:mock.model,model:{id:args.id,label:mock.model}}); return null; }
             emitMock("bridge", { type: "model-chosen", model: { id: args.id, label: args.id === "0" ? "Mock model" : "Mock alternate" } }); return null;

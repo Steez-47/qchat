@@ -1,4 +1,4 @@
-// Read-only probe for the Chat/Work (ChatGPT) and Chat/Spark (Gemini) switches.
+// Read-only probe for the Chat/Work (ChatGPT) and Chat/Task (Gemini) switches.
 // Point QCHAT_MODE_DEBUG_PORT at an already running hidden test instance. It
 // never launches, copies a profile, clicks, types or navigates; it only lists
 // the controls the bridge selectors would consider, plus why each is excluded.

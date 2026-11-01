@@ -48,7 +48,7 @@ See [packaging/INSTALL.txt](packaging/INSTALL.txt) for upgrade, uninstall and te
 
 **Providers and models**
 - The pill beside the prompt opens one small picker for provider, mode, effort and model. `/chatgpt` and `/gemini` also switch provider.
-- Choose Work on ChatGPT, or Spark on Gemini, for long agent tasks where your plan includes them. It starts a new chat and keeps your draft. If a task stops to ask for your approval, QChat tells you to open the chat on the site.
+- Choose Work on ChatGPT, or Task on Gemini, for long agent tasks where your plan includes them. It starts a new chat and keeps your draft. If a task stops to ask for your approval, QChat tells you to open the chat on the site.
 - Each chat stays with the provider it started on, and tabs show its logo. Settings has a default provider and a sign-in for each. Gemini only loads once you first use it.
 
 **Chats**

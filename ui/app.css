@@ -117,6 +117,19 @@ html[data-motion="off"] .picker { animation: none; }
 .picker-effort { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 4px 0 8px; }
 .picker-effort-label { color: var(--text-2); font-size: 11.5px; }
 .picker-effort-seg { margin-left: auto; display: flex; gap: 1px; }
+.picker-effort-step { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.picker-effort-step button {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font: 500 13px/1 var(--font-small);
+}
+.picker-effort-step button:hover:not(:disabled) { color: var(--text-1); background: var(--fill-2); }
+.picker-effort-step button:disabled { opacity: .35; }
+.picker-effort-value { min-width: 64px; text-align: center; color: var(--text-1); font: 500 11px/1 var(--font-small); }
 .picker-effort-seg button {
   height: 22px;
   padding: 0 7px;

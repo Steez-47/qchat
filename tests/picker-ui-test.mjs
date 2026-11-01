@@ -218,7 +218,7 @@ try {
   check('Gemini shows no Effort row but its models', await evalJS(`!${q('#picker .picker-effort')}`) && (await rows()).join() === 'Flash-Lite,Pro,Thinking', (await rows()).join());
   check('Gemini pill shows the model', await evalJS(`${q('.reasoning-label')}.textContent==='Flash-Lite'&&${q('#btn-reasoning')}.getAttribute('aria-label')==='Gemini, Flash-Lite. Change model'`));
   check('a disabled Gemini model is not selectable', await evalJS(`[...document.querySelectorAll('#picker .picker-row')].find(n=>n.textContent.includes('Pro')).disabled`));
-  check('Gemini work label is Spark', await evalJS(`${q('#picker [data-picker-key="mode:work"]')}.textContent.trim()==='Spark'`));
+  check('Gemini work label is Task', await evalJS(`${q('#picker [data-picker-key="mode:work"]')}.textContent.trim()==='Task'`));
   await shot('picker-gemini-chat-dark.png');
   await evalJS(`__mock.calls=[]`);
   await click('#picker [data-picker-key="model:thinking"]');
@@ -244,6 +244,40 @@ try {
   await sleep(100);
   check('failure reads Couldn’t read the model list', await evalJS(`${q('#picker .picker-empty')}?.textContent==='Couldn’t read the model list' || ${q('#picker .picker-empty')}?.textContent==="Couldn't read the model list"`));
 
+  // Mode-specific cache and asynchronous loading, using distinct real-page model labels.
+  await open0();
+  await evalJS(`__mock.silentModels=true`);
+  await pill(); await sleep(100);
+  await evalJS(`__mock.emit('bridge',{type:'models',models:[{id:'chat-only',label:'GPT-6',selected:true}]})`);
+  await sleep(80);
+  check('Chat has segmented effort and no stepper', await evalJS(`!!${q('#picker .picker-effort-seg')}&&!${q('#picker .picker-effort-step')}`));
+  await press2('Escape');
+  await evalJS(`__mock.calls=[]`);
+  await pill(); await sleep(100);
+  check('ChatGPT same-mode reopen uses cache', await evalJS(`__mock.count('chat_models')===0`) && (await rows()).join()==='GPT-6');
+  await click('#picker [data-picker-key="mode:work"]'); await sleep(500);
+  check('open mode switch requests Work models', await evalJS(`__mock.last('chat_models')?.args.mode==='work'`));
+  check('Chat list never renders while Work loads', (await rows()).length===0);
+  await evalJS(`__mock.models.chatgpt=[{id:'work-only',label:'GPT-6.1 Sol',selected:true}]; __mock.effortStops={labels:['Minimal','Light','Medium','High','Extra High'],index:1}; __mock.emit('bridge',{type:'models',models:__mock.models.chatgpt,effort:{label:'Light',index:1,count:5}})`);
+  await sleep(80);
+  check('Work renders its own list', (await rows()).join()==='GPT-6.1 Sol');
+  for (const [direction, label] of [['up','Medium'],['down','Light'],['down','Minimal'],['up','Light'],['up','Medium'],['up','High'],['up','Extra High']]) {
+    await evalJS(`__mock.calls=[]`);
+    await click(`#picker [data-picker-key="effort-step:${direction}"]`); await sleep(80);
+    check(`step ${direction} updates to ${label}`, await evalJS(`__mock.count('chat_model_choose')===1&&__mock.last('chat_model_choose').args.id==='__effort:${direction}'&&${q('#picker .picker-effort-value')}?.textContent===${JSON.stringify(label)}`));
+    if (label==='Minimal') check('down disabled at first stop', await evalJS(`${q('#picker [data-picker-key="effort-step:down"]')}.disabled`));
+  }
+  check('up disabled at last stop', await evalJS(`${q('#picker [data-picker-key="effort-step:up"]')}.disabled`));
+  await press2('Escape'); await evalJS(`__mock.calls=[]`); await pill(); await sleep(100);
+  check('Work same-mode reopen uses cache', await evalJS(`__mock.count('chat_models')===0`) && (await rows()).join()==='GPT-6.1 Sol');
+  await click('#picker [data-picker-key="mode:chat"]'); await sleep(500);
+  check('open mode switch requests Chat models', await evalJS(`__mock.last('chat_models')?.args.mode==='chat'`));
+  check('Work list never renders while Chat loads', (await rows()).length===0);
+  await open0(); await pill(); await sleep(100);
+  await click('#picker [data-picker-key="provider:gemini"]'); await sleep(400);
+  await click('#picker [data-picker-key="mode:work"]'); await sleep(500);
+  check('Gemini Task has no effort stepper', await evalJS(`!${q('#picker .picker-effort-step')}`) && (await chatState()).mode==='work');
+
   // ---- modes
   await open0();
   await type('draft before mode');
@@ -256,7 +290,8 @@ try {
   check('picking Work calls chat_mode_set', await evalJS(`__mock.last('chat_mode_set')?.args.mode==='work'`));
   check('Work starts a new chat and keeps the draft', await evalJS(`document.getElementById('prompt-input').value==='draft before mode'`) && (await chatState()).mode === 'work');
   check('Work pill shows the mode label', await evalJS(`${q('.reasoning-label')}.textContent==='Work'&&${q('#btn-reasoning')}.getAttribute('aria-label')==='ChatGPT, Work. Change model'`));
-  check('Work hides Effort and keeps models', await evalJS(`!${q('#picker .picker-effort')}`) && (await rows()).length === 2);
+  check('Work replaces segmented effort with Light stepper', await evalJS(`!${q('#picker .picker-effort-seg')}&&!!${q('#picker .picker-effort-step')}&&${q('#picker .picker-effort-value')}?.textContent==='Light'`));
+  check('Work keeps both model rows', (await rows()).length === 2, JSON.stringify(await rows()));
   await shot('picker-chatgpt-work-dark.png');
   await press2('Escape');
   await evalJS(`__mock.calls=[]`);

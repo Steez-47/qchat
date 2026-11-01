@@ -1,4 +1,4 @@
-// Synthetic DOM tests for the Chat/Work and Chat/Spark mode contract in both
+// Synthetic DOM tests for the Chat/Work and Chat/Task mode contract in both
 // provider bridges. No app, browser profile, credentials, network or real DOM.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -323,7 +323,7 @@ function harness({ hostname, pathname, ready, script, extraGlobals = {} }) {
   };
 }
 
-// ---- Mode switch fixture: two exact controls, like a Chat/Work or Chat/Spark switch ----
+// ---- Mode switch fixture: two exact controls, like a Chat/Work or Chat/Task switch ----
 function addModeSwitch(b, { workLabel = 'Work', chatLabel = 'Chat', selected = 'chat', state = true } = {}) {
   const box = makeEl('div', { class: 'mode-switch' });
   const attrs = role => state ? { role, 'aria-selected': String(selected === 'chat') } : { role };
@@ -343,6 +343,7 @@ function addModeSwitch(b, { workLabel = 'Work', chatLabel = 'Chat', selected = '
       b.notifyMutations();
     };
   }
+  apply();
   box.append(chat, work);
   b.body.append(box);
   return { box, chat, work, status };
@@ -483,9 +484,9 @@ const PROVIDERS = [
     create: createChatgpt, source: chatgptSource
   },
   {
-    id: 'gemini', work: 'Spark', fallback: 'Spark',
-    message: "Gemini Spark isn't available on this account right now.",
-    attention: 'Gemini Spark is waiting for your approval. Open the chat in Gemini to continue.',
+    id: 'gemini', work: 'Task', fallback: 'Task',
+    message: "Gemini Task isn't available on this account right now.",
+    attention: 'Gemini Task is waiting for your approval. Open the chat in Gemini to continue.',
     create: createGemini, source: geminiSource
   }
 ];
@@ -495,6 +496,111 @@ const test = (name, run) => tests.push({ name, run });
 const eventsOf = (b, type, id) => b.events.filter(e => e.type === type && (id === undefined || e.id === id));
 const lastOf = (b, type) => b.events.filter(e => e.type === type).at(-1);
 const plain = value => JSON.parse(JSON.stringify(value));
+
+// Real Gemini switch: state belongs to wrappers, never the action buttons.
+function segmentedSwitch(b, selected = 'chat') {
+  const box = makeEl('div');
+  const status = { mode: selected, clicks: [] };
+  const wrappers = {};
+  for (const [mode, label] of [['chat', 'Chat'], ['work', 'Task']]) {
+    const button = makeEl('button', { class: 'gem-segmented-button-action' }, [label]);
+    const wrapper = makeEl('div', { class: 'gem-segmented-button' }, [button]);
+    wrappers[mode] = wrapper;
+    button.onClick = () => { status.clicks.push(mode); status.mode = mode; apply(); };
+    box.append(wrapper);
+  }
+  function apply() {
+    for (const mode of ['chat', 'work']) wrappers[mode].className = 'gem-segmented-button' + (status.mode === mode ? ' gem-segmented-button-selected' : '');
+    b.composer.setAttribute('data-placeholder', status.mode === 'work' ? 'Describe a task' : 'Ask Gemini');
+  }
+  apply(); b.body.append(box);
+  return { status };
+}
+
+function modelMenu(b, provider, mode) {
+  const menu = makeEl('div', { role: 'menu', id: 'models' });
+  const switcher = makeEl('button', { 'aria-label': provider === 'chatgpt' ? 'Select ChatGPT model' : 'Open mode picker', 'aria-controls': 'models', 'aria-expanded': 'false' });
+  const labels = () => provider === 'gemini' ? (mode.status.mode === 'work' ? ['3.8 Flash', '4 Argon'] : ['Flash', 'Pro', 'Thinking']) : (mode.status.mode === 'work' ? ['Default', 'GPT-6.1 Sol', 'GPT-6.1 Terra', 'GPT-6 Astra', 'Auto', 'Fast', 'Deep', 'Pro', 'Max'] : ['GPT-6', 'GPT-5.6 Sol']);
+  const keys = []; let index = 1;
+  const readout = makeEl('div', { id: 'idA' }, ['Light, 2 of 5.']);
+  const help = makeEl('div', { id: 'idB' }, ['Use arrow keys']);
+  const slider = makeEl('div', { role: 'menuitem', 'aria-label': 'Power', 'data-reasoning-slider': 'true', 'aria-describedby': 'idA idB' });
+  slider.focus = () => { b.document.activeElement = slider; };
+  slider.onEvent = e => {
+    if (e.type === 'keydown' && ['ArrowRight', 'ArrowLeft'].includes(e.key)) {
+      keys.push(e.key); index += e.key === 'ArrowRight' ? 1 : -1;
+      readout.textContent = `${['Minimal', 'Light', 'Medium', 'High', 'Extra High'][index]}, ${index + 1} of 5.`;
+    }
+    if (e.key === 'Escape') switcher.setAttribute('aria-expanded', 'false');
+  };
+  const open = () => {
+    menu.childNodes = [];
+    for (const label of labels()) {
+      const row = makeEl('div', { role: 'menuitemradio', 'aria-checked': 'false' }, [label]);
+      row.onClick = () => switcher.setAttribute('aria-expanded', 'false');
+      menu.append(row);
+    }
+    if (provider === 'chatgpt' && slider.isConnected) menu.append(slider);
+    switcher.setAttribute('aria-expanded', 'true');
+  };
+  switcher.onClick = open;
+  switcher.onEvent = e => { if (e.key === 'ArrowDown') open(); if (e.key === 'Escape') switcher.setAttribute('aria-expanded', 'false'); };
+  switcher.focus = () => { b.document.activeElement = switcher; };
+  b.composer.onEvent = e => { if (e.key === 'Escape') switcher.setAttribute('aria-expanded', 'false'); };
+  b.body.append(switcher, menu, readout, help);
+  return { switcher, slider, readout, keys, labels };
+}
+
+for (const selected of ['chat', 'work']) test(`Gemini segmented parent state ${selected}`, async () => {
+  const b = createGemini(); const mode = segmentedSwitch(b, selected);
+  b.api.listModes();
+  assert.equal(lastOf(b, 'modes').modes.find(m => m.selected).id, selected);
+  const pending = b.api.setMode('work'); await b.tick(4000); await pending;
+  assert.equal(lastOf(b, 'modes').modes.find(m => m.selected).id, 'work');
+  assert.deepEqual(mode.status.clicks, selected === 'chat' ? ['work'] : []);
+});
+
+for (const p of PROVIDERS) {
+  test(`${p.id} model reads match requested mode before opening menu`, async () => {
+    const b = p.create(); const mode = p.id === 'gemini' ? segmentedSwitch(b) : addModeSwitch(b);
+    const menu = modelMenu(b, p.id, mode);
+    for (const requested of [undefined, null, 'chat', 'work', 'work', 'chat']) {
+      const before = mode.status.clicks.length, previous = mode.status.mode;
+      const pending = b.api.listModels(undefined, requested); await b.tick(5000); await pending;
+      assert.equal(mode.status.clicks.length - before, requested && requested !== previous ? 1 : 0, `${p.id} requested=${requested} previous=${previous}`);
+      assert.deepEqual(Array.from(lastOf(b, 'models').models, m => m.label), menu.labels());
+      if (p.id === 'gemini' && requested === 'work') assert.deepEqual(plain(lastOf(b, 'models').levels), []);
+    }
+    const pending = b.api.send({ id: 'busy-models', prompt: 'hold' }); await b.tick(300); await pending;
+    const before = mode.status.clicks.length;
+    const listing = b.api.listModels(undefined, 'work'); await b.tick(5000); await listing;
+    assert.equal(mode.status.clicks.length, before, 'active job must not touch switch');
+    b.api.stop(); await b.tick(200);
+  });
+}
+
+test('ChatGPT reads and steps Power, closes menu, and refreshes after model choice', async () => {
+  const b = createChatgpt(); const mode = addModeSwitch(b, { selected: 'work' });
+  const menu = modelMenu(b, 'chatgpt', mode);
+  const run = async fn => { const pending = fn(); await b.tick(5000); await pending; };
+  await run(() => b.api.listModels());
+  assert.deepEqual(plain(lastOf(b, 'models').effort), { label: 'Light', index: 1, count: 5 });
+  for (const [direction, key, label, index] of [['up', 'ArrowRight', 'Medium', 2], ['down', 'ArrowLeft', 'Light', 1]]) {
+    const before = menu.keys.length;
+    await run(() => b.api.chooseModel('__effort:' + direction));
+    assert.deepEqual(menu.keys.slice(before), [key]);
+    assert.deepEqual(plain(lastOf(b, 'models').effort), { label, index, count: 5 });
+    assert.equal(menu.switcher.getAttribute('aria-expanded'), 'false');
+  }
+  menu.readout.textContent = 'unparseable';
+  await run(() => b.api.listModels()); assert.equal(lastOf(b, 'models').effort, null);
+  menu.slider.remove();
+  await run(() => b.api.listModels()); assert.equal(lastOf(b, 'models').effort, null);
+  const before = b.events.length;
+  await run(() => b.api.chooseModel('GPT-6.1 Sol'));
+  assert.deepEqual(b.events.slice(before).filter(e => ['model-chosen', 'models'].includes(e.type)).map(e => e.type), ['model-chosen', 'models']);
+  assert.equal(menu.switcher.getAttribute('aria-expanded'), 'false');
+});
 
 for (const p of PROVIDERS) {
   test(`${p.id} listModes without a control emits both modes with chat selected`, () => {

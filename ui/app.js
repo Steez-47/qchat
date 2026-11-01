@@ -1146,17 +1146,17 @@
     try { localStorage.setItem(GEMINI_MODEL_KEY, label); } catch (_) {}
   }
 
-  // Chat and Work (Spark on Gemini) are per chat. The labels come from the site, with a
+  // Chat and Work (Task on Gemini) are per chat. The labels come from the site, with a
   // readable fallback before its hidden page has drawn the switcher.
   const modeCache = {
     chatgpt: { available: true, modes: [{ id: "chat", label: "Chat", selected: true }, { id: "work", label: "Work", selected: false }] },
-    gemini: { available: true, modes: [{ id: "chat", label: "Chat", selected: true }, { id: "work", label: "Spark", selected: false }] }
+    gemini: { available: true, modes: [{ id: "chat", label: "Chat", selected: true }, { id: "work", label: "Task", selected: false }] }
   };
   let modeChoice = null;
   const modeState = (provider = activeProvider) => modeCache[provider] || modeCache.chatgpt;
   const modeAvailable = (provider = activeProvider) => modeState(provider).available !== false;
   const modeLabel = (id, provider = activeProvider) =>
-    modeState(provider).modes.find(mode => mode.id === id)?.label || (id === "work" ? (provider === "gemini" ? "Spark" : "Work") : "Chat");
+    modeState(provider).modes.find(mode => mode.id === id)?.label || (id === "work" ? (provider === "gemini" ? "Task" : "Work") : "Chat");
   const effectiveMode = (chat = chats.current) => (chat?.temporary ? "chat" : chat?.mode === "work" ? "work" : "chat");
   const providerModelLabel = () => geminiChoice?.short || providerStates.gemini?.model || geminiModel || "";
 
@@ -3125,13 +3125,16 @@
 
   function requestPickerModels() {
     const provider = activeProvider;
-    const cached = modelCache[provider];
+    const mode = effectiveMode();
+    // A list only counts for the mode it was read in: each mode offers its own models.
+    const cached = modelCache[provider]?._mode === mode ? modelCache[provider] : null;
     // Gemini rereads its list on every open, unless a pick is still being applied.
     if (provider === "gemini" ? geminiChoice && cached?.models?.length : cached && !cached.error && (cached.models?.length || cached.levels?.length)) return;
-    if (modelRequest?.provider === provider) return;
-    const request = { provider };
+    if (modelRequest?.provider === provider && modelRequest.mode === mode) return;
+    if (modelRequest) cancelModelRequest();
+    const request = { provider, mode };
     modelRequest = request;
-    modelCache[provider] = cached ? { ...cached, loading: true, error: null } : { loading: true, models: [], levels: [] };
+    modelCache[provider] = cached ? { ...cached, loading: true, error: null } : { loading: true, models: [], levels: [], _mode: mode };
     renderPicker();
     const finish = event => {
       if (modelRequest !== request) return;
@@ -3139,7 +3142,7 @@
       showModels(event);
     };
     request.timer = setTimeout(() => finish({ error: "unavailable" }), 6000);
-    invoke("chat_models").catch(() => finish({ error: "unavailable" }));
+    invoke("chat_models", { mode }).catch(() => finish({ error: "unavailable" }));
   }
 
   function requestModes() {
@@ -3186,7 +3189,7 @@
     saveChats();
     syncReasoningButton();
     // A mode switch belongs to a fresh conversation; keep the draft.
-    void resetChatPreservingComposer();
+    void resetChatPreservingComposer().then(() => { if (pickerOpen) requestPickerModels(); });
     return true;
   }
 
@@ -3375,12 +3378,13 @@
 
   function showModels(event) {
     const provider = activeProvider;
-    const previous = modelCache[provider];
+    const mode = effectiveMode();
+    const previous = modelCache[provider]?._mode === mode ? modelCache[provider] : null;
     if (event.error && !(event.models?.length)) {
       // A failed refresh leaves a usable list in place.
-      modelCache[provider] = { ...(previous || {}), loading: false, error: event.error, models: previous?.models || [], levels: previous?.levels || [] };
+      modelCache[provider] = { ...(previous || {}), loading: false, error: event.error, _mode: mode, models: previous?.models || [], levels: previous?.levels || [] };
     } else {
-      const list = { ...event, loading: false, _loggedIn: providerStates[provider]?.loggedIn };
+      const list = { ...event, loading: false, _mode: mode, _loggedIn: providerStates[provider]?.loggedIn };
       // A list read before a pick took effect must not undo it.
       modelCache[provider] = provider === "gemini" && geminiChoice ? withGeminiChoice(list, geminiChoice) : list;
     }
@@ -3427,6 +3431,32 @@
       });
       return row;
     });
+  }
+
+  // Work's effort levels depend on the model and only the current one is readable, so it steps.
+  function pickerEffortStepper(stops) {
+    const row = make("div", "picker-effort");
+    row.append(make("span", "picker-effort-label", "Effort"));
+    const group = make("div", "picker-effort-step");
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", "Effort");
+    const arrow = (direction, glyph, label, disabled) => {
+      const button = make("button", "", glyph);
+      button.type = "button";
+      button.dataset.pickerKey = `effort-step:${direction}`;
+      button.setAttribute("aria-label", label);
+      button.disabled = disabled || isBusy();
+      button.addEventListener("click", () => {
+        if (button.disabled) return;
+        invoke("chat_model_choose", { id: `__effort:${direction}` }).catch(() => showGlobalError(null, "Couldn't change the effort. Try again in a moment."));
+      });
+      return button;
+    };
+    const value = make("span", "picker-effort-value", stops.label);
+    value.setAttribute("aria-live", "polite");
+    group.append(arrow("down", "\u2039", "Lower effort", stops.index <= 0), value, arrow("up", "\u203a", "Higher effort", stops.index >= stops.count - 1));
+    row.append(group);
+    return row;
   }
 
   function pickerSegment(label, entries, className = "picker-seg") {
@@ -3487,7 +3517,7 @@
       { key: "mode:work", label: modeLabel("work", provider), checked: mode === "work", disabled: workOff, title: temporary ? "Not in temporary chats" : !modeAvailable(provider) ? "Not available on this account yet" : "", run: () => chooseMode("work") }
     ]));
 
-    const cached = modelCache[provider];
+    const cached = modelCache[provider]?._mode === mode ? modelCache[provider] : null;
     const models = cached?.models || [];
     const body = make("div", "picker-body");
     body.setAttribute("role", "listbox");
@@ -3507,7 +3537,9 @@
 
     const showEffort = provider === "chatgpt" && mode === "chat";
     const levels = provider === "gemini" ? cached?.levels || [] : [];
-    if (showEffort || body.childElementCount || levels.length) fragment.append(make("div", "feature-divider"));
+    const stops = provider === "chatgpt" && mode === "work" ? cached?.effort : null;
+    if (showEffort || stops || body.childElementCount || levels.length) fragment.append(make("div", "feature-divider"));
+    if (stops) fragment.append(pickerEffortStepper(stops));
     if (showEffort) {
       const selected = effectiveReasoning();
       const row = make("div", "picker-effort");
@@ -3582,7 +3614,7 @@
   });
   listen("bridge", ({ payload }) => {
     const provider = payload.provider || "chatgpt";
-    if (payload.type === "status" && modelCache[provider] && modelCache[provider]._loggedIn !== payload.loggedIn && !(provider === "gemini" && geminiChoice)) delete modelCache[provider];
+    if (payload.type === "status" && modelCache[provider] && Object.hasOwn(modelCache[provider], "_loggedIn") && modelCache[provider]._loggedIn !== payload.loggedIn && !(provider === "gemini" && geminiChoice)) delete modelCache[provider];
     if (payload.type === "modes") { receiveModes(provider, payload); return; }
     if (provider !== activeProvider) return;
     if (payload.type === "error" && payload.code === "mode_unavailable" && !payload.id) {

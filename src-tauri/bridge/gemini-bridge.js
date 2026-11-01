@@ -669,7 +669,7 @@
       // The follow-up needs this thread on record, and a paused task never reaches done.
       const pausedIn = currentConversationId();
       if (pausedIn) emit({ type: 'conversation', id: job.id, conversationId: pausedIn });
-      fail(job, 'needs_attention', 'Gemini Spark is waiting for your approval. Open the chat in Gemini to continue.');
+      fail(job, 'needs_attention', 'Gemini Task is waiting for your approval. Open the chat in Gemini to continue.');
       return;
     }
 
@@ -852,7 +852,13 @@
       opened = true;
       const nodes = await openModelMenu(switcher);
       if (!nodes.length) { unavailable(); return; }
-      const parsed = nodes.map(parseModelItem).filter(item => item.label && !/^sign in\b/i.test(item.label));
+      // The Thinking level row opens a submenu; the rows after it are its levels, not models.
+      let inLevels = false;
+      const parsed = nodes.map(parseModelItem).filter(item => {
+        if (item.node.getAttribute?.('aria-haspopup') === 'true' && /think|reason|effort/i.test(item.label)) { inLevels = true; return false; }
+        if (inLevels) item.level = true;
+        return item.label && !/^sign in\b/i.test(item.label);
+      });
       if (!parsed.length) { unavailable(); return; }
       if (chooseId === undefined) {
         const pack = ({ id, label, selected, disabled, meta }) => ({ id, label, selected, disabled, meta });
@@ -906,8 +912,8 @@
     }
   }
 
-  // Chat and Spark are read from the page's own switch. Only that exact control is clicked.
-  const MODE_MESSAGE = "Gemini Spark isn't available on this account right now.";
+  // Chat and Task are read from the page's own switch. Only that exact control is clicked.
+  const MODE_MESSAGE = "Gemini Task isn't available on this account right now.";
   const modeSelector = '[role="tab"], [role="radio"], [role="menuitemradio"], button, a[role]';
   const modeExcluded = '[data-message-author-role], [data-message-role], user-query, model-response, nav a[href*="/c/"], [data-testid^="history-item"], conversations-list, .conversation, [contenteditable="true"]';
   const modeShown = node => shown(node) && !node.closest?.(modeExcluded);
@@ -921,7 +927,7 @@
   const modeCandidates = pattern => [...document.querySelectorAll(modeSelector)].filter(node =>
     modeShown(node) && !node.disabled && node.getAttribute?.('aria-disabled') !== 'true' && modeMatch(node, pattern));
   const modeRole = node => /^(?:tab|radio|menuitemradio)$/i.test(node.getAttribute?.('role') || '');
-  // A Spark tab and the chat tab normally share the switch that contains both.
+  // A Task tab and the chat tab normally share the switch that contains both.
   const modeNear = (a, b) => {
     if (!a || !b) return false;
     for (let node = a, depth = 0; node && depth <= 3; node = node.parentElement, depth++)
@@ -943,6 +949,9 @@
   const modeFlag = node => {
     if (!node) return null;
     const attr = key => node.getAttribute?.(key);
+    // Gemini's segmented switch has no ARIA state; the selection is a class on the button's wrapper.
+    const segment = node.closest?.('.gem-segmented-button');
+    if (segment) return segment.classList.contains('gem-segmented-button-selected');
     if (attr('aria-selected') === 'true' || attr('aria-checked') === 'true' || attr('aria-current') === 'true' ||
         attr('aria-current') === 'page' || attr('aria-pressed') === 'true' || ['active', 'on'].includes(attr('data-state'))) return true;
     if (attr('aria-selected') === 'false' || attr('aria-checked') === 'false' || attr('aria-pressed') === 'false' || ['inactive', 'off'].includes(attr('data-state'))) return false;
@@ -961,10 +970,18 @@
     const controls = modeControls(), state = modeState(controls);
     return { type: 'modes', available: !!controls.work, modes: [
       { id: 'chat', label: controls.chat ? modeLabel(controls.chat) : 'Chat', selected: state !== 'work' },
-      { id: 'work', label: controls.work ? modeLabel(controls.work) : 'Spark', selected: state === 'work' }
+      { id: 'work', label: controls.work ? modeLabel(controls.work) : 'Task', selected: state === 'work' }
     ] };
   }
   function listModes() { emit(modeReport()); }
+  // Reading a list for one mode needs the page on that mode. Silent: the send path reports failures.
+  async function matchMode(mode) {
+    if (mode !== 'chat' && mode !== 'work') return;
+    const controls = modeControls(), state = modeState(controls);
+    if (!state || state === mode || !controls[mode]) return;
+    dispatchClickSequence(controls[mode], true);
+    for (let i = 0; i < 30 && modeState(modeControls()) !== mode; i++) await sleep(100);
+  }
   const inConversation = () => !!currentConversationId();
   const modeSign = () => {
     const composer = find('composer');
@@ -983,7 +1000,7 @@
     if (job && mode === 'work' && inConversation() && !(job.expectedConversation && location.pathname.includes(job.expectedConversation))) return deny();
     let controls = modeControls();
     if (!controls[mode]) {
-      // A missing Spark switch is only safe inside a thread, which keeps its own mode.
+      // A missing Task switch is only safe inside a thread, which keeps its own mode.
       if (mode === 'chat') return true;
       if (inConversation()) return true;
       for (let i = 0; i < 30 && alive(); i++) {
@@ -1404,9 +1421,9 @@
       await sleep(200);
       await status();
     },
-    listModels() {
+    listModels(_, mode) {
       // Reads still waiting in line share one answer.
-      if (!modelListing) modelListing = enqueueModelOp(() => { modelListing = null; return runModelMenu(); });
+      if (!modelListing) modelListing = enqueueModelOp(async () => { modelListing = null; if (!active) await matchMode(mode); return runModelMenu(); });
       return modelListing;
     },
     chooseModel(id) {
