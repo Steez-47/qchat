@@ -7,6 +7,7 @@
   const launchInfo = invoke("launch_info").catch(() => null);
   const GUTTER = 28;
   const CHATS_KEY = "qchat.chats";
+  const GEMINI_MODEL_KEY = "qchat.geminiModel";
   const CHATS_VERSION = 1;
   const MAX_RECENT = 49;
   const OPEN_TIMEOUT = 12000;
@@ -1124,6 +1125,15 @@
   let sentReasoning = null;
   // A Gemini pick still being applied in its hidden page. The composer shows it straight away.
   let geminiChoice = null;
+  // The last mode Gemini reported, kept across launches so the picker has a name before its
+  // hidden page has drawn the mode switcher.
+  let geminiModel = (() => { try { return localStorage.getItem(GEMINI_MODEL_KEY) || ""; } catch (_) { return ""; } })();
+  function rememberGeminiModel(label) {
+    label = String(label || "").trim();
+    if (!label || label === geminiModel) return;
+    geminiModel = label;
+    try { localStorage.setItem(GEMINI_MODEL_KEY, label); } catch (_) {}
+  }
 
   function syncReasoningButton() {
     el.btnReasoning.hidden = false;
@@ -1131,7 +1141,7 @@
     const busy = isBusy();
     if (!busy) sentReasoning = null;
     const value = busy && sentReasoning ? sentReasoning : effectiveReasoning();
-    const label = activeProvider === "gemini" ? geminiChoice?.short || providerStates.gemini?.model || "Model" : REASONING_LABELS[value];
+    const label = activeProvider === "gemini" ? geminiChoice?.short || providerStates.gemini?.model || geminiModel || "Model" : REASONING_LABELS[value];
     el.btnReasoning.querySelector(".reasoning-label").textContent = label;
     el.btnReasoning.setAttribute("aria-label", `${activeProvider === "gemini" ? "Model" : "Reasoning"}: ${label}`);
     el.btnReasoning.dataset.value = value;
@@ -3201,6 +3211,7 @@
     } else if (payload.type === "model-chosen") {
       if (provider === "gemini") {
         providerStates.gemini = {...providerStates.gemini, model:payload.short || payload.model.label};
+        rememberGeminiModel(providerStates.gemini.model);
         if (geminiChoice?.id === payload.model.id) {
           if (modelCache.gemini) modelCache.gemini = withGeminiChoice(modelCache.gemini, geminiChoice);
           settleGeminiChoice();
@@ -4043,6 +4054,16 @@
   function openCommandMenu() { commandMenu = true; updateSlashMenu(); el.promptInput.focus(); }
   let orbDown = null, orbDragged = false;
   const dragWindow = () => window.__TAURI__.window?.getCurrentWindow().startDragging().catch(() => {});
+  // Shift the window sideways by CSS pixels, in physical pixels so mixed-DPI monitors agree.
+  // Resolves true once it has moved, false when it could not.
+  async function moveWindow(dx) {
+    const api = window.__TAURI__.window;
+    if (!api?.getCurrentWindow || !api.PhysicalPosition) return false;
+    const win = api.getCurrentWindow();
+    const at = await win.outerPosition();
+    await win.setPosition(new api.PhysicalPosition(Math.round(at.x + dx * window.devicePixelRatio), at.y));
+    return true;
+  }
   el.orb.addEventListener("pointerdown", e => { if (e.button !== 0) return; orbDown = [e.clientX, e.clientY]; orbDragged = false; el.orb.setPointerCapture?.(e.pointerId); });
   el.orb.addEventListener("pointermove", e => { if (orbDown && !orbDragged && Math.hypot(e.clientX-orbDown[0], e.clientY-orbDown[1]) >= 4) { orbDragged = true; dragWindow(); } });
   el.orb.addEventListener("pointerup", () => { orbDown = null; });
@@ -4114,6 +4135,7 @@
     motion: () => QSettings.motionOn,
     timings: () => QSettings.timings,
     drag: dragWindow,
+    move: moveWindow,
     onCollapse: () => closeSlashMenu(),
     onExpand: (focus) => {
       autoResizePrompt();
@@ -4353,7 +4375,15 @@
   listen("bridge", ({ payload: evt }) => {
     if (!evt || typeof evt !== "object") return;
     const provider = evt.provider || "chatgpt";
-    if (evt.type === "status") { providerStates[provider] = evt; syncReasoningButton(); }
+    if (evt.type === "status") {
+      // A status sent before the mode switcher has drawn has no model: keep the one we know.
+      const known = providerStates[provider]?.model;
+      const model = evt.model || known;
+      providerStates[provider] = model ? {...evt, model} : evt;
+      if (provider === "gemini" && evt.model) rememberGeminiModel(evt.model);
+      syncReasoningButton();
+      if (model !== known) queueSizes();
+    }
     if (provider !== activeProvider) return;
     switch (evt.type) {
       case "status":

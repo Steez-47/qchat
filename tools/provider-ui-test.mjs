@@ -121,6 +121,7 @@ try {
   check('switch keeps draft', await evalJS(`document.getElementById('prompt-input').value==='keep my draft'`));
   check('Gemini model label', await evalJS(`document.querySelector('.reasoning-label').textContent==='Flash-Lite' && document.getElementById('btn-reasoning').getAttribute('aria-label')==='Model: Flash-Lite'`));
   await evalJS(`__mock.emit('bridge',{type:'status',provider:'gemini',ready:true,loggedIn:true})`);
+  check('a status without a model keeps the known Gemini model', await evalJS(`document.querySelector('.reasoning-label').textContent==='Flash-Lite'`));
   const orb = await evalJS(`document.getElementById('status-dot').dataset.state`);
   await evalJS(`__mock.emit('bridge',{type:'status',provider:'chatgpt',ready:false,loggedIn:false})`);
   check('other provider status leaves orb alone', orb===await evalJS(`document.getElementById('status-dot').dataset.state`));
@@ -137,6 +138,16 @@ try {
   check('tab reopen switches provider', await provider()==='gemini');
   await evalJS(`__mock.failProvider=true`); await press('btn-reasoning'); await pick('ChatGPT'); await sleep(100);
   check('failed switch rolls back', await provider()==='gemini' && await evalJS(`document.getElementById('btn-reasoning').getAttribute('aria-label')==='Model: Flash-Lite'`));
+  // Relaunch on Gemini before its page has drawn the mode switcher.
+  const geminiNow = {v:1,current:{key:'gnow',provider:'gemini',title:'Gemini now'},recent:[]};
+  await open('/?mock=signedin&nomodel',{chats:geminiNow,keep:true});
+  await waitFor(`__mock.provider==='gemini'`); await sleep(150);
+  check('relaunch names the last Gemini model instead of "Model"', await evalJS(`document.querySelector('.reasoning-label').textContent==='Flash-Lite'`), await evalJS(`document.querySelector('.reasoning-label').textContent`));
+  await open('/?mock=signedin&nomodel',{chats:geminiNow});
+  await waitFor(`__mock.provider==='gemini'`); await sleep(150);
+  check('a first launch with no model yet still reads "Model"', await evalJS(`document.querySelector('.reasoning-label').textContent==='Model'`));
+  await evalJS(`__mock.emit('bridge',{type:'status',provider:'gemini',ready:true,loggedIn:true,model:'Thinking'})`); await sleep(30);
+  check('the model shows as soon as the page reports it', await evalJS(`document.querySelector('.reasoning-label').textContent==='Thinking' && localStorage.getItem('qchat.geminiModel')==='Thinking'`));
   await open('/?mock=signedin',{chats:{v:1,current:{key:'g1',provider:'gemini',conversationId:'abcdef0123456789',title:'Old Gemini',messages:[{role:'user',text:'hi'}]},recent:[]}});
   await open('/?mock=signedin&failProvider',{keep:true});
   await sleep(250);

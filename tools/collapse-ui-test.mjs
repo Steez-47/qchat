@@ -251,6 +251,68 @@ try {
     check(`${side} expansion keeps its edge and restores position (monitor ${left})`, opening.some(f => f.s === 'opening') && opening.filter(f => f.s === 'opening').every(f => Math.abs(f[edge] - full[edge]) < 0.6) && Math.abs(restored.x - full.x) < 0.6 && Math.abs(restored.w - full.w) < 0.6, JSON.stringify({ full, restored }));
   }
 
+  // --- Dragging the folded orb across its screen ------------------------------------------------
+  // The stub moves the window like the native one: screenX follows setPosition. `fail` makes the
+  // move reject, as it would without the window permission.
+  const windowMoves = (fail = false) => evalJS(`(()=>{window.__moves=[];const api=window.__TAURI__.window;
+    api.PhysicalPosition=class{constructor(x,y){this.type='Physical';this.x=x;this.y=y;}};
+    api.getCurrentWindow=()=>({startDragging:async()=>{window.__drags++;},
+      outerPosition:async()=>({x:Math.round(window.screenX*devicePixelRatio),y:0}),
+      setPosition:async(p)=>{if(${fail})throw new Error('denied');window.__moves.push(p.x);Object.defineProperty(window,'screenX',{configurable:true,value:p.x/devicePixelRatio});}});})()`);
+  const orbOnScreen = async () => (await evalJS('window.screenX')) + (await rect('#bar')).x;
+  await windowMoves();
+  await screenPosition(1100);
+  const wide = await rect('#bar');
+  await blur();
+  await folded();
+  check('folded on the right half anchors right', await evalJS(`document.documentElement.dataset.collapseAnchor`) === 'right');
+  // Dragged so the orb now sits in the left half of the screen.
+  await screenPosition(-300);
+  const dropped = await orbOnScreen();
+  await focus();
+  const flip = await frames(700);
+  await opened();
+  const moves = await evalJS('window.__moves');
+  check('opening after a drag to the left half moves the window once', moves.length === 1 && moves[0] > -300, JSON.stringify(moves));
+  const opening = flip.filter(f => f.s === 'opening');
+  check('it then opens rightward from where the orb was left', opening.length > 0 && opening.every(f => Math.abs(f.x - opening[0].x) < 0.6) && Math.abs((await evalJS('window.screenX')) + opening[0].x - dropped) < 0.6, JSON.stringify({ dropped, first: opening[0], screenX: await evalJS('window.screenX') }));
+  check('and ends at full size with no leftover offset', Math.abs((await rect('#bar')).w - wide.w) < 0.5 && await evalJS(`document.getElementById('bar').style.translate===''`));
+  // Back the other way: folded on the left, dragged into the right half, opens leftward.
+  await screenPosition(-200);
+  await blur();
+  await folded();
+  check('folded on the left half anchors left', await evalJS(`document.documentElement.dataset.collapseAnchor`) === 'left');
+  await screenPosition(1500);
+  const droppedRight = (await orbOnScreen()) + (await rect('#bar')).w;
+  await evalJS('window.__moves=[]');
+  await focus();
+  const flipBack = await frames(700);
+  await opened();
+  const backMoves = await evalJS('window.__moves');
+  const openingBack = flipBack.filter(f => f.s === 'opening');
+  check('dragged to the right half it opens leftward from the orb', backMoves.length === 1 && backMoves[0] < 1500 && openingBack.length > 0 && openingBack.every(f => Math.abs(f.right - openingBack[0].right) < 0.6) && Math.abs((await evalJS('window.screenX')) + openingBack[0].right - droppedRight) < 0.6, JSON.stringify({ backMoves, droppedRight, first: openingBack[0] }));
+  // A drag that stays on the same half keeps the edge and leaves the window alone.
+  await screenPosition(1100);
+  await blur();
+  await folded();
+  await screenPosition(1300);
+  await evalJS('window.__moves=[]');
+  await focus();
+  await opened();
+  check('a drag within the same half does not move the window', (await evalJS('window.__moves')).length === 0);
+  // Without a window move, the orb keeps its old edge rather than jumping across the window.
+  await windowMoves(true);
+  await screenPosition(1100);
+  await blur();
+  await folded();
+  await screenPosition(-300);
+  const stuck = await rect('#bar');
+  await focus();
+  const held = await frames(700);
+  await opened();
+  check('a refused window move falls back to the original edge', held.filter(f => f.s === 'opening').every(f => Math.abs(f.right - stuck.right) < 0.6) && await evalJS(`document.getElementById('bar').style.translate===''`), JSON.stringify({ stuck, first: held.find(f => f.s === 'opening') }));
+  await screenPosition(1100);
+
   // --- Reverse mid-fold ----------------------------------------------------------------------
   await blur();
   // Sample and focus in the same frame; screenshot encoding must not let the fold finish first.

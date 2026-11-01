@@ -26,7 +26,8 @@
     autostart: params.has("autostart"),
     failProvider: params.has("failProvider"),
     providerHold: params.has("holdProvider"),
-    model: "Flash-Lite",
+    // `nomodel` stands for a Gemini page whose mode switcher has not drawn yet.
+    model: params.has("nomodel") ? undefined : "Flash-Lite",
     failModel: false,
     models: {gemini:[{id:"flash",label:"Flash-Lite",selected:true,meta:"Fast answers"},{id:"pro",label:"Pro",meta:"Advanced reasoning",disabled:true},{id:"thinking",label:"Thinking",meta:"Deeper answers"}]},
     levels: [],

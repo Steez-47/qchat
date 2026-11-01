@@ -17,11 +17,13 @@
   const EASE_FOLD = "cubic-bezier(0.5, 0, 0.2, 1)";
   const MODIFIERS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"]);
 
-  function create({ stack, bar, orb, seconds, blocked = () => false, motion = () => true, timings, drag, onCollapse, onExpand, onOpened }) {
+  function create({ stack, bar, orb, seconds, blocked = () => false, motion = () => true, timings, drag, move, onCollapse, onExpand, onOpened }) {
     const root = document.documentElement;
     let state = "open"; // open | closing | closed | opening
     let timer = null, waitTimer = null, press = null, running = [], token = 0;
     let idleSince = 0, lastPointer = -Infinity, held = false;
+    // Where the window was when it folded, and a window move still settling before it opens.
+    let foldedAt = null, moving = false;
 
     const now = () => performance.now();
     const style = (node) => getComputedStyle(node);
@@ -61,15 +63,22 @@
     // Where a part is right now, so a reversal mid-fold starts from what is on screen.
     const snapshot = (node) => { const s = style(node); return { opacity: s.opacity, transform: s.transform }; };
 
+    // The screen half a horizontal span's centre sits on. Screen coordinates share CSS pixels,
+    // including monitors left of the primary one.
+    function sideOf(rect) {
+      const screenLeft = window.screen.availLeft || 0;
+      return window.screenX + rect.left + rect.width / 2 >= screenLeft + window.screen.availWidth / 2 ? "right" : "left";
+    }
+
     function collapse() {
       if (state !== "open") return;
       clearTimeout(timer); timer = null;
       onCollapse?.();
       const from = bar.getBoundingClientRect();
-      // Screen coordinates share CSS pixels, including monitors left of the primary one.
-      // Choose once: dragging the folded orb or reversing a fold must keep the same edge.
-      const screenLeft = window.screen.availLeft || 0;
-      root.dataset.collapseAnchor = window.screenX + from.left + from.width / 2 >= screenLeft + window.screen.availWidth / 2 ? "right" : "left";
+      // The edge stays fixed through the fold and any reversal. Only a drag can change it,
+      // and that is settled when the orb opens (see reanchor).
+      root.dataset.collapseAnchor = sideOf(from);
+      foldedAt = { x: window.screenX, y: window.screenY };
       const radius = style(bar).borderTopLeftRadius;
       const size = parseFloat(style(bar).minHeight) || from.height;
       const folding = parts(), inside = contents();
@@ -97,12 +106,42 @@
       setState("closed");
     }
 
+    // The folded orb was dragged to the other half of its screen: open toward the middle of
+    // the screen instead of off its edge. The orb swaps to the window's other edge, so the
+    // window shifts by the same amount and the orb stays exactly where it was left.
+    // Returns that shift in CSS pixels, or 0 when the edge holds.
+    function reanchor() {
+      if (!foldedAt || (window.screenX === foldedAt.x && window.screenY === foldedAt.y)) return 0;
+      const before = bar.getBoundingClientRect();
+      const side = sideOf(before);
+      if (side === root.dataset.collapseAnchor) return 0;
+      root.dataset.collapseAnchor = side;
+      return before.left - bar.getBoundingClientRect().left;
+    }
+
     function expand(focus = true) {
       clearTimeout(waitTimer); waitTimer = null;
       clearTimeout(timer); timer = null;
       press = null;
-      if (state === "open" || state === "opening") return;
+      if (state === "open" || state === "opening" || moving) return;
       const wasClosed = state === "closed";
+      const shift = wasClosed ? reanchor() : 0;
+      if (shift) {
+        // Hold the orb in place on screen until the window has moved under it.
+        bar.style.translate = `${px(shift)} 0`;
+        moving = true;
+        const mine = ++token;
+        Promise.resolve(move ? move(shift) : false).catch(() => false).then((moved) => {
+          moving = false;
+          bar.style.translate = "";
+          if (mine !== token || state !== "closed") return;
+          foldedAt = { x: window.screenX, y: window.screenY };
+          // Without a window move the new edge would only make the orb jump, so keep the old one.
+          if (!moved) root.dataset.collapseAnchor = root.dataset.collapseAnchor === "right" ? "left" : "right";
+          expand(focus);
+        });
+        return;
+      }
       const from = bar.getBoundingClientRect();
       const radius = style(bar).borderTopLeftRadius;
       const folding = parts(), inside = contents();
@@ -137,6 +176,7 @@
     function opened() {
       token++;
       stopAll();
+      foldedAt = null;
       setState("open");
       onOpened?.();
       // Clicked away again while it was opening: start a fresh count.
@@ -151,6 +191,9 @@
       if (state === "open") return;
       token++;
       stopAll();
+      moving = false;
+      foldedAt = null;
+      bar.style.translate = "";
       setState("open");
       onExpand?.(false);
       onOpened?.();

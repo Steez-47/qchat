@@ -932,6 +932,30 @@ function asyncModelMenu(b, { current = 'Flash-Lite', levelRow = false, broken = 
 }
 const modelErrors = b => b.events.filter(e => e.type === 'error' && e.code === 'model_unavailable');
 
+test('status reports the mode as soon as the switcher draws, even after the composer', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  await b.tick(600);
+  assert.equal(b.events.filter(e => e.type === 'status').at(-1).model, undefined, 'no switcher yet');
+  const before = b.events.filter(e => e.type === 'status').length;
+  // An icon may follow the name inside the button; only the first line is the mode.
+  const button = makeEl('button', { 'data-test-id': 'bard-mode-menu-button' }, [makeText('Flash\nkeyboard_arrow_down')]);
+  b.body.append(makeEl('bard-mode-switcher', {}, [button]));
+  await b.tick(600);
+  const statuses = b.events.filter(e => e.type === 'status');
+  assert.ok(statuses.length > before, 'a new status follows the switcher without waiting for the login poll');
+  assert.equal(statuses.at(-1).model, 'Flash');
+  const settled = statuses.length;
+  await b.tick(1500);
+  assert.equal(b.events.filter(e => e.type === 'status').length, settled, 'an unchanged mode sends nothing more');
+});
+
+test('status falls back to the mode picker label when the button has no text', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  b.body.append(makeEl('button', { 'aria-label': 'Open mode picker, currently Thinking' }));
+  await b.tick(600);
+  assert.equal(b.events.filter(e => e.type === 'status').at(-1).model, 'Thinking');
+});
+
 test('model menu opens with one click and answers quickly', async () => {
   const b = createBrowser({ ready: true, loggedIn: true });
   const menu = asyncModelMenu(b);

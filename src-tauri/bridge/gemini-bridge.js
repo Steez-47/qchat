@@ -100,9 +100,14 @@
   }
   function loginDue() { return Date.now() - loginAt >= loginInterval(); }
 
+  // The current mode as the switcher shows it. Its first line is the name; an icon may follow.
+  // Some layouts only say it in the label ("Open mode picker, currently Flash").
   function modelShort() {
-    const node = document.querySelector('bard-mode-switcher button, button[data-test-id="bard-mode-menu-button"]');
-    return (node?.innerText || node?.textContent || '').trim() || undefined;
+    const node = document.querySelector('bard-mode-switcher button, button[data-test-id="bard-mode-menu-button"], button[aria-label*="mode picker" i]');
+    if (!node) return undefined;
+    const text = String(node.innerText || node.textContent || '').split('\n').map(line => line.trim()).find(Boolean);
+    const labelled = /currently\s+(.+?)\s*$/i.exec(node.getAttribute('aria-label') || '')?.[1];
+    return text || labelled || undefined;
   }
 
   let currentSetupId = null;
@@ -1328,15 +1333,20 @@
     status
   };
 
-  let lastURL = location.href, hadComposer = false, lastTemporary = false, lastBlock = '';
+  let lastURL = location.href, hadComposer = false, lastTemporary = false, lastBlock = '', lastModel;
   setInterval(() => {
     const ready = !!find('composer');
+    // The mode switcher renders after the composer, so the first status often has no model.
+    // Report it as soon as it shows up or changes, or the app's picker reads "Model" for a minute.
+    const model = modelShort();
+    const changedModel = model !== undefined && model !== lastModel;
+    if (model !== undefined) lastModel = model;
     const currentTemporary = temporaryReady();
     const changedTemporary = currentTemporary !== lastTemporary;
     lastTemporary = currentTemporary;
     const changedURL = lastURL !== location.href;
     if (changedURL) lastURL = location.href;
-    if (hadComposer !== ready || changedURL || changedTemporary || loginDue()) status();
+    if (hadComposer !== ready || changedURL || changedTemporary || changedModel || loginDue()) status();
     hadComposer = ready;
     const block = blocking();
     if (block && block[1] !== lastBlock) {
