@@ -23,9 +23,12 @@ Serves `public/` and the `api/` handlers on http://localhost:3000 with no depend
 ```
 public/
   index.html     The page
-  styles.css     All styles. The demo's glass, geometry and timings follow docs/DESIGN.md
-  story.js       The scroll story: every frame is a pure function of scroll progress
-  site.js        Release info next to the download buttons, and the look picker
+  styles.css     All styles. The demos' glass, geometry and timings follow docs/DESIGN.md
+  motion.js      Motion core: Lenis smooth scroll, the scrub engine, reveals, demo helpers
+  story.js       The hero scroll story (orb → bar → reply → tabs → fold)
+  scenes.js      The pinned feature tour: selected text, snapshots, commands, files, search
+  site.js        Release info, the look picker and the closing bar
+  lenis.min.js   Lenis 1.3.26 smooth scrolling, vendored (MIT, see lenis.LICENSE.txt)
   icon.svg       Favicon (copy of assets/icon.svg)
   og.png         Share image
 api/
@@ -36,6 +39,8 @@ vercel.json      Output dir, the /download rewrite, caching and security headers
 ```
 
 The download buttons link to `/download`. Once `/api/release` answers, `site.js` swaps in the direct installer URL and shows the version and size. If GitHub can't be reached, `/download` falls back to the releases page, so the button always goes somewhere useful.
+
+Every demo frame is a pure function of scroll progress, so all of it scrubs backwards as well as forwards. `QS.scrub(section, { paint, measure })` in `motion.js` is the one engine behind the story and every scene; to add a scene, add a `<section class="scene" data-scene="name">` and a matching builder in `scenes.js`. With *reduce motion* on, smooth scrolling, zooms and parallax are off and reveals become plain fades.
 
 The look picker's colours are copied from `ui/settings-core.js`. Update `LOOKS` in `site.js` if those change.
 

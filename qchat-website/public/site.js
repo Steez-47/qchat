@@ -27,6 +27,28 @@
     .catch(() => {});
 
   // -------------------------------------------------------------------------
+  // Finale: the closing bar types its own call to action once it's on screen.
+  // -------------------------------------------------------------------------
+  const finale = document.getElementById("finale");
+  const finaleTyped = document.getElementById("finale-typed");
+  if (finale && finaleTyped) {
+    const text = "Download QChat for Windows";
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const watch = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      watch.disconnect();
+      if (still) { finaleTyped.textContent = text; return; }
+      let i = 0;
+      const step = () => {
+        finaleTyped.textContent = text.slice(0, ++i);
+        if (i < text.length) setTimeout(step, 38 + Math.random() * 46);
+      };
+      setTimeout(step, 700);
+    }, { threshold: 0.6 });
+    watch.observe(finale.querySelector(".finale-bar"));
+  }
+
+  // -------------------------------------------------------------------------
   // Look picker. Values are QChat's own looks (ui/settings-core.js).
   // -------------------------------------------------------------------------
   const LOOKS = [
@@ -58,8 +80,12 @@
   label.setAttribute("aria-live", "polite");
   swatches.after(label);
 
+  let swapTimer = 0;
   function apply(index) {
     const [name, scheme, tint, ink, accent, orb] = LOOKS[index];
+    preview.classList.add("is-swapping");
+    clearTimeout(swapTimer);
+    swapTimer = setTimeout(() => preview.classList.remove("is-swapping"), 180);
     const s = preview.style;
     s.setProperty("--lp-tint-a", triple(tint[0]));
     s.setProperty("--lp-tint-b", triple(tint[1]));
