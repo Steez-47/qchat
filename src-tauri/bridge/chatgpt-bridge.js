@@ -932,12 +932,14 @@
     return match ? { label: match[1], index: Number(match[2]) - 1, count: Number(match[3]) } : null;
   }
   // Chat and Work are read from the page's own switch. Only that exact control is clicked.
-  const MODE_MESSAGE = "ChatGPT Work isn't available on this account right now.";
-  const modeSelector = '[role="tab"], [role="radio"], [role="menuitemradio"], button, a[role]';
+  const MODE_MESSAGE = "Couldn't confirm Work mode in ChatGPT. Try again or open ChatGPT to check the switch.";
+  const modeSelector = '[role="tab"], [role="radio"], [role="menuitemradio"], [role="button"], button, a[role], a[href]';
   const modeExcluded = '[data-message-author-role], [data-message-role], user-query, model-response, nav a[href*="/c/"], [data-testid^="history-item"], conversations-list, .conversation, [contenteditable="true"]';
   const modeShown = node => !!node && node.isConnected !== false && !!node.getClientRects?.().length && !node.closest?.(modeExcluded);
   const modeName = node => {
-    const text = String(node.innerText ?? node.textContent ?? '').split('\n').map(line => line.trim()).find(Boolean) || '';
+    const copy = node.cloneNode(true);
+    for (const icon of copy.querySelectorAll('svg, mat-icon, [aria-hidden="true"], [hidden]')) icon.remove();
+    const text = String(copy.innerText ?? copy.textContent ?? '').split('\n').map(line => line.trim()).find(Boolean) || '';
     const label = String(node.getAttribute?.('aria-label') || '').split('\n')[0].trim();
     return { text, label };
   };
