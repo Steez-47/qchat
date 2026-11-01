@@ -1,3 +1,19 @@
+## Completed-block response streaming (2026-11-01)
+
+Goal: keep tool activity live and show response text only at complete Markdown or closed tag/template block boundaries. Use one buffered path for all saved streaming styles; preserve final/Stop text, formatting, selection and reading position.
+
+| task | model | owns | status |
+|---|---|---|---|
+| Replace live tail rendering and strengthen boundary detection | Claude Sonnet medium + parent | ui/app.js, ui/stream-text.js, shared tokenizer and boundary/paragraph checks | done |
+| Update streaming UI expectations, independently verify and build | parent | streaming regression fixtures, settings controls, acceptance and logs | done: 12 UI suites / 592 checks, four unit suites and production build pass |
+| Focused final review and selective local commit | two Sol reviewer passes + parent | streaming diff only | done: five concrete review findings fixed and covered; commit 7df00f9 |
+
+All saved streaming styles now use finished-block buffering. Real tag/template/fence closers release complete scopes, tool and image activity remain live, and final/Stop/error flush the received tail. Legacy typing/speed controls are hidden; saved choices remain import-compatible. Headless checks cover motion on/off/reduced, settings changes, source events, formatting, interactive controls, Unicode, node/selection continuity and reading position. Unit/parser/bridge checks and 13 JavaScript syntax checks pass; logs are in `.tmp/completed-block-stream`. No live provider messages were sent by this work.
+
+Built commit `7df00f95d1b9092c226c41a7750825400648f731` and staged `dist/fixes/completed-block-stream-7df00f9/QChat.exe` (6,166,528 bytes, v1.3.0), SHA256 `63b90420e5c365079c9eda7378f920fdecc1305bd0fcc20c734c153d6b0f0868`. Compiled and staged hashes match; build/validation manifests accompany it. The canonical portable, running v1.3.0 and snapshot-f3da5ad artifact hashes are unchanged. PID42228 remains responsive. New executable not launched; real signed-in streaming remains unverified. Local source/test commit only, no push or publication. Shared plan/ledger updates remain uncommitted alongside the snapshot owner's notes.
+
+The orchestrator playbook is absent on disk; read its existing version from git commit 37b5396. Preserve the concurrent snapshot repair and its uncommitted files. Use isolated headless browser checks only; leave the owner's app/profile intact.
+
 ## Snapshot prompt ordering repair (2026-11-01)
 
 Goal: send a captured screenshot and its intended prompt together, preserving newer composer drafts. Keep the owner's running app and profile untouched.
