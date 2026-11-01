@@ -317,6 +317,8 @@ fn close_settings(window: tauri::WebviewWindow) -> Result<(),String> {
 fn hide_main(app: tauri::AppHandle) {
     capture_anchor(&app);
     if let Some(w) = app.get_webview_window("main") {
+        // The page stops its idle-collapse count; a hidden window has nothing to fold.
+        let _ = w.emit("qchat://hidden", ());
         let _ = w.hide();
     }
     app.state::<Host>().0.lock().unwrap().hidden = Instant::now();
