@@ -575,3 +575,15 @@ Open: unexplained live guest failure (one run; diagnostics now capture code and 
 Next when workers return: signed-in check of Temporary first, then the live guest intermittent, then a fresh audit.
 
 Handoff update (2026-11-01): the note above predates O28 to O32, built with Gemini 3.8 Flash as the only available worker and every claim checked by the Claude thread. Latest portable build and hashes are the last checkpoint line in LEDGER.md. Mixed-DPI placement and focus after closing the sign-in window were reported but left unchanged because they cannot be verified here; see LEDGER O32. Real Ctrl+C clipboard round trip after the O32 fix has not been run.
+
+## Public v1.4.0 release (2026-11-01)
+
+Source: f07af3626b11439e21ed8a237a9e2d174cfdc67f on t3/main, merged Claude cloud PRs #10, #11 and version preparation #12. Cloud release session: https://claude.ai/code/session_01CQNQrAaPN1VAPik6xsigwr. Referenced ORCHESTRATOR.md remains absent.
+
+Built with npm run build:installer. Eleven focused headless suites passed: collapse (46), smoothness (27), tab-keyboard, animation, UX, feature, history, settings-presets, find, rename-chat, provider-draft. Rust: 34 passed, one intentional desktop clipboard fixture ignored. Open/folded screenshots inspected. No app source changed. Build-generated pre-existing icon/permission state restored exactly.
+
+Installer and portable ProductVersion 1.4.0. Extracted installer app differs from portable only at the expected three UNK-to-NSS bytes; bundled installation notes/notices match staging, WebView2 Microsoft signature Valid, installer manifest asInvoker. All staged checksums match compiled artifacts. Portable SHA256 9e8430b5fc8800c82e43bc04a7f546f589d651199b9deab9c224fc844e5bba03; installer SHA256 e683c27811dfc3661f9a3427130982bbf3be1feb2dff35d5a643ebb597a3c3b6.
+
+Updated dist/QChat.exe and the Start-menu target AppData/Local/QChat/qchat.exe to 1.4.0 with hash verification and backups in .tmp/release-1.4.0. The installed copy uses the NSIS payload marker. Running PID11000 stayed responsive; its mapped build executable was preserved by rename next to the compiled executable. Saved profile and live session preserved; restart required. Installer not executed, uninstall registration unchanged. Clean-device install, desktop fold/drag and signed-in sending remain unverified. Validation scripts, manifest, extracted payload and additional regression logs are under .tmp/release-1.4.0; screenshots under .tmp/v1.4.0-shots.
+
+Published https://github.com/Steez-47/qchat/releases/tag/v1.4.0 as public Latest (not draft/prerelease). Annotated tag resolves to exact build source f07af3626b11439e21ed8a237a9e2d174cfdc67f. All five remote asset sizes and server SHA256 digests verified; downloaded portable and SHA256SUMS roundtrip verified. Release closeout commit changes records only.
