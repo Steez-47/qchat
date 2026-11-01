@@ -8,6 +8,8 @@ Usage and rate-limit log for delegated work. The full log through v1.4.0 is in `
 
 ## Log
 
+2026-11-01 | v1.4.3 public release | parent | done | PR17/18 merged; tag13fafd1f0457680c8a686c69c9771b49cbc9f64d; 55offlinePASS, Rust40PASS/1ignore, 109syntaxPASS; desktop/phone/reduced-motion website smokePASS; installer220297480bytes SHA256 ea0cbf01ab12f1bdf6999499f4ff2d4f1e260ba46297748475cbe51134328720; portable6234112bytes SHA256 44251034457976cbd97b29234e1f7c3ef2bcd5fd7bf241e5307d2eda17b98dfa; public/latest, extracted payload/resources/manifest/runtime signature and five server hashes/sizesPASS. One Luna review; parent fixed high-scale bounds and mobile glow overflow. Native mixedDPI, signed-in, updater restart and clean install unverified.
+
 2026-11-01 | PR17 screen sizing review | codex/gpt-6-luna high | done | Terra budget unavailable; found minimum side-window height could exceed highly scaled work area. Parent fixed and added 200% regression; Rust40PASS/1ignore.
 
 2026-11-01 | v1.4.2 public release | parent | done | source/tag 2a0d294c8f2bb4287c3f739c8a76d4e7413b0881; reused 55 passing integration suites, release settings/updater2PASS, Rust39PASS/1ignore, 106syntaxPASS; installer220297926bytes SHA256 ba0f876480cf8d89d0fa1cef36f4842b28601b501496b39aba5b5d6643301501; portable6233088bytes SHA256 687cab55b45050ae889de375de305f82dfc4a5b79ea326e2b606a7c032d0b423; payload/signature/manifest verified; public/latest, five server hashes/sizes and portable/checksum roundtrip PASS; existing dist/QChat.exe preserved. Prior independent updater review reused; no application edits in release preparation.

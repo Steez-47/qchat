@@ -13,7 +13,7 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 - Goal: merge PR17 screen sizing and PR18 website feature tour, then publish v1.4.3 publicly.
 - Parent owns integration, small review fixes, version metadata, package verification and publication.
 - Review: Luna high found a high-scaling window-fit minimum exceeding available height; parent removed the minimum and added a 200% regression case. Rust 40 pass / 1 intentional ignore.
-- Status: running. Full offline suites, release build and publication pending. Preserve running app and saved profile.
+- Status: done. PR17 and PR18 merged. Public/latest v1.4.3: https://github.com/Steez-47/qchat/releases/tag/v1.4.3; source/tag 13fafd1f0457680c8a686c69c9771b49cbc9f64d. All 55 offline suites, Rust40PASS/1ignore and 109 JS syntax checks pass. Website desktop/phone/reduced-motion smoke passes after fixing finale glow overflow. Installer retry succeeded; extracted payload/resources/version, Microsoft runtime signature, asInvoker manifest and all five GitHub asset sizes/digests verified. Installer 220297480 bytes; portable 6234112 bytes. Existing dist/QChat.exe preserved. Native mixed-DPI appearance, signed-in sending, real updater restart and clean-device installation remain unverified.
 
 ## v1.4.2 public release (2026-11-01)
 
@@ -36,7 +36,7 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 - Status: done. v1.4.1 public/latest at https://github.com/Steez-47/qchat/releases/tag/v1.4.1; tag/source 040fbce227a0f2c0d4dc23fef7e9ad9125371fac. All 54 offline suites, Rust 34 PASS/1 intentional ignore and 99 syntax checks PASS. Installer payload/version, offline WebView2 signature, asInvoker manifest and checksums verified. All five published asset sizes/server SHA256 match; downloaded portable/checksum roundtrip PASS.
 - Review: requested Antigravity Sonnet medium; provider quota prevented review. Parent source/package checks complete, no application edits. Native mixed-DPI behavior, signed-in sending and clean-device installation remain unverified. Running app/profile preserved.
 
-- Latest release: v1.4.2 (2026-11-01). `main` is the only long-lived branch.
+- Latest release: v1.4.3 (2026-11-01). `main` is the only long-lived branch.
 - `npm test` runs the 54 headless suites. CI runs them on every push and pull request.
 
 ## Settings overhaul (2026-11-01)
