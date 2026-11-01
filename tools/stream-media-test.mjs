@@ -34,7 +34,12 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
   const area = element('form');
   area.querySelector = selector => pending && selector.includes('progressbar') ? {} : null;
   area.querySelectorAll = selector => selector === 'button' ? [...removeButtons, ...(attachmentButton ? [attachmentButton] : [])] : [];
-  const composer = element('div'); composer.closest = selector => selector === 'form' ? area : null;
+  const makeComposer = () => {
+    const node = element('div'); node.closest = selector => selector === 'form' ? area : null;
+    for (const key of ['innerText', 'textContent']) Object.defineProperty(node, key, { get: () => composerText });
+    return node;
+  };
+  let composer = makeComposer(); const submissions = [];
   const reader = {
     async read() {
       if (reads < chunks.length) {
@@ -56,7 +61,7 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
     clone() { if (cloneError) throw new Error('cannot clone'); return cloned; } };
   const sendButton = element('button');
   sendButton.click = () => {
-    clicks++; submitted = true;
+    clicks++; submitted = true; submissions.push({ text: composerText, attachments: removeButtons.length });
     users.push(ordered(element('div', { 'data-message-author-role': 'user', 'data-message-id': 'current-user' }, composerText), 100));
     window.fetch('/backend-api/f/conversation', { method: 'POST', ...(requestIdentity ? { body: JSON.stringify({ messages: [{ id: 'historical-user', author: { role: 'user' } }, { id: 'current-user', author: { role: 'user' } }] }) } : {}) });
   };
@@ -102,8 +107,11 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
   }));
   return {
     events, requests, api: window.__qchat,
+    upload: () => window.fetch('/backend-api/files/fixture', { method: 'POST' }),
     send: (args = {}) => window.__qchat.send({ id: 'job', prompt: 'hello', ...args }),
-    get clicks() { return clicks; }, get cancels() { return cancels; }, get pickerClicks() { return pickerClicks; },
+    get clicks() { return clicks; }, get submissions() { return submissions; }, get composerText() { return composerText; },
+    resetComposer() { composerText = ''; }, remountComposer() { composer = makeComposer(); composerText = ''; },
+    sendDisabled(value) { sendButton.disabled = value; }, get cancels() { return cancels; }, get pickerClicks() { return pickerClicks; },
     get newChats() { return newChats; },
     get now() { return now; },
     get attachmentCount() { return removeButtons.length; },
@@ -890,10 +898,78 @@ test('failure after request start does not remove submitted attachments',async()
 
 test('attachment-only Send waits for processing and a quiet upload window', async () => {
   const b = browser({ data: sse(message(['uploaded']), '[DONE]') });
-  b.pending(true); const sent = b.send({ prompt: '', attachmentCount: 1 });
+  b.pendingAttachment('shot.png'); const sent = b.send({ prompt: '', attachmentCount: 1 });
   await b.tick(2000); assert.equal(b.clicks, 0);
   b.pending(false); await b.tick(500); assert.equal(b.clicks, 0);
   await b.tick(600); await sent; assert.equal(b.clicks, 1); assert.equal(done(b)?.text, 'uploaded');
+});
+
+const PROMPT = 'Line one\n\n  indented “quotes” <b>&amp;</b> héllo 🌸 日本語\nlast';
+const land = (b, at, { name = 'shot.png', reset = false, remount = false, settleAfter = 0 } = {}) => b.later(() => {
+  b.pendingAttachment(name); if (reset) b.resetComposer(); if (remount) b.remountComposer();
+  b.later(() => b.pending(false), settleAfter);
+}, at);
+test('delayed attachment registration never submits text alone and sends one message with the exact prompt', async () => {
+  const b = browser({ data: sse(message(['ok']), '[DONE]') });
+  land(b, 3000, { settleAfter: 400 });
+  const sent = b.send({ prompt: PROMPT, attachmentCount: 1 });
+  await b.tick(2900); assert.equal(b.clicks, 0); assert.equal(b.composerText, '');
+  await b.tick(2000); await sent;
+  assert.equal(b.clicks, 1); assert.deepEqual(b.submissions, [{ text: PROMPT, attachments: 1 }]); assert.equal(done(b)?.text, 'ok');
+});
+test('upload completion that resets or remounts the composer cannot lose the prompt', async () => {
+  for (const options of [{ reset: true }, { remount: true }, { reset: true, remount: true }]) {
+    const b = browser({ data: sse(message(['ok']), '[DONE]') });
+    land(b, 1500, { ...options, settleAfter: 1200 });
+    const sent = b.send({ prompt: PROMPT, attachmentCount: 1 });
+    await b.tick(6000); await sent;
+    assert.deepEqual(b.submissions, [{ text: PROMPT, attachments: 1 }], JSON.stringify(options));
+  }
+});
+test('a composer remounted after the prompt was typed is refilled once and never submitted empty', async () => {
+  const b = browser({ data: sse(message(['ok']), '[DONE]') });
+  b.pendingAttachment('shot.png'); b.pending(false); b.sendDisabled(true);
+  b.later(() => b.remountComposer(), 1500); b.later(() => b.sendDisabled(false), 2500);
+  const sent = b.send({ prompt: PROMPT, attachmentCount: 1 });
+  await b.tick(5000); await sent;
+  assert.deepEqual(b.submissions, [{ text: PROMPT, attachments: 1 }]);
+});
+test('screenshot-only Send waits for the delayed attachment and submits once', async () => {
+  const b = browser({ data: sse(message(['seen']), '[DONE]') });
+  land(b, 2500, { settleAfter: 300 });
+  const sent = b.send({ prompt: '', attachmentCount: 1 });
+  await b.tick(2400); assert.equal(b.clicks, 0);
+  await b.tick(2500); await sent;
+  assert.deepEqual(b.submissions, [{ text: '', attachments: 1 }]); assert.equal(done(b)?.text, 'seen');
+});
+test('an attachment that never registers fails without submitting text alone', async () => {
+  const b = browser();
+  const sent = b.send({ prompt: PROMPT, attachmentCount: 1 }); await b.tick(121000); await sent;
+  assert.equal(b.clicks, 0); assert.equal(terminal(b)[0]?.code, 'attachment_pending');
+});
+
+test('one completed upload cannot stand in for the rest of the selected files', async () => {
+  const b = browser({ data: sse(message(['both']), '[DONE]') });
+  b.input().files = [{ name: 'first.png' }, { name: 'second.png' }];
+  await b.api.attachmentInput();
+  b.pendingAttachment('first.png'); b.pending(false); await b.upload();
+  land(b, 3500, { name: 'second.png', settleAfter: 300 });
+  const sent = b.send({ prompt: PROMPT, attachmentCount: 2 });
+  await b.tick(3000); assert.equal(b.clicks, 0); assert.equal(b.composerText, '');
+  await b.tick(2500); await sent;
+  assert.deepEqual(b.submissions, [{ text: PROMPT, attachments: 2 }]);
+});
+
+test('upload activity resuming while Send is disabled delays submission again', async () => {
+  const b = browser({ data: sse(message(['ok']), '[DONE]') });
+  b.pendingAttachment('shot.png'); b.pending(false); b.sendDisabled(true);
+  b.later(() => { b.pending(true); b.resetComposer(); }, 1500);
+  b.later(() => b.sendDisabled(false), 1700);
+  b.later(() => b.pending(false), 3000);
+  const sent = b.send({ prompt: PROMPT, attachmentCount: 1 });
+  await b.tick(2900); assert.equal(b.clicks, 0);
+  await b.tick(1500); await sent;
+  assert.deepEqual(b.submissions, [{ text: PROMPT, attachments: 1 }]);
 });
 
 test('native pre-send cancellation removes selected files before another attachment selection', async () => {

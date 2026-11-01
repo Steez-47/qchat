@@ -67,7 +67,7 @@ try {
       png: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
       snapshotName: 'Snapshot 1.png',
       delaySnapshot: false, rejectSnapshot: false, snapshotError: 'snapshot_failed: no active window',
-      autoDone: true
+      autoDone: true, delaySend: false
     };
     test.emit = payload => (test.handlers.bridge || []).forEach(fn => fn({ payload }));
     window.__TAURI__ = { event: { listen: async (name, fn) => { (test.handlers[name] ||= []).push(fn); } }, core: { invoke: async (cmd, args = {}) => {
@@ -102,6 +102,7 @@ try {
       }
       if (cmd === 'attachment_remove') { test.files.delete(args.id); return null; }
       if (cmd === 'chat_send') {
+        if (test.delaySend) await new Promise(resolve => { test.releaseSend = resolve; });
         if (test.autoDone) setTimeout(() => test.emit({ type: 'done', id: args.id, text: 'ok', conversationId: 'conv-1' }), 10);
         return null;
       }
@@ -189,6 +190,43 @@ try {
     chip('existing.txt').querySelector('button[aria-label="Remove existing.txt"]').click();
     await until(() => !chip('existing.txt'));
     check('removing the last file leaves an empty draft and hides the tray', $('attachments').hidden && $('prompt-input').value === '');
+
+    input('original prompt');
+    test.snapshotName = 'Snapshot prompt.png';
+    test.delaySnapshot = true;
+    delete test.releaseSnapshot;
+    btn.click();
+    await until(() => test.releaseSnapshot);
+    const intendedPrompt = 'Explain this screenshot\\nKeep Māori and 🥝 together';
+    input(intendedPrompt);
+    $('prompt-input').setSelectionRange(8, 18, 'backward');
+    test.releaseSnapshot();
+    test.delaySnapshot = false;
+    await until(() => chip('Snapshot prompt.png')?.dataset.state === 'ready');
+    check('capture preserves edits and backward selection made while waiting', $('prompt-input').value === intendedPrompt
+      && $('prompt-input').selectionStart === 8 && $('prompt-input').selectionEnd === 18 && $('prompt-input').selectionDirection === 'backward');
+    const promptSnapshot = [...test.files.values()].find(file => file.name === 'Snapshot prompt.png');
+    const combinedBefore = sends().length;
+    test.delaySend = true;
+    $('btn-send').click();
+    await until(() => test.releaseSend);
+    const combined = sends().at(-1);
+    check('screenshot and current prompt enter one send together', sends().length === combinedBefore + 1
+      && combined.args.prompt === intendedPrompt && combined.args.attachmentIds.length === 1
+      && combined.args.attachmentIds[0] === promptSnapshot?.id);
+    const nextDraft = 'Next prompt must survive 🥝';
+    input(nextDraft);
+    $('prompt-input').setSelectionRange(2, 11, 'backward');
+    test.releaseSend();
+    test.delaySend = false;
+    await until(() => document.querySelector('[data-role=assistant]')?.dataset.status === 'done');
+    await until(() => $('attachments').hidden);
+    check('finishing snapshot send preserves the next draft and caret', $('prompt-input').value === nextDraft
+      && $('prompt-input').selectionStart === 2 && $('prompt-input').selectionEnd === 11 && $('prompt-input').selectionDirection === 'backward');
+    await wait(60);
+    check('snapshot completion never submits a second image-only message', sends().length === combinedBefore + 1);
+    input('');
+    test.snapshotName = 'Snapshot 1.png';
 
     btn.click();
     await until(() => chip('Snapshot 1.png')?.dataset.state === 'ready');

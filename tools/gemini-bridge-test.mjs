@@ -342,7 +342,7 @@ function createBrowser({ hostname = 'gemini.google.com', pathname = '/app', read
     activeElement: composer,
     execCommand(cmd, _, val) {
       if (cmd === 'selectAll') composerText = '';
-      if (cmd === 'insertText') { composerText += val; composer.textContent = composerText; }
+      if (cmd === 'insertText') { composerText += val; (this.activeElement || composer).textContent = composerText; }
       return true;
     },
     querySelector(sel) { return body.querySelector(sel); },
@@ -504,12 +504,90 @@ test('unsent upload failure clears one copy before retry, including delayed remo
 test('missing, partial and throwing upload removal block another selection honestly',async()=>{
   for(const options of [{controls:0},{controls:1},{controls:2,throws:true}]){
     const b=createBrowser({loggedIn:true});uploadFixture(b,2,options);
-    const sent=b.api.send({id:'blocked-upload',prompt:'hello',attachmentCount:2});await b.tick(1000);await sent;await b.tick(20200);
+    const sent=b.api.send({id:'blocked-upload',prompt:'hello',attachmentCount:2});await b.tick(121000);await sent;await b.tick(20200);
     assert.equal(b.events.find(event=>event.id==='blocked-upload'&&event.type==='error')?.code,'attachment_pending');
     await assert.rejects(b.api.attachmentInput(),/attachment_pending:/);
     await b.api.send({id:'blocked-retry',prompt:'hello',attachmentCount:2});
     assert.equal(b.events.find(event=>event.id==='blocked-retry'&&event.type==='error')?.code,'attachment_pending');
   }
+});
+const GPROMPT = 'Line one\n\n  indented “quotes” <b>&amp;</b> héllo 🌸 日本語\nlast';
+function submissionFixture(b) {
+  const submissions = [];
+  b.sendButton.onClick = () => {
+    submissions.push({ text: b.composerText, attachments: b.body.querySelectorAll('button').filter(x => /^Remove file/.test(x.getAttribute('aria-label') || '')).length });
+    b.addTurn({ userText: b.composerText, replyHtml: '<p>ok</p>' });
+  };
+  return submissions;
+}
+const gland = (b, at, { reset = false, remount = false, settle = 0 } = {}) => b.later(() => {
+  const button = makeEl('button', { 'aria-label': 'Remove file shot.png' }); b.body.append(button);
+  if (reset) { b.document.execCommand('selectAll', false); b.document.activeElement.textContent = ''; }
+  if (remount) {
+    const fresh = makeEl('div', { class: 'ql-editor textarea new-input-ui', contenteditable: 'true', role: 'textbox', 'aria-label': 'Enter a prompt for Gemini' });
+    fresh.focus = () => { b.document.activeElement = fresh; };
+    const parent = b.composer.parentElement; b.composer.remove(); parent.append(fresh); b.document.execCommand('selectAll', false);
+  }
+}, at);
+test('delayed attachment registration never submits text alone and sends one message with the exact prompt', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  gland(b, 3000);
+  const sent = b.api.send({ id: 'delayed', prompt: GPROMPT, attachmentCount: 1 });
+  await b.tick(2900); assert.deepEqual(submissions, []); assert.equal(b.composerText, '');
+  await b.tick(2500); await sent;
+  assert.deepEqual(submissions, [{ text: GPROMPT, attachments: 1 }]);
+});
+test('upload completion that resets or remounts the composer cannot lose the prompt', async () => {
+  for (const options of [{ reset: true }, { remount: true }, { reset: true, remount: true }]) {
+    const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+    gland(b, 1500, options);
+    const sent = b.api.send({ id: 'reset', prompt: GPROMPT, attachmentCount: 1 });
+    await b.tick(6000); await sent;
+    assert.deepEqual(submissions, [{ text: GPROMPT, attachments: 1 }], JSON.stringify(options));
+  }
+});
+test('a composer remounted after the prompt was typed is refilled and never submitted empty', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  b.body.append(makeEl('button', { 'aria-label': 'Remove file shot.png' })); b.sendButton.setAttribute('aria-disabled', 'true');
+  b.later(() => gland(b, 0, { remount: true }), 1500); b.later(() => b.sendButton.setAttribute('aria-disabled', 'false'), 2500);
+  const sent = b.api.send({ id: 'remount', prompt: GPROMPT, attachmentCount: 1 });
+  await b.tick(5000); await sent;
+  assert.deepEqual(submissions.map(x => x.text), [GPROMPT]);
+});
+test('screenshot-only Send waits for the delayed attachment and submits once', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  gland(b, 2500);
+  const sent = b.api.send({ id: 'shot', prompt: '', attachmentCount: 1 });
+  await b.tick(2400); assert.deepEqual(submissions, []);
+  await b.tick(2500); await sent;
+  assert.deepEqual(submissions.map(x => [x.text, x.attachments]), [['', 1]]);
+});
+
+test('every selected attachment must register before Gemini can submit', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  gland(b, 0); gland(b, 3500);
+  const sent = b.api.send({ id: 'batch', prompt: GPROMPT, attachmentCount: 2 });
+  await b.tick(3000); assert.deepEqual(submissions, []);
+  await b.tick(2500); await sent;
+  assert.deepEqual(submissions, [{ text: GPROMPT, attachments: 2 }]);
+});
+
+test('upload activity resuming while Send is disabled delays Gemini submission again', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  gland(b, 0); b.sendButton.setAttribute('aria-disabled', 'true');
+  const progress = makeEl('mat-progress-spinner');
+  b.later(() => { b.body.append(progress); b.document.execCommand('selectAll', false); b.document.activeElement.textContent = ''; }, 1500);
+  b.later(() => b.sendButton.setAttribute('aria-disabled', 'false'), 1700);
+  b.later(() => progress.remove(), 3000);
+  const sent = b.api.send({ id: 'resumed', prompt: GPROMPT, attachmentCount: 1 });
+  await b.tick(2900); assert.deepEqual(submissions, []);
+  await b.tick(1500); await sent;
+  assert.deepEqual(submissions, [{ text: GPROMPT, attachments: 1 }]);
+});
+test('an attachment that never registers fails without submitting text alone', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  const sent = b.api.send({ id: 'never', prompt: GPROMPT, attachmentCount: 1 }); await b.tick(121000); await sent;
+  assert.deepEqual(submissions, []); assert.ok(b.events.some(e => e.id === 'never' && e.type === 'error'));
 });
 test('started upload failure keeps submitted attachments',async()=>{
   const b=createBrowser({loggedIn:true});const copies=uploadFixture(b);
@@ -814,6 +892,122 @@ test('listModels and chooseModel read mode picker and verify selection', async (
   const levelsRequest = b.api.listModels();
   await b.tick(2000); await levelsRequest;
   assert.equal(b.events.filter(e => e.type === 'models').at(-1).levels[0].label, 'High');
+});
+
+// The real menu's behaviour: a click toggles it, opening and closing take a moment,
+// and picking a row closes it.
+function asyncModelMenu(b, { current = 'Flash-Lite', levelRow = false, broken = '' } = {}) {
+  const state = { clicks: 0, open: false, picks: [] };
+  const button = makeEl('button', { 'data-test-id': 'bard-mode-menu-button', 'aria-expanded': 'false', 'aria-controls': 'async-menu' }, [makeText(current)]);
+  const menu = makeEl('gem-menu', { id: 'async-menu', role: 'menu' });
+  menu.hidden = true;
+  const setOpen = open => b.later(() => { state.open = open; menu.hidden = !open; button.setAttribute('aria-expanded', String(open)); }, 20);
+  const row = (label, sublabel) => {
+    const item = makeEl('gem-menu-item', { role: 'menuitem' }, [makeEl('span', { class: 'label' }, [makeText(label)]), makeEl('div', { class: 'sublabel' }, [makeText(sublabel)])]);
+    item.onClick = () => {
+      state.picks.push(label);
+      if (label === broken) return;
+      for (const other of menu.querySelectorAll('gem-menu-item')) if (other.parentNode === item.parentNode) other.classList.remove('selected');
+      item.classList.add('selected');
+      if (!item.level) button.textContent = label.replace(/^\d+(?:\.\d+)?\s+/, '');
+      setOpen(false);
+    };
+    menu.append(item);
+    return item;
+  };
+  const lite = row('3.5 Flash-Lite', 'Fastest'), flash = row('3.6 Flash', 'All-round');
+  row('3.1 Pro', 'Deep');
+  (current === 'Flash-Lite' ? lite : flash).classList.add('selected');
+  if (levelRow) {
+    const high = makeEl('gem-menu-item', { role: 'menuitem' }, [makeEl('span', { class: 'label' }, [makeText('High')])]);
+    high.level = true;
+    high.onClick = () => { state.picks.push('High'); high.classList.add('selected'); setOpen(false); };
+    menu.append(makeEl('section', { role: 'group', 'aria-label': 'Thinking effort' }, [high]));
+  }
+  button.onClick = () => { state.clicks++; setOpen(button.getAttribute('aria-expanded') !== 'true'); };
+  button.onEvent = e => { if (e?.key === 'Escape') setOpen(false); };
+  b.body.append(makeEl('bard-mode-switcher', {}, [button]), menu);
+  state.button = button;
+  return state;
+}
+const modelErrors = b => b.events.filter(e => e.type === 'error' && e.code === 'model_unavailable');
+
+test('model menu opens with one click and answers quickly', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  const menu = asyncModelMenu(b);
+  const listed = b.api.listModels();
+  await b.tick(150);
+  assert.equal(b.events.filter(e => e.type === 'models').at(-1)?.models.length, 3, 'list arrives well under a second');
+  await b.tick(300); await listed;
+  assert.equal(menu.open, false, 'menu is closed afterwards');
+  assert.equal(menu.clicks, 1, 'closing uses Escape, opening a single click');
+});
+
+test('overlapping model reads and picks never collide', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  const menu = asyncModelMenu(b);
+  const work = Promise.all([b.api.listModels(), b.api.chooseModel('3.6 Flash'), b.api.listModels(), b.api.listModels()]);
+  await b.tick(3000); await work;
+  assert.deepEqual(modelErrors(b), []);
+  assert.equal(b.events.filter(e => e.type === 'models' && !e.models.length).length, 0, 'no empty lists');
+  assert.equal(b.events.filter(e => e.type === 'models').length, 1, 'reads waiting in line share one answer');
+  assert.equal(b.events.find(e => e.type === 'model-chosen').short, 'Flash');
+  assert.equal(menu.open, false);
+});
+
+test('rapid model picks settle on the newest one', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  const menu = asyncModelMenu(b);
+  const work = Promise.all(['3.6 Flash', '3.1 Pro', '3.6 Flash', '3.1 Pro'].map(id => b.api.chooseModel(id)));
+  await b.tick(3000); await work;
+  assert.deepEqual(modelErrors(b), []);
+  assert.equal(b.events.filter(e => e.type === 'model-chosen').at(-1).model.label, '3.1 Pro');
+  assert.equal(menu.button.textContent, 'Pro');
+  assert.ok(menu.picks.length <= 2, 'picks still waiting are dropped');
+});
+
+test('a short model name is not confirmed by a longer one', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  const menu = asyncModelMenu(b, { broken: '3.6 Flash' });
+  const work = b.api.chooseModel('3.6 Flash');
+  await b.tick(4000); await work;
+  assert.equal(menu.button.textContent, 'Flash-Lite');
+  assert.equal(b.events.filter(e => e.type === 'model-chosen').length, 0);
+  assert.equal(modelErrors(b).length, 1);
+  assert.equal(menu.open, false);
+});
+
+test('exact model name wins over a partial match listed first', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  const menu = asyncModelMenu(b);
+  const work = b.api.chooseModel('3.1 Pro');
+  await b.tick(1000); await work;
+  assert.deepEqual(menu.picks, ['3.1 Pro']);
+});
+
+test('reasoning level that closes the menu is confirmed by reading it again', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  const menu = asyncModelMenu(b, { levelRow: true });
+  const work = b.api.chooseModel('High');
+  await b.tick(3000); await work;
+  assert.deepEqual(modelErrors(b), []);
+  assert.equal(b.events.find(e => e.type === 'model-chosen').model.label, 'High');
+  assert.equal(menu.button.textContent, 'Flash-Lite', 'the model itself is unchanged');
+  assert.equal(menu.open, false);
+});
+
+test('a send right after a model pick waits for the pick', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  asyncModelMenu(b);
+  const pick = b.api.chooseModel('3.6 Flash');
+  const sent = b.api.send({ id: 'after-pick', prompt: 'hello' });
+  await b.tick(10);
+  assert.equal(b.composerText, '', 'nothing typed while the menu is working');
+  await b.tick(1000); await pick;
+  assert.ok(b.events.some(e => e.type === 'model-chosen'));
+  await b.tick(1000);
+  assert.equal(b.composerText, 'hello');
+  b.api.stop?.(); await b.tick(25000); await sent;
 });
 
 test('listConversations returns empty list without error for guests and reads side nav links when signed in', async () => {

@@ -188,20 +188,20 @@ try {
   check('history renders the same maths', await evalJS(`document.querySelectorAll('#history-panel .math-block').length===3 && document.querySelectorAll('#history-panel .katex-display').length===3`));
   check('history keeps the raw source for copying', await evalJS(`(()=>{const row=[...document.querySelectorAll('#history-panel .history-row[data-role=assistant]')].at(-1);return row?._copyText.includes('$$ \\\\sum_{i=1}^{n}') && row._copyText.includes('\\\\int_0^1');})()`));
 
-  // --- Streaming: incomplete stays text, then one stable node ---------------
+  // --- Streaming: completed paragraphs render, then keep stable math nodes --
   await begin();
   await evalJS(`window.__katexCalls=0`);
-  const partial = 'Euler wrote \\(e^{i\\pi}';
+  const partial = 'Euler wrote.\n\n\\(e^{i\\pi}';
   await emitDelta(partial);
   await visible('Euler wrote');
   check('incomplete formula waits instead of flashing as raw TeX', await evalJS(`(()=>{const c=document.querySelector('.bubble-zone .turn-content');return document.querySelectorAll('.bubble-zone .katex').length===0 && !c.textContent.includes('e^{i');})()`));
-  const complete = 'Euler wrote \\(e^{i\\pi} + 1 = 0\\) and moved on.';
+  const complete = 'Euler wrote.\n\n\\(e^{i\\pi} + 1 = 0\\) and moved on.\n\n';
   await emitDelta(complete);
   await until(`document.querySelector('.bubble-zone .katex')`, 'completed formula', 1200);
   await sleep(120);
   const instrumented = await evalJS(`(()=>{const original=window.katex.renderToString.bind(window.katex);window.katex.renderToString=(...args)=>{window.__katexCalls++;return original(...args)};window.__mathNode=document.querySelector('.bubble-zone .katex');window.__mathSpan=document.querySelector('.bubble-zone [data-qmath]');return {calls:window.__katexCalls,node:!!window.__mathNode}})()`);
-  check('formula renders as soon as its closer arrives', instrumented.node && instrumented.calls===0, JSON.stringify(instrumented));
-  await emitDelta(complete + ' More words follow.');
+  check('a finished math paragraph renders with its real closer', instrumented.node && instrumented.calls===0, JSON.stringify(instrumented));
+  await emitDelta(complete + 'More words follow.\n\n');
   await visible('More words follow.');
   await sleep(150);
   const stability = await evalJS(`({sameNode:window.__mathNode===document.querySelector('.bubble-zone .katex'),sameSpan:window.__mathSpan===document.querySelector('.bubble-zone [data-qmath]'),connected:window.__mathNode?.isConnected,rerenders:window.__katexCalls,text:document.querySelector('.bubble-zone .turn-content')?.textContent.includes('More words follow.')})`);

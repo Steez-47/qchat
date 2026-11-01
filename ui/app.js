@@ -301,36 +301,14 @@
     }
   }
 
-  // Paragraph mode parses complete snapshots together so nested markup keeps its context.
-  // Other reveal styles stabilize only the unfinished tail. Both preserve unchanged nodes.
-  function renderReply(entry, text, sources, streaming) {
+  // The response only ever receives finished blocks (see QStream.completeBoundary), so each
+  // snapshot is parsed whole by the normal safe renderer. Unchanged nodes are preserved.
+  function renderReply(entry, text, sources) {
     if (window.QInteractive && window.QResponseTags.hasInteractive(text)) {
-      entry.stable = null;
       renderInteractive(entry.contentEl,text,sources);
       return;
     }
-    if (!streaming || QSettings.settings.streamStyle === "paragraph" || window.QResponseTags.hasLayout(text)) {
-      entry.stable = null;
-      // Keep template and tag scopes together across blank lines. The parser supplies
-      // temporary closing tags without changing the canonical model response.
-      const snapshot = streaming && QSettings.settings.streamStyle !== "paragraph" ? window.QStream.stabilize(text) : text;
-      syncMarkdownNodes(entry.contentEl, parseReply(snapshot, sources));
-      return;
-    }
-    let stable = entry.stable;
-    if (!stable || !text.startsWith(stable.text)) stable = entry.stable = { text: "", nodes: 0 };
-    const boundary = window.QStream.stableBoundary(text);
-    const next = document.createDocumentFragment();
-    let settled = 0;
-    if (boundary > stable.text.length) {
-      const blocks = parseReply(text.slice(stable.text.length, boundary), sources);
-      settled = blocks.childNodes.length;
-      next.append(blocks);
-    }
-    const tail = text.slice(Math.max(boundary, stable.text.length));
-    next.append(parseReply(window.QStream.stabilize(tail), sources));
-    syncMarkdownNodes(entry.contentEl, next, stable.nodes);
-    if (settled) { stable.nodes += settled; stable.text = text.slice(0, boundary); }
+    syncMarkdownNodes(entry.contentEl, parseReply(text, sources));
   }
 
   // ---------------------------------------------------------------------------
@@ -1121,6 +1099,8 @@
   const savedReasoning = () => validReasoning(QSettings.settings.defaultReasoning) || "medium";
   const effectiveReasoning = (chat = chats.current) => validReasoning(chat?.reasoningEffort) || savedReasoning();
   let sentReasoning = null;
+  // A Gemini pick still being applied in its hidden page. The composer shows it straight away.
+  let geminiChoice = null;
 
   function syncReasoningButton() {
     el.btnReasoning.hidden = false;
@@ -1128,7 +1108,7 @@
     const busy = isBusy();
     if (!busy) sentReasoning = null;
     const value = busy && sentReasoning ? sentReasoning : effectiveReasoning();
-    const label = activeProvider === "gemini" ? providerStates.gemini?.model || "Model" : REASONING_LABELS[value];
+    const label = activeProvider === "gemini" ? geminiChoice?.short || providerStates.gemini?.model || "Model" : REASONING_LABELS[value];
     el.btnReasoning.querySelector(".reasoning-label").textContent = label;
     el.btnReasoning.setAttribute("aria-label", `${activeProvider === "gemini" ? "Model" : "Reasoning"}: ${label}`);
     el.btnReasoning.dataset.value = value;
@@ -2139,10 +2119,8 @@
 
     const visibleText = entry.reveal ? entry.reveal.visible : turn.text;
     const streaming = turn.status === "streaming";
-    // The stream's patched-up tail gives way to one full parse of the finished text.
-    if (!streaming && entry.stable) entry.renderedText = null;
     if (entry.renderedText !== visibleText) {
-      renderReply(entry, visibleText, turn.sources, streaming);
+      renderReply(entry, visibleText, turn.sources);
       window.QMath?.renderInto(entry.contentEl);
       hydrateWebImages(entry.contentEl);
       entry.renderedText = visibleText;
@@ -2162,9 +2140,8 @@
     queueSizes();
   }
 
-  // Keep transport snapshots separate from their paced presentation. The full
-  // text remains on the turn for history/copy even while the visible tail drains.
-  const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  // Keep transport snapshots separate from completed blocks. The full text stays
+  // on the turn for history/copy while the unfinished tail remains buffered.
   const streamStyle = () => QSettings.settings.streamStyle || "paragraph";
 
   // New words surface from low contrast. This is paint only (the CSS Highlight API), so it
@@ -2220,11 +2197,6 @@
     else fade.running = false;
   }
 
-  function cancelReveal(entry) {
-    entry?.reveal?.cancel?.();
-    if (entry?.reveal) entry.reveal.cancel = null;
-  }
-
   function finishReveal(turn, entry) {
     if (!turn.backendDone || turn.status !== "streaming") return;
     turn.status = "done";
@@ -2248,126 +2220,30 @@
     queueSizes();
   }
 
+  // Stop and error: whatever text has arrived becomes the final content, including the tail.
   function flushReveal(turn) {
     const entry = turnNodes.get(turn.id);
-    cancelReveal(entry);
-    clearTimeout(entry?.reveal?.holdTimer);
     if (entry?.reveal) entry.reveal.visible = turn.text;
     if (entry) finishReveal(turn, entry);
   }
 
-  // Where the reveal may pause. Whole words by default, so a word never starts on one line
-  // and jumps to the next as it grows; the last word waits briefly in case it is unfinished.
-  function revealPlan(turn, state) {
-    const style = streamStyle();
-    if (style === "paragraph") {
-      // Live tokens can be rough until a block is finished, so only finished blocks show.
-      clearTimeout(state.holdTimer);
-      state.holdTimer = null;
-      return [turn.backendDone ? turn.text.length : window.QStream.completeBoundary(turn.text)];
-    }
-    if (style === "type") {
-      const stops = [];
-      for (const part of graphemes.segment(turn.text)) stops.push(part.index + part.segment.length);
-      return stops;
-    }
-    const stops = window.QStream.revealStops(turn.text);
-    clearTimeout(state.holdTimer);
-    state.holdTimer = null;
-    if (!turn.backendDone && stops.length && !/\s$/.test(turn.text)) {
-      stops.pop();
-      const target = turn.text;
-      state.holdTimer = setTimeout(() => {
-        if (state.target !== target || turn.status !== "streaming") return;
-        state.stops.push(target.length);
-        paceTurn(turn);
-      }, 220);
-    }
-    return stops;
-  }
-
+  // One buffered reveal path for every stream style. Text appears a finished block at a time:
+  // the latest snapshot is cut at the largest complete prefix, and the final snapshot is shown
+  // whole. There are no timers, so nothing can reopen a turn that finished or was stopped.
   function paceTurn(turn) {
     const entry = turnNodes.get(turn.id);
     if (!entry || turn.status !== "streaming") return;
-    let state = entry.reveal;
-    if (!state) state = entry.reveal = { visible: "", target: null, stops: [], index: 0, last: Date.now(), credit: 0, rate: 0, cancel: null, sawDone: false };
-    if (state.target !== turn.text || state.sawDone !== Boolean(turn.backendDone)) {
-      // Only unseen tails are paced. A correction to visible text (including an
-      // extended final grapheme) replaces the snapshot once, without replay.
-      const shown = state.visible.length;
-      const intact = turn.text.startsWith(state.visible) && (!shown || shown === turn.text.length ||
-        (() => { const g = graphemes.segment(turn.text).containing(shown - 1); return g.index + g.segment.length === shown; })());
-      state.target = turn.text;
-      state.sawDone = Boolean(turn.backendDone);
-      state.stops = revealPlan(turn, state);
-      if (!intact) {
-        cancelReveal(entry);
-        clearTimeout(state.holdTimer);
-        state.index = state.stops.length;
-        state.visible = streamStyle() === "paragraph" && !turn.backendDone ? turn.text.slice(0, state.stops.at(-1) || 0) : turn.text;
-        state.credit = 0;
-        state.last = Date.now();
-        if (turn.text) revealResponse(turn);
-        renderTurnNow(turn.id);
-        finishReveal(turn, entry);
-        return;
-      }
-      state.index = state.stops.findIndex(stop => stop > shown);
-      if (state.index < 0) state.index = state.stops.length;
-    }
-    if (streamStyle() === "paragraph") {
-      cancelReveal(entry);
-      state.visible = turn.text.slice(0, state.stops.at(-1) || 0);
-      state.index = state.stops.length;
-      if (state.visible) revealResponse(turn);
+    const state = entry.reveal ||= { visible: "", target: null };
+    state.target = turn.text;
+    let shown = turn.backendDone ? turn.text : turn.text.slice(0, window.QStream.completeBoundary(turn.text));
+    // Text already shown is never taken back while the stream still extends it.
+    if (!turn.backendDone && shown.length < state.visible.length && turn.text.startsWith(state.visible)) shown = state.visible;
+    if (shown !== state.visible) {
+      state.visible = shown;
+      if (shown) revealResponse(turn);
       renderTurnNow(turn.id);
-      finishReveal(turn, entry);
-      return;
-    }
-    if (streamStyle() === "instant" || !QSettings.motionOn) {
-      flushReveal(turn);
-      if (turn.text) revealResponse(turn);
-      renderTurnNow(turn.id);
-      return;
-    }
-    if (state.cancel) return;
-    if (state.index >= state.stops.length) {
-      if (turn.backendDone || !state.holdTimer) renderTurnNow(turn.id);
-      finishReveal(turn, entry);
-      return;
-    }
-    const tick = () => {
-      state.cancel = null;
-      if (turnNodes.get(turn.id) !== entry || turn.status !== "streaming") return;
-      if (streamStyle() === "instant") { flushReveal(turn); renderTurnNow(turn.id); return; }
-      const now = Date.now();
-      const elapsed = Math.min(64, Math.max(0, now - state.last));
-      state.last = now;
-      const remaining = (state.stops.at(-1) ?? state.visible.length) - state.visible.length;
-      const base = 95 * (QSettings.settings.streamSpeed || 1);
-      // Drain a backlog gradually: the rate glides, so a burst from the network reads as
-      // a slightly faster flow rather than a lurch.
-      const wanted = turn.backendDone
-        ? Math.max(base, remaining / Math.max(0.04, ((state.deadline ?? now + 1200) - now) / 1000))
-        : Math.max(base, remaining / 1.4);
-      state.rate = !state.rate || turn.backendDone ? wanted : state.rate + (wanted - state.rate) * Math.min(1, elapsed / 280);
-      state.credit += elapsed * state.rate / 1000;
-      let moved = false;
-      while (state.index < state.stops.length && state.stops[state.index] - state.visible.length <= state.credit) {
-        const stop = state.stops[state.index++];
-        state.credit -= stop - state.visible.length;
-        state.visible = state.target.slice(0, stop);
-        moved = true;
-      }
-      if (moved) {
-        revealResponse(turn);
-        renderTurnNow(turn.id);
-      }
-      if (state.index < state.stops.length) state.cancel = nextFrame(tick);
-      else { state.credit = 0; finishReveal(turn, entry); }
-    };
-    state.last = Date.now();
-    state.cancel = nextFrame(tick);
+    } else if (turn.backendDone) renderTurnNow(turn.id);
+    finishReveal(turn, entry);
   }
 
   function scheduleTurnRender(turnId, immediate = false) {
@@ -2418,8 +2294,6 @@
       if (!pendingFiles.some(item => item.previewURL === file.previewURL)) releasePreview(file.previewURL);
     }
     const entry = turnNodes.get(turn.id);
-    cancelReveal(entry);
-    clearTimeout(entry?.reveal?.holdTimer);
     clearFade(entry);
     const sched = renderSchedule.get(turn.id);
     sched?.cancelFrame?.();
@@ -3082,11 +2956,19 @@
   const modelCache = {};
   function requestModels() {
     if (isBusy()) return;
-    if (activeProvider === "gemini") showModels(modelCache.gemini || {loading:true});
-    else showFeatureList("Loading models…", []);
+    if (activeProvider === "gemini") {
+      showModels(modelCache.gemini || {loading:true});
+      // A pick is being applied, and the list on screen already shows it.
+      if (geminiChoice && modelCache.gemini) return;
+    } else showFeatureList("Loading models…", []);
     const request = { provider: activeProvider };
     modelRequest = request;
-    const finish = event => { if (modelRequest !== request) return; cancelModelRequest(); showModels(event); };
+    const finish = event => {
+      if (modelRequest !== request) return;
+      cancelModelRequest();
+      // A failed refresh leaves a usable list in place.
+      if (!(request.provider === "gemini" && modelCache.gemini)) showModels(event);
+    };
     request.timer = setTimeout(() => finish({ error: "unavailable" }), 6000);
     invoke("chat_models").catch(() => finish({ error: "unavailable" }));
   }
@@ -3222,13 +3104,45 @@
     };
     paint(); queueSizes(); (searchable ? field : featureList).focus();
   }
+  function withGeminiChoice(list, choice) {
+    const key = choice.level ? "levels" : "models";
+    return list[key] ? {...list, [key]:list[key].map(model => ({...model, selected:model.id === choice.id}))} : list;
+  }
+  function settleGeminiChoice(choice = geminiChoice) {
+    if (!choice || geminiChoice !== choice) return false;
+    clearTimeout(choice.timer);
+    geminiChoice = null;
+    return true;
+  }
+  function failGeminiChoice(choice = geminiChoice) {
+    if (!settleGeminiChoice(choice)) return false;
+    // The saved list claims the failed pick, so read the real one next time.
+    delete modelCache.gemini;
+    syncReasoningButton();
+    queueSizes();
+    return true;
+  }
+  function chooseGeminiModel(model, level) {
+    settleGeminiChoice();
+    const choice = {id:model.id, level, short:level ? null : String(model.label).replace(/^\d+(?:\.\d+)?\s+/, "")};
+    geminiChoice = choice;
+    if (modelCache.gemini) modelCache.gemini = withGeminiChoice(modelCache.gemini, choice);
+    syncReasoningButton();
+    queueSizes();
+    const failed = () => { if (failGeminiChoice(choice)) showGlobalError(null, "Couldn't change the model. Try again in a moment."); };
+    choice.timer = setTimeout(failed, 8000);
+    invoke("chat_model_choose", {id:model.id}).catch(failed);
+  }
   function showModels(event) {
     const models = event.models || [];
-    const choose = id => invoke("chat_model_choose", {id}).catch(() => showGlobalError(null, "Couldn't change the model. Try again in a moment."));
-    const rows = items => items.map(model => ({title:model.label, meta:[model.meta, model.disabled && !providerStates[activeProvider]?.loggedIn ? "Sign in" : ""].filter(Boolean).join(" · "), selected:Boolean(model.selected), disabled:model.disabled, run:() => choose(model.id)}));
+    const choose = (model, level) => {
+      if (activeProvider === "gemini") { chooseGeminiModel(model, level); return; }
+      invoke("chat_model_choose", {id:model.id}).catch(() => showGlobalError(null, "Couldn't change the model. Try again in a moment."));
+    };
+    const rows = (items, level = false) => items.map(model => ({title:model.label, meta:[model.meta, model.disabled && !providerStates[activeProvider]?.loggedIn ? "Sign in" : ""].filter(Boolean).join(" · "), selected:Boolean(model.selected), disabled:model.disabled, run:() => choose(model, level)}));
     if (activeProvider === "gemini") {
       const items = models.length ? rows(models) : [{title:event.loading ? "Loading models…" : "Couldn't read the model list", disabled:true, run:() => {}}];
-      if (event.levels?.length) items.push({divider:true}, {heading:"Reasoning"}, ...rows(event.levels));
+      if (event.levels?.length) items.push({divider:true}, {heading:"Reasoning"}, ...rows(event.levels, true));
       showFeatureList("Model", items.concat(switchProviderRows()), false, el.btnReasoning);
     } else showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? rows(models) : [{title:event.error ? `Open ${providerName()}` : "Sign in", run:openSignin}]);
   }
@@ -3238,16 +3152,31 @@
     if (provider !== activeProvider) return;
     if (payload.type === "models") {
       const previous = modelCache[provider];
-      modelCache[provider] = {...payload, _loggedIn:providerStates[provider]?.loggedIn};
+      if (provider === "gemini" && payload.error && previous) {
+        if (modelRequest?.provider === provider) cancelModelRequest();
+        return;
+      }
+      const list = {...payload, _loggedIn:providerStates[provider]?.loggedIn};
+      // A list read before a pick took effect must not undo it.
+      modelCache[provider] = provider === "gemini" && geminiChoice ? withGeminiChoice(list, geminiChoice) : list;
       if (modelRequest?.provider === provider) {
         cancelModelRequest();
         if (provider !== "gemini" || featureListAnchor === el.btnReasoning && !featureList.hasAttribute("data-leaving")) {
-          if (provider !== "gemini" || JSON.stringify(previous) !== JSON.stringify(modelCache[provider])) showModels(payload);
+          if (provider !== "gemini" || JSON.stringify(previous) !== JSON.stringify(modelCache[provider])) showModels(modelCache[provider]);
         }
       }
     } else if (payload.type === "model-chosen") {
-      if (provider === "gemini") { providerStates.gemini = {...providerStates.gemini, model:payload.short || payload.model.label}; syncReasoningButton(); }
-      else setModelLabel(payload.model.label);
+      if (provider === "gemini") {
+        providerStates.gemini = {...providerStates.gemini, model:payload.short || payload.model.label};
+        if (geminiChoice?.id === payload.model.id) {
+          if (modelCache.gemini) modelCache.gemini = withGeminiChoice(modelCache.gemini, geminiChoice);
+          settleGeminiChoice();
+        }
+        syncReasoningButton();
+        queueSizes();
+      } else setModelLabel(payload.model.label);
+    } else if (payload.type === "error" && payload.code === "model_unavailable" && provider === "gemini") {
+      failGeminiChoice();
     }
   });
   // Every chat on the account, read through the signed-in page, with this PC's chats first.
@@ -3907,7 +3836,8 @@
       chats.recent = [];
       saveChats();
     }
-    if (!QSettings.motionOn) for (const turn of turns) { flushReveal(turn); scheduleTurnRender(turn.id, true); }
+    // Settings never change what is revealed, only how it is presented: re-run the one path.
+    for (const turn of turns) { if (turn.status === "streaming") paceTurn(turn); scheduleTurnRender(turn.id, true); }
     sendWindowPrefs();
     renderTabs();
     updateIdleChips();
@@ -4435,8 +4365,6 @@
             saveChats();
           }
           paceTurn(turn);
-          const state = turnNodes.get(turn.id)?.reveal;
-          if (state) state.deadline = Date.now() + 1200;
           if (turn.media?.length) revealResponse(turn);
           updateComposerMode();
           queueSizes();

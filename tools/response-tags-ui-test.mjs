@@ -127,21 +127,27 @@ try {
   const emitSnapshot = text => evalJS(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(text)}})`);
   const content = "document.querySelector('[data-role=assistant] .turn-content')";
   await emitSnapshot('## My GTA VI sales predictions\n\n'+loop);
-  await until(`${content}?.textContent.includes('58M')`,'expanded each loop');
-  check('open each block renders all screenshot rows before its close arrives',await evalJS(`(()=>{const c=${content};return ['First 24 hours','25M','$2.2B USD','First 7 days','43M','$3.8B USD','First 30 days','58M','$5.1B USD'].every(x=>c.textContent.includes(x)) && !/[{}]/.test(c.textContent) && c.querySelectorAll('strong').length===3})()`));
+  await sleep(80);
+  check('open each block stays buffered while the finished heading is visible',await evalJS(`${content}.querySelector('h2')?.textContent==='My GTA VI sales predictions' && !${content}.textContent.includes('58M') && !${content}.querySelector('strong')`));
   await evalJS(`window.loopFirst=${content}.querySelector('p');window.loopBefore=${content}.innerHTML`);
-  for (const closer of ['{/', '{/ea', '{/each}']) {
+  for (const closer of ['{/', '{/ea']) {
     await emitSnapshot('## My GTA VI sales predictions\n\n'+loop+closer); await sleep(60);
-    check('each closer is absorbed: '+closer,await evalJS(`${content}.innerHTML===loopBefore`));
+    check('partial each closer stays buffered: '+closer,await evalJS(`${content}.innerHTML===loopBefore`));
   }
+  await emitSnapshot('## My GTA VI sales predictions\n\n'+loop+'{/each}');
+  await until(`${content}?.textContent.includes('58M')`,'finished each loop');
+  check('finished each block renders every row with no raw directives',await evalJS(`(()=>{const c=${content};return ['First 24 hours','25M','$2.2B USD','First 7 days','43M','$3.8B USD','First 30 days','58M','$5.1B USD'].every(x=>c.textContent.includes(x)) && !/[{}]/.test(c.textContent) && c.querySelectorAll('strong').length===3})()`));
   if(shotsDir){await mkdir(shotsDir,{recursive:true});const shot=await cdp('Page.captureScreenshot',{format:'png'});await writeFile(path.join(shotsDir,'each-streaming.png'),Buffer.from(shot.data,'base64'));}
-  await emitSnapshot('<details><summary>Live</summary><mark>First\n\nSecond'); await sleep(60);
-  check('nested open HTML tags are paired across blank lines',await evalJS(`${content}.querySelector('details mark')?.textContent.includes('Second') && !${content}.textContent.includes('<')`));
-  await evalJS(`window.paired=${content}.innerHTML;window.markNode=${content}.querySelector('mark')`);
-  for (const closer of ['<','</','</m','</mar','</mark></details>']) {
-    await emitSnapshot('<details><summary>Live</summary><mark>First\n\nSecond'+closer); await sleep(60);
-    check('real HTML closer replaces temporary pair: '+closer,await evalJS(`${content}.innerHTML===paired && ${content}.querySelector('mark')===markNode`));
+  const completed='## My GTA VI sales predictions\n\n'+loop+'{/each}\n\n';
+  await emitSnapshot(completed+'<details><summary>Live</summary><mark>First\n\nSecond'); await sleep(60);
+  check('nested open HTML tags stay buffered across blank lines',await evalJS(`!${content}.querySelector('details') && ${content}.textContent.includes('58M')`));
+  await evalJS(`window.paired=${content}.innerHTML;window.loopNode=${content}.querySelector('strong')`);
+  for (const closer of ['<','</','</m','</mar','</mark></det']) {
+    await emitSnapshot(completed+'<details><summary>Live</summary><mark>First\n\nSecond'+closer); await sleep(60);
+    check('partial HTML closer stays buffered: '+closer,await evalJS(`${content}.innerHTML===paired && ${content}.querySelector('strong')===loopNode`));
   }
+  await emitSnapshot(completed+'<details><summary>Live</summary><mark>First\n\nSecond</mark></details>'); await sleep(80);
+  check('real outer closing tag releases formatted content and preserves prior nodes',await evalJS(`${content}.querySelector('details')?.textContent.includes('Second') && ${content}.querySelector('details mark')?.textContent.includes('First') && ${content}.querySelector('strong')===loopNode && !${content}.textContent.includes('<')`));
   check('no runtime errors',problems.length===0,problems.slice(0,3).join(' | '));
   if (shotsDir) { await mkdir(shotsDir,{recursive:true}); const shot=await cdp('Page.captureScreenshot',{format:'png'}); await writeFile(path.join(shotsDir,'response-tags.png'),Buffer.from(shot.data,'base64')); }
 } catch (e) { console.error(e); if (problems.length) console.error("console:", problems.slice(0, 5).join(" | ")); failed++; }
