@@ -44,7 +44,7 @@
     fits: [],
     settingsOpen: false,
     loggedIn: params.get("mock") === "signedin",
-    interval: 30,
+    interval: window.__QCHAT_MOCK_INTERVAL__ || 30,
     hold: false,
     statusHold: params.get("status") === "hold",
     connectTimeout: Number(params.get("connect")) || 0,

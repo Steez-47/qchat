@@ -520,6 +520,33 @@ function submissionFixture(b) {
   };
   return submissions;
 }
+test('an ignored Gemini image-only Send retries while the unsent attachment remains', async () => {
+  for (const prompt of ['', 'Describe this image']) {
+    const b = createBrowser({ loggedIn: true }); uploadFixture(b);
+    let clicks = 0;
+    b.sendButton.onClick = () => {
+      if (++clicks === 1) return;
+      b.addTurn({ userText: prompt, replyHtml: '<p>Image received</p>' });
+    };
+    const sent = b.api.send({ id: 'ignored-image', prompt, attachmentCount: 1 });
+    await b.tick(5000); await sent;
+    assert.equal(clicks, 2);
+    assert.equal(b.events.find(event => event.type === 'done')?.text, 'Image received');
+  }
+});
+test('Gemini image confirmation never resends when the original attachment was consumed or replaced', async () => {
+  for (const replace of [false, true]) {
+    const b = createBrowser({ loggedIn: true }); uploadFixture(b);
+    let clicks = 0; b.sendButton.onClick = () => { clicks++; };
+    const sent = b.api.send({ id: 'consumed-image', prompt: '', attachmentCount: 1 });
+    await b.tick(1200); await sent;
+    const file = b.body.querySelectorAll('button').find(button => /^Remove file/.test(button.getAttribute('aria-label') || ''));
+    file.remove();
+    if (replace) uploadFixture(b);
+    await b.tick(5000);
+    assert.equal(clicks, 1);
+  }
+});
 const gland = (b, at, { reset = false, remount = false, settle = 0 } = {}) => b.later(() => {
   const button = makeEl('button', { 'aria-label': 'Remove file shot.png' }); b.body.append(button);
   if (reset) { b.document.execCommand('selectAll', false); b.document.activeElement.textContent = ''; }

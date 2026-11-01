@@ -174,8 +174,8 @@
       ['data-message-id', 'data-dil-source-message-id', 'data-dil-message-id', 'data-chatgpt-search-message-ids']
         .flatMap(key => (item.getAttribute(key) || '').split(/[\s,]+/).filter(Boolean))))];
   }
-  function currentAssistants(job) {
-    if (!job.submitted) return [];
+  function submittedUser(job) {
+    if (!job.submitted) return null;
     const users = [...document.querySelectorAll(userSelector)];
     const latest = users[users.length - 1];
     const ids = latest ? messageIds(latest) : [];
@@ -184,13 +184,18 @@
       : !job.previousUsers.has(latest) && !ids.some(id => job.previousUserIds.has(id)) &&
         // A message with an image can carry more than the prompt in its bubble.
         (job.attachmentCount > 0 ? (latest.innerText || latest.textContent || '').includes(job.prompt) : (latest.innerText || latest.textContent || '').trim() === job.prompt));
+    return boundary ? latest : null;
+  }
+  function currentAssistants(job) {
+    if (!job.submitted) return [];
+    const boundary = submittedUser(job);
     return assistantNodes().filter(node => {
       const ids = messageIds(node);
       // Node identity alone is unsafe: restored history can hydrate or remount
       // after Send. Accept only stream-correlated messages or this user turn.
       if (job.previousAssistants.has(node) || ids.some(id => job.previousAssistantIds.has(id))) return false;
       if (job.scopedAssistants.has(node) || ids.some(id => job.responseIds.has(id))) return true;
-      const order = boundary ? latest.compareDocumentPosition?.(node) || 0 : 0;
+      const order = boundary ? boundary.compareDocumentPosition?.(node) || 0 : 0;
       if (!(order & 4) || order & 1) return false;
       job.scopedAssistants.add(node);
       ids.forEach(id => job.responseIds.add(id));
@@ -203,9 +208,18 @@
     return nodes.filter(node => !nodes.some(other => other !== node && node.contains(other)))
       .sort((a, b) => a.compareDocumentPosition(b) & 4 ? -1 : 1);
   }
+  function hiddenReplyNode(node) {
+    // Streaming text can have a second, screen-reader-only copy beside the
+    // painted words. Read the displayed representation once, including when
+    // the site hides its staging nodes through CSS rather than attributes.
+    if (node.hasAttribute?.('hidden') || node.getAttribute?.('aria-hidden') === 'true' ||
+        /(?:^|\s)(?:sr-only|visually-hidden|screen-reader-only)(?:\s|$)/.test(node.className || '')) return true;
+    const style = node.nodeType === 1 && typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
+    return style?.display === 'none' || style?.visibility === 'hidden' || style?.visibility === 'collapse';
+  }
   function nodeMarkdown(node) {
     if (node.nodeType === 3) return node.nodeValue;
-    if (node.nodeType !== 1 || node.matches('button, svg, style, script, img, video, audio, [hidden], [aria-hidden="true"], .sr-only')) return '';
+    if (node.nodeType !== 1 || hiddenReplyNode(node) || node.matches('button, svg, style, script, img, video, audio')) return '';
     const inner = (from = node) => [...from.childNodes].map(nodeMarkdown).join('');
     const tag = node.tagName.toLowerCase();
     if (/^h[1-6]$/.test(tag)) return `${'#'.repeat(+tag[1])} ${inner().trim()}\n\n`;
@@ -395,7 +409,7 @@
     const items = [...job.media.values()];
     const signature = JSON.stringify(items);
     if (signature !== job.mediaSignature) {
-      job.mediaSignature = signature; progress(job);
+      job.mediaSignature = signature; job.mediaAt = Date.now(); progress(job);
       emit({ type: 'media', id: job.id, items });
     }
     return entry.id;
@@ -564,7 +578,7 @@
     const walk = node => {
       if (node.nodeType === 3) return escape(node.nodeValue || '');
       const tag = node.tagName?.toLowerCase();
-      if (['script', 'style', 'iframe', 'svg', 'button'].includes(tag) || node.hasAttribute?.('hidden') || node.getAttribute?.('aria-hidden') === 'true') return '';
+      if (['script', 'style', 'iframe', 'svg', 'button'].includes(tag) || hiddenReplyNode(node)) return '';
       if (tag === 'pre') {
         const code = node.querySelector('code') || node;
         const text = (code.textContent || '').replace(/\n$/, '');
@@ -599,16 +613,21 @@
       if (tag === 'p') return `\n\n${children.trim()}\n\n`;
       return children;
     };
-    return walk(body).trim() || plain;
+    // An empty visible tree must stay empty; innerText can still contain the
+    // accessibility copies we just excluded.
+    return walk(body).trim();
   }
   function sampleDOM(job) {
     if (active !== job || job.finished || job.cancelled) return;
-    // A work turn may not use the observed request; its own user message is proof it started.
-    if (job.work && !job.started && [...document.querySelectorAll(userSelector)].some(node => !job.previousUsers.has(node))) {
+    const nodes = currentAssistants(job);
+    // Image sends can bypass the observed fetch. A correlated user/reply turn
+    // is also an acknowledgement, even when a fast reply never displays Stop.
+    if (!job.started && (job.work
+      ? [...document.querySelectorAll(userSelector)].some(node => !job.previousUsers.has(node))
+      : submittedUser(job) || nodes.length)) {
       job.started = true; clearTimeout(job.startTimer); progress(job);
       emit({ type: 'start', id: job.id });
     }
-    const nodes = currentAssistants(job);
     // Inspect only explicit, visible status surfaces in this submitted turn.
     // Never infer tool use from reply prose, source links, or old turns.
     const statuses = nodes.flatMap(root => [root, ...root.querySelectorAll('[role="status"],[aria-live],[data-testid="tool-status"],[data-testid="search-status"]')]);
@@ -634,7 +653,8 @@
     job.assistantNode = node;
     const body = node && (selectors.body.map(s => node.querySelector(s)).find(Boolean) || node);
     const plain = body?.innerText?.trim() || '';
-    let text = job.requiresDOM || body?.querySelector('[data-testid="generated-image-gallery"]') ? completedMarkdown(job, body, plain) : plain;
+    const semantic = job.requiresDOM || node?.hasAttribute('data-dil-source-message-id') || body?.querySelector('[data-testid="generated-image-gallery"]');
+    let text = semantic ? completedMarkdown(job, body, plain) : plain;
     // DIL is a layout language, not answer text. A source/copy surface can
     // mount before the real rendered content; never forward that surface.
     if (richLayout(text)) text = '';
@@ -665,8 +685,11 @@
     if (find('stop')) job.sawStop = true;
     if (find('stop')) job.noStopAt = null;
     else job.noStopAt ||= Date.now();
+    const domQuietAt = Math.max(job.stableAt || 0, job.mediaAt || 0);
     if (!job.work && (!job.stream || (job.sawImageGeneration && !job.imageGenerating)) && (job.domText || job.media?.size) && !find('stop') && !job.imageGenerating &&
-        (job.sawStop || job.streamEnded) && Date.now() - (job.stableAt || job.noStopAt) >= 800 &&
+        (job.sawStop || job.streamEnded || job.started && !job.stream && Date.now() - domQuietAt >= 2000) &&
+        node?.closest?.('[data-is-streaming]')?.getAttribute('data-is-streaming') !== 'true' &&
+        Date.now() - (job.stableAt || job.noStopAt) >= 800 &&
         Date.now() - job.noStopAt >= 800) finish(job);
     // Work may run far longer than a streamed reply; its settled DOM text is the completion.
     // A task can pause between steps, so quiet only counts for long, and for far longer if its stop button was never seen.
@@ -1029,6 +1052,23 @@
       return /^remove (?:file|attachment|image)(?:\b|$)/i.test(label) || /^remove .+\.[a-z0-9]{1,8}$/i.test(label) || /^remove-(?:file|attachment|image)(?:-|$)/i.test(testid) ||
         names.some(name => label.toLowerCase() === `remove ${name}`.toLowerCase());
     });
+  }
+  async function confirmAttachmentSend(job, composer, temporary) {
+    const controls = attachmentRemovers(job.attachmentNames);
+    for (let i = 0; i < 2; i++) {
+      await sleep(1500);
+      sampleDOM(job);
+      if (active !== job || job.started || job.cancelled || find('stop') || find('composer') !== composer) return;
+      if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
+      const pending = String(composer.tagName === 'TEXTAREA' ? composer.value : composer.innerText ?? composer.textContent ?? '').trim();
+      const files = attachmentRemovers(job.attachmentNames);
+      // Retry only the same unsent draft. Cleared/replaced chips or text mean
+      // the page may already have accepted it, so another click is unsafe.
+      if (pending !== job.prompt || uploads || composerArea()?.querySelector('[role="progressbar"], [aria-busy="true"], [data-testid*="uploading"], [data-state="uploading"]') || controls.length < job.attachmentCount ||
+          files.length !== controls.length || files.some(node => !controls.includes(node))) return;
+      const button = find('send');
+      if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') button.click();
+    }
   }
   async function clearFailedAttachments(job) {
     const controls = attachmentRemovers(job.attachmentNames);
@@ -1541,7 +1581,13 @@
           const button = find('send');
           if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
             job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
-            job.submitted = true; button.click(); return;
+            job.submitted = true;
+            // Capture attachment identity before the click can remove the chips.
+            const confirmation = attachmentCount > 0 ? confirmAttachmentSend(job, composer, temporary) : null;
+            button.click();
+            sampleDOM(job);
+            confirmation?.catch(() => {});
+            return;
           }
           const block = blocking(); if (block) { fail(job, ...block); return; }
           await sleep(100);

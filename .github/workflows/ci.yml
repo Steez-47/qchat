@@ -17,14 +17,14 @@ jobs:
   test:
     name: Offline suites
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Syntax check
-        run: for f in ui/*.js src-tauri/bridge/*.js tests/*.mjs tools/*.mjs; do node --check "$f"; done
+        run: for f in ui/*.js src-tauri/bridge/*.js tests/*.mjs tests/lib/*.mjs tools/*.mjs; do node --check "$f"; done
       - name: Point the UI suites at Chrome
         run: |
           browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)"

@@ -120,6 +120,48 @@ try {
     requestAnimationFrame(sample);
   })`);
 
+  // Run the actual ChatGPT bridge against a real, local DOM. Its events feed
+  // the normal response UI; the provider facade makes no site/account requests.
+  await begin('paragraph');
+  const bridgeSource = await readFile(process.env.QCHAT_STREAM_BRIDGE || path.join(root, 'src-tauri/bridge/chatgpt-bridge.js'), 'utf8');
+  await evalJS(`(() => {
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed;left:-5000px;width:640px;height:800px';
+    document.body.append(frame);
+    const doc = frame.contentDocument;
+    doc.body.innerHTML = '<style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.staging{display:none}.concealed{visibility:hidden}</style><div id="messages"></div><form><textarea id="prompt-textarea"></textarea><button type="button" data-testid="send-button">Send</button></form>';
+    window.__streamDoc = doc;
+    window.__streamEvents = [];
+    window.__streamTimers = [];
+    window.__streamSite = {
+      QResponseTags,
+      innerWidth:640, innerHeight:800,
+      fetch:async()=>({ok:true,json:async()=>({})}),
+      __QCHAT_EMIT__:event=>{__streamEvents.push(event);if(event.id===__mock.last('chat_send').args.id)__mock.emit('bridge',event)}
+    };
+    __streamSite.top = __streamSite;
+    doc.querySelector('[data-testid="send-button"]').onclick = () => {
+      const user = doc.createElement('div'); user.dataset.messageAuthorRole='user'; user.textContent='Animation fixture';
+      doc.getElementById('messages').append(user);
+      const stop = doc.createElement('button'); stop.dataset.testid='stop-button'; stop.onclick=()=>stop.remove(); doc.body.append(stop);
+      const reply = doc.createElement('div'); reply.setAttribute('data-dil-source-message-id','stream-fixture'); reply.setAttribute('data-markdown-copy','');
+      reply.innerHTML='<div data-dil-message-id="stream-fixture"><p>I found <strong>several genuinely credible firsthand</strong><span class="sr-only">several genuinely credible firsthand</span> accounts.</p><p>The feedback varies.<span class="sr-only">The feedback varies.</span><span class="staging">The feedback varies.</span><span class="concealed">The feedback varies.</span></p><p>Still composing</p></div>';
+      doc.getElementById('messages').append(reply);
+    };
+  })()`);
+  await evalJS(`((window,document,location,setInterval,setTimeout)=>{${bridgeSource}\n})(__streamSite,__streamDoc,{hostname:'chatgpt.com',href:'https://chatgpt.com/',pathname:'/',origin:'https://chatgpt.com'},(fn,ms)=>{const id=setInterval(fn,ms);__streamTimers.push(id);return id},(fn,ms)=>{const id=setTimeout(fn,ms);__streamTimers.push(id);return id})`);
+  await evalJS(`__streamSite.__qchat.send({id:__mock.last('chat_send').args.id,prompt:'Animation fixture'})`);
+  await until(`(${plain}).includes('The feedback varies.')`, 'real ChatGPT bridge renders completed paragraphs');
+  const streamed = await evalJS(`(()=>{const c=document.querySelector('[data-role=assistant] .turn-content');return {text:c.textContent,paragraphs:[...c.querySelectorAll('p')].map(p=>p.textContent),bold:c.querySelector('strong')?.textContent,status:c.closest('.turn-row').dataset.status}})()`);
+  check('ChatGPT bridge renders streamed paragraphs once, excluding hidden copies',streamed.paragraphs.join('|')==='I found several genuinely credible firsthand accounts.|The feedback varies.' && streamed.bold==='several genuinely credible firsthand' && streamed.status==='streaming',JSON.stringify(streamed));
+  await evalJS(`window.__firstStreamParagraph=document.querySelector('.turn-content p');const p=__streamDoc.querySelector('[data-dil-message-id] p:nth-child(2)');p.innerHTML='The feedback is mixed.<span class="sr-only">The feedback is mixed.</span>';const repeated=__streamDoc.createElement('p');repeated.textContent='Again. Again.';__streamDoc.querySelector('[data-dil-message-id]').insertBefore(repeated,__streamDoc.querySelector('[data-dil-message-id] p:last-child'))`);
+  await until(`(${plain}).includes('Again. Again.')`, 'corrected and intentionally repeated paragraphs');
+  check('a corrected ChatGPT snapshot replaces its earlier text and preserves deliberate repetition',await evalJS(`(${plain}).includes('The feedback is mixed.') && !(${plain}).includes('The feedback varies.') && (${plain}).split('Again. Again.').length===2 && __firstStreamParagraph===document.querySelector('.turn-content p')`));
+  if (shotsDir) { await settle(); await mkdir(shotsDir,{recursive:true}); const shot=await cdp('Page.captureScreenshot',{format:'png'}); await writeFile(path.join(shotsDir,'chatgpt-stream-no-duplicates.png'),Buffer.from(shot.data,'base64')); }
+  await evalJS(`__streamSite.__qchat.stop()`); await finishReply();
+  check('ChatGPT completion keeps the full reply without bringing hidden copies back',await evalJS(`(${plain}).includes('Still composing') && (${plain}).split('several genuinely credible firsthand').length===2 && !(${plain}).includes('The feedback varies.')`));
+  await evalJS(`__streamTimers.forEach(clearTimeout)`);
+
   for (const motion of ['on','off']) {
     await open('/',{settings:{v:4,animations:motion,autoDismiss:0,streamStyle:'paragraph'}});
     await evalJS(`__mock.hold=true`); await send('Paragraph fixture'); await until(`__mock.last('chat_send')`);

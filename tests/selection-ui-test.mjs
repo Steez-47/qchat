@@ -1,63 +1,19 @@
 // Focused captured-selection composer checks in an isolated, invisible Edge profile. Mock backend only:
 // no account, no site access, no OS-level input.
-import { createServer } from 'node:http';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn, spawnSync } from 'node:child_process';
+import { openPage, serveUI, sleep } from './lib/ui-harness.mjs';
+
+const { base, close: closeServer } = await serveUI({ csp: null });
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const profile = await mkdtemp(path.join(tmpdir(), 'qchat-selection-ui-'));
-const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html' };
-const server = createServer(async (req, res) => {
-  const pathname = req.url.split('?')[0];
-  const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
-  if (!/^[a-zA-Z0-9_./-]+$/.test(relative) || relative.includes('..')) { res.writeHead(404).end(); return; }
-  try {
-    const bytes = await readFile(path.join(root, 'ui', relative));
-    res.setHeader('Content-Type', TYPES[path.extname(relative)] || 'application/octet-stream');
-    res.end(bytes);
-  } catch { res.writeHead(404).end(); }
-});
-await new Promise((r) => server.listen(0, '127.0.0.1', r));
 
-const app = spawn(process.env.QCHAT_TEST_EDGE || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  ['--headless=new', '--disable-extensions', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
-  { stdio: 'ignore', windowsHide: true });
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let ws;
+let browserPage;
 let failed = 0;
 
 try {
-  let port;
-  for (let i = 0; i < 100; i++) {
-    try { port = Number((await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]); } catch {}
-    if (port) break;
-    await sleep(100);
-  }
-  if (!port) throw new Error('Headless Edge did not start');
-  const pages = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
-  ws = new WebSocket(pages.find((p) => p.type === 'page').webSocketDebuggerUrl);
-  await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
-  let serial = 0;
-  const pending = new Map();
-  ws.onmessage = (e) => {
-    const message = JSON.parse(e.data);
-    if (message.method === 'Runtime.exceptionThrown') console.error('PAGE ERROR', message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text);
-    if (message.id) { pending.get(message.id)?.(message); pending.delete(message.id); }
-  };
-  const cdp = (method, params = {}) => new Promise((resolve, reject) => {
-    const id = ++serial;
-    pending.set(id, (d) => (d.error ? reject(new Error(`${method}: ${d.error.message}`)) : resolve(d.result)));
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-  const evalJS = async (expression) => {
-    const result = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
-    if (result.exceptionDetails) throw new Error(`${result.exceptionDetails.text}: ${result.exceptionDetails.exception?.description}`);
-    return result.result.value;
-  };
+  browserPage = await openPage('selection-ui');
+  const { cdp, evalJS } = browserPage;
 
   await cdp('Page.enable');
   await cdp('Runtime.enable');
@@ -112,7 +68,7 @@ try {
     } } };
   ` });
 
-  await cdp('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
+  await cdp('Page.navigate', { url: `${base}/` });
   for (let i = 0; i < 100; i++) { if (await evalJS(`!!window.test?.handlers["qchat://selection"] && !!window.QSettings`)) break; await sleep(50); }
 
   if (!await evalJS(`!!window.test?.handlers["qchat://selection"]`)) throw new Error("Selection listener did not initialize; see page errors above");
@@ -264,15 +220,8 @@ try {
   console.error(error);
   failed++;
 } finally {
-  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: 999999, method: 'Browser.close' }));
-  ws?.close();
-  server.close();
-  server.closeAllConnections();
-  if (app.pid && app.exitCode === null) spawnSync('taskkill.exe', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-  const resolved = path.resolve(profile);
-  if (path.dirname(resolved) === path.resolve(tmpdir()) && path.basename(resolved).startsWith('qchat-selection-ui-')) {
-    await rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
-  }
+  await browserPage?.close();
+  closeServer();
 }
 console.log(failed ? `${failed} FAILED` : 'ALL PASS');
 process.exitCode = failed ? 1 : 0;

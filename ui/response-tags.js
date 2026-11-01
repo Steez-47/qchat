@@ -7,15 +7,21 @@
     while (at > 0 && text[--at] === '\\') slashes++;
     return slashes % 2 === 1;
   }
+  // The last stretch of text known to have no closing $, so a reply full of currency
+  // signs doesn't rescan the same line for each one.
+  let dollarText = null, dollarFrom = 0, dollarMiss = 0;
   function mathEnd(text, at) {
     const opener = text.startsWith('$$', at) ? '$$' : text.startsWith('\\[', at) ? '\\[' : text.startsWith('\\(', at) ? '\\(' : text[at] === '$' ? '$' : '';
     if (!opener || escaped(text, at) || (opener === '$' && /\s|^$/.test(text[at + 1] || ''))) return at;
     const closer = opener === '\\[' ? '\\]' : opener === '\\(' ? '\\)' : opener;
+    if (opener === '$' && text === dollarText && at >= dollarFrom && at < dollarMiss) return at;
+    const missed = stop => { if (opener === '$') { dollarText = text; dollarFrom = at; dollarMiss = stop; } return at; };
     for (let j = at + opener.length; j < text.length; j++) {
-      if ((opener === '$' || opener === '\\(') && text[j] === '\n') return at;
+      if (opener === '$' && text[j] === '\n') return missed(j);
+      if (opener === '\\(' && text[j] === '\n') return at;
       if (text.startsWith(closer, j) && !escaped(text, j) && (opener !== '$' || (!/\s/.test(text[j - 1]) && !/\d/.test(text[j + 1] || '')))) return j + closer.length;
     }
-    return opener === '$' ? at : text.length;
+    return opener === '$' ? missed(text.length) : text.length;
   }
   function protect(text, fn, transform = raw => raw) {
     let prefix;
@@ -26,10 +32,10 @@
       const each = text[i] === '{' && !escaped(text,i) ? (eachAt(text,i) || bodyAt(text,i)) : null;
       // Data strings can contain currency, backticks and HTML; they are not prose.
       if (each) { i = each.end; continue; }
-      const fence = (i === 0 || text[i - 1] === '\n') && /^(?:(?:[ \t]*>[ \t]?)|[ \t]*[-+*][ \t]+|[ \t]*\d+[.)][ \t]+)*[ \t]*(`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(text.slice(i));
+      const fence = (i === 0 || text[i - 1] === '\n') && /^(?:[ \t]*(?:>|[-+*][ \t]|\d+[.)][ \t]))*[ \t]*(`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(text.slice(i));
       if (fence) {
         end = i + fence[0].length;
-        const close = new RegExp('^(?:[ \\t]*>[ \\t]?)*[ \\t]*' + fence[1][0] + '{' + fence[1].length + ',}[ \\t]*$');
+        const close = new RegExp('^(?:[ \\t]*>)*[ \\t]*' + fence[1][0] + '{' + fence[1].length + ',}[ \\t]*$');
         while (end < text.length) { const n = text.indexOf('\n', end); const stop = n < 0 ? text.length : n; const line = text.slice(end, stop); end = n < 0 ? stop : stop + 1; if (close.test(line)) break; }
       } else if (text[i] === '<' && !escaped(text, i)) {
         const tag = tagAt(text, i);

@@ -1,38 +1,16 @@
 // Idle-collapse checks in an isolated, invisible Edge profile. Mock backend only: no account,
 // no site access, no OS-level input. Window focus is simulated by stubbing document.hasFocus and
 // dispatching blur/focus. `--shots <dir>` also captures review PNGs of each stage.
-import { createServer } from 'node:http';
-import { readFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { spawn, spawnSync } from 'node:child_process';
+import { openPage, serveUI, sleep } from './lib/ui-harness.mjs';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const { base, close: closeServer } = await serveUI();
+
 const shotsArg = process.argv.indexOf('--shots');
 const shotsDir = shotsArg > 0 ? process.argv[shotsArg + 1] : null;
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'";
-const profile = await mkdtemp(path.join(tmpdir(), 'qchat-collapse-ui-'));
-const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html' };
-const server = createServer(async (req, res) => {
-  const pathname = req.url.split('?')[0];
-  const relative = pathname === '/' ? 'index.html' : pathname.slice(1);
-  if (!/^[a-zA-Z0-9_./-]+$/.test(relative) || relative.includes('..')) { res.writeHead(404).end(); return; }
-  try {
-    const bytes = await readFile(path.join(root, 'ui', relative));
-    res.setHeader('Content-Type', TYPES[path.extname(relative)] || 'application/octet-stream');
-    res.setHeader('Content-Security-Policy', CSP);
-    res.end(bytes);
-  } catch { res.writeHead(404).end(); }
-});
-await new Promise((r) => server.listen(0, '127.0.0.1', r));
-const base = `http://127.0.0.1:${server.address().port}`;
-const app = spawn(process.env.QCHAT_TEST_EDGE || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  ['--headless=new', '--disable-extensions', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', ...(process.platform === 'win32' ? [] : ['--no-sandbox']), '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
-  { stdio: 'ignore', windowsHide: true });
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let ws;
+let browserPage;
 let failed = 0;
 const problems = [];
 const check = (name, ok, detail = '') => {
@@ -41,40 +19,17 @@ const check = (name, ok, detail = '') => {
 };
 
 try {
-  let port;
-  for (let i = 0; i < 100; i++) {
-    try { port = Number((await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]); } catch {}
-    if (port) break;
-    await sleep(100);
-  }
-  if (!port) throw new Error('Headless Edge did not start');
-  const pages = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
-  ws = new WebSocket(pages.find((p) => p.type === 'page').webSocketDebuggerUrl);
-  await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
-  let serial = 0;
-  const pending = new Map();
-  ws.onmessage = (e) => {
-    const m = JSON.parse(e.data);
-    if (m.id) { pending.get(m.id)?.(m); pending.delete(m.id); return; }
-    if (m.method === 'Runtime.exceptionThrown') problems.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
-    if (m.method === 'Runtime.consoleAPICalled' && (m.params.type === 'error' || m.params.type === 'warning')) problems.push(m.params.args.map((a) => a.value ?? a.description).join(' '));
-    if (m.method === 'Log.entryAdded' && m.params.entry.level === 'error' && !/favicon/.test(m.params.entry.url || '')) problems.push(`${m.params.entry.text} ${m.params.entry.url || ''}`);
-  };
-  const cdp = (method, params = {}) => new Promise((resolve, reject) => {
-    const id = ++serial;
-    pending.set(id, (d) => (d.error ? reject(new Error(`${method}: ${d.error.message}`)) : resolve(d.result)));
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-  const evalJS = async (expression) => {
-    const result = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
-    if (result.exceptionDetails) throw new Error(`${result.exceptionDetails.text}: ${result.exceptionDetails.exception?.description}`);
-    return result.result.value;
-  };
+  browserPage = await openPage('collapse-ui', { problems });
+  const { cdp, evalJS } = browserPage;
   await cdp('Page.enable');
   await cdp('Runtime.enable');
   await cdp('Log.enable');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 760, height: 800, deviceScaleFactor: 1, mobile: false, screenWidth: 1920, screenHeight: 1080 });
 
+  // How long the window waits before folding, shortened from the one second a person can choose.
+  // Saving settings rounds it to whole seconds, so it is set again after anything that saves.
+  const IDLE = 300;
+  const shortIdle = () => evalJS(`QSettings.settings.idleCollapse=${IDLE / 1000}`);
   const until = async (expr, what = expr, tries = 400) => {
     for (let i = 0; i < tries; i++) { if (await evalJS(`!!(${expr})`)) return; await sleep(10); }
     const state = await evalJS(`JSON.stringify({collapse:document.documentElement.dataset.collapse,focused:window.__focused,bar:document.getElementById('bar').getBoundingClientRect().width,status:document.querySelector('[data-role=assistant]')?.dataset.status})`).catch(() => 'n/a');
@@ -85,7 +40,7 @@ try {
   const chat = (key, conv, ago) => ({ key, conversationId: conv, title: key, lastActive: Date.now() - ago, lastPrompt: `prompt ${key}`, lastResponse: `Cached **reply** for ${key}`, createdAt: Date.now() - ago });
   const recent = { v: 1, current: { key: 'now', conversationId: null, title: '', lastActive: Date.now(), createdAt: Date.now() }, recent: [chat('Trip ideas', 'c-1', 5 * MIN), chat('Regex help', 'c-2', 30 * MIN)] };
   const open = async (settings = {}, { chats = recent } = {}) => {
-    await cdp('Page.navigate', { url: `${base}/` });
+    await cdp('Page.navigate', { url: `${base}/__blank` });
     await until(`document.readyState==='complete'`);
     await evalJS(`localStorage.clear()`);
     await evalJS(`localStorage.setItem('qchat.settings', ${JSON.stringify(JSON.stringify({ v: QCHAT_SETTINGS_V, animations: 'on', autoDismiss: 0, speed: 2, idleCollapse: 1, ...settings }))})`);
@@ -98,6 +53,7 @@ try {
     await screenPosition(0);
     await mouse('mouseMoved', 4, 4);
     await sleep(60);
+    if (settings.idleCollapse === undefined) await shortIdle();
   };
   const mouse = (type, x, y, extra = {}) => cdp('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' ? 'none' : 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: type === 'mouseMoved' ? 0 : 1, ...extra });
   const blur = () => evalJS(`window.__focused=false;window.dispatchEvent(new Event('blur'))`);
@@ -141,15 +97,15 @@ try {
   await type(draft);
   await evalJS(`document.getElementById('prompt-input').setSelectionRange(2,12,'backward')`);
   await blur();
-  await sleep(1500);
+  await sleep(IDLE * 1.5);
   check('draft text prevents idle collapse after losing focus', await state() === 'open' && await shown('#prompt-input'));
   check('unfocused draft and selection stay intact', await evalJS(`(()=>{const i=document.getElementById('prompt-input');return i.value===${JSON.stringify(draft)} && i.selectionStart===2 && i.selectionEnd===12 && i.selectionDirection==='backward'})()`));
   await type('');
   const cleared = Date.now();
-  await sleep(500);
+  await sleep(IDLE / 2);
   check('clearing a draft starts a fresh idle delay', await state() === 'open');
   await folded();
-  check('empty composer folds after the fresh delay', Date.now() - cleared >= 1000);
+  check('empty composer folds after the fresh delay', Date.now() - cleared >= IDLE);
   await focus();
   await opened();
 
@@ -160,12 +116,12 @@ try {
   await shot('1-open');
   const t0 = Date.now();
   await blur();
-  await sleep(700);
+  await sleep(IDLE * 0.7);
   check('stays open inside the idle delay', await state() === 'open');
-  const foldFrames = await frames(900);
+  const foldFrames = await frames(IDLE * 0.3 + 600);
   await folded();
   const elapsed = Date.now() - t0;
-  check('folds after the idle delay', elapsed >= 1000 && elapsed < 2200, `${elapsed}ms`);
+  check('folds after the idle delay', elapsed >= IDLE && elapsed < IDLE + 1200, `${elapsed}ms`);
   const closingWidths = foldFrames.filter((f) => f.s === 'closing').map((f) => f.w);
   check('fold animates the bar through intermediate widths', closingWidths.some((w) => w > 60 && w < before.bar.w - 40), JSON.stringify(closingWidths.map(Math.round)));
   check('bar only narrows while folding', closingWidths.every((w, i) => i === 0 || w <= closingWidths[i - 1] + 0.5), JSON.stringify(closingWidths.map(Math.round)));
@@ -234,7 +190,7 @@ try {
     const full = await rect('#bar');
     const edge = side === 'right' ? 'right' : 'x';
     await blur();
-    const closing = await frames(1550);
+    const closing = await frames(IDLE + 550);
     await folded();
     const circle = await rect('#bar');
     check(`${side} fold holds the screen-facing edge (monitor ${left})`, Math.abs(circle[edge] - full[edge]) < 0.6 && closing.some(f => f.s === 'closing' && f.w > 60 && f.w < full.w - 40) && closing.filter(f => f.s === 'closing').every(f => Math.abs(f[edge] - full[edge]) < 0.6), JSON.stringify({ full, circle }));
@@ -333,12 +289,12 @@ try {
 
   // --- Things that keep it open --------------------------------------------------------------
   await blur();
-  await sleep(600);
+  await sleep(IDLE * 0.6);
   await type('A draft entered after the idle timer started');
-  await sleep(1200);
+  await sleep(IDLE * 1.2);
   check('draft added during the idle delay prevents collapse', await state() === 'open' && await shown('#prompt-input'));
   await type('   \n');
-  await sleep(1300);
+  await sleep(IDLE * 1.3);
   check('whitespace in the text box also keeps it open', await state() === 'open');
   await focus();
   await type('');
@@ -346,21 +302,21 @@ try {
   await send('Streaming fixture');
   await until(`__mock.last('chat_send') && document.getElementById('btn-send').dataset.mode==='stop'`, 'streaming');
   await blur();
-  await sleep(1500);
+  await sleep(IDLE * 1.5);
   check('never folds while a reply is streaming', await state() === 'open');
   await evalJS(`__mock.release?.()`);
   await finishReply();
   const done = Date.now();
-  await sleep(500);
+  await sleep(IDLE / 2);
   check('a finished reply gets the full delay before folding', await state() === 'open');
   await folded();
-  check('folds once the reply has been idle for the delay', Date.now() - done >= 1000);
+  check('folds once the reply has been idle for the delay', Date.now() - done >= IDLE);
   await focus();
   await opened();
 
   const bubble = await rect('.bubble-response');
   await blur();
-  for (let i = 0; i < 6; i++) { await mouse('mouseMoved', bubble.cx + (i % 2) * 8, bubble.cy); await sleep(250); }
+  for (let i = 0; i < 6; i++) { await mouse('mouseMoved', bubble.cx + (i % 2) * 8, bubble.cy); await sleep(IDLE / 4); }
   check('stays open while the pointer is over it', await state() === 'open');
   await mouse('mouseMoved', 4, 4);
   await folded();
@@ -370,7 +326,7 @@ try {
 
   await evalJS(`__mock.emit('qchat://settings-focus',null)`);
   await blur();
-  await sleep(1500);
+  await sleep(IDLE * 1.5);
   check('never folds while the settings window is open', await state() === 'open');
   await evalJS(`__mock.emit('qchat://settings-closed',null)`);
   await folded();
@@ -380,20 +336,22 @@ try {
 
   await blur();
   await evalJS(`__mock.emit('qchat://hidden',null)`);
-  await sleep(1500);
+  await sleep(IDLE * 1.5);
   check('a hidden window never folds', await state() === 'open');
   await evalJS(`__mock.emit('qchat://shown',null)`);
+  await shortIdle();
   await focus();
   await blur();
   await folded();
   await evalJS(`__mock.emit('qchat://hidden',null)`);
   check('hiding a folded window resets it at once', await state() === 'open' && Math.abs((await rect('#bar')).w - before.bar.w) < 0.5 && await evalJS(`!document.documentElement.dataset.collapseAnchor`));
   await evalJS(`__mock.emit('qchat://shown',null)`);
+  await shortIdle();
   await focus();
 
   await settings({ idleCollapse: 0 });
   await blur();
-  await sleep(1500);
+  await sleep(IDLE * 1.5);
   check('zero seconds turns folding off', await state() === 'open');
   await settings({ idleCollapse: 1 });
   await folded();
@@ -402,8 +360,9 @@ try {
   await opened();
 
   await settings({ hideOnBlur: true });
+  await shortIdle();
   await blur();
-  await sleep(1500);
+  await sleep(IDLE * 1.5);
   check('hide-on-blur takes over from folding', await state() === 'open');
   await focus();
   await settings({ hideOnBlur: false });
@@ -424,14 +383,8 @@ try {
   check('no runtime errors', problems.length === 0, problems.join(' | '));
 } catch (e) { console.error(e); if (problems.length) console.error('console:', problems.slice(0, 5).join(' | ')); failed++; }
 finally {
-  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: 999999, method: 'Browser.close' }));
-  ws?.close(); server.close(); server.closeAllConnections();
-  if (app.pid && app.exitCode === null) {
-    if (process.platform === 'win32') spawnSync('taskkill.exe', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-    else app.kill('SIGKILL');
-  }
-  const resolved = path.resolve(profile);
-  if (path.dirname(resolved) === path.resolve(tmpdir()) && path.basename(resolved).startsWith('qchat-collapse-ui-')) await rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
+  await browserPage?.close();
+  closeServer();
 }
 console.log(failed ? `${failed} FAILED` : 'ALL PASS');
 process.exitCode = failed ? 1 : 0;

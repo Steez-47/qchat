@@ -12,6 +12,7 @@
     "build": "node tools/build.mjs",
     "build:installer": "node tools/build.mjs --installer",
     "test": "node tests/run.mjs",
+    "test:fast": "node tests/run.mjs --fast",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {

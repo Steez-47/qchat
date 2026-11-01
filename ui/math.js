@@ -81,10 +81,13 @@
     return CURRENCY.test(content);
   }
 
+  // The rest of the line holds no closing $ at all, so no later $ on it can open a formula.
+  const NO_CLOSER = -2;
+
   function inlineDollarEnd(text, start) {
     if (start + 1 >= text.length || /\s/.test(text[start + 1])) return -1;
     for (let i = start + 1; i < text.length; i++) {
-      if (text[i] === "\n") return -1;
+      if (text[i] === "\n") return NO_CLOSER;
       if (text[i] === "\\") { i++; continue; }
       if (text[i] !== "$" || isEscaped(text, i)) continue;
       if (/\s/.test(text[i - 1])) continue;
@@ -93,7 +96,7 @@
       if (!content.trim() || isCurrency(content)) return -1;
       return i;
     }
-    return -1;
+    return NO_CLOSER;
   }
 
   function placeholder(index, tex, display) {
@@ -113,6 +116,17 @@
     const formulas = [];
     let text = "";
     let i = 0;
+    // Where each closer is known to be absent, so a reply full of openers stays linear.
+    const missing = new Map();
+    const closerEnd = (from, closer, allowNewline) => {
+      if (from < (missing.get(closer) ?? 0)) return -1;
+      const end = delimiterEnd(source, from, closer, allowNewline);
+      if (end < 0) {
+        const newline = allowNewline ? -1 : source.indexOf("\n", from);
+        missing.set(closer, newline < 0 ? source.length : newline);
+      }
+      return end;
+    };
 
     const add = (tex, display) => {
       const index = formulas.length;
@@ -137,7 +151,7 @@
         }
         if (next === "(" || next === "[") {
           const display = next === "[";
-          const end = delimiterEnd(source, i + 2, display ? "\\]" : "\\)", display);
+          const end = closerEnd(i + 2, display ? "\\]" : "\\)", display);
           if (end >= 0) {
             const tex = source.slice(i + 2, end);
             if (tex.trim()) { add(tex, display); i = end + 2; continue; }
@@ -162,7 +176,7 @@
 
       if (ch === "$") {
         if (source[i + 1] === "$") {
-          const end = delimiterEnd(source, i + 2, "$$", true);
+          const end = closerEnd(i + 2, "$$", true);
           if (end >= 0) {
             const tex = source.slice(i + 2, end);
             if (tex.trim()) { add(tex, true); i = end + 2; continue; }
@@ -171,7 +185,11 @@
           i += 2;
           continue;
         }
-        const end = inlineDollarEnd(source, i);
+        const end = i < (missing.get("$") ?? 0) ? -1 : inlineDollarEnd(source, i);
+        if (end === NO_CLOSER) {
+          const newline = source.indexOf("\n", i);
+          missing.set("$", newline < 0 ? source.length : newline);
+        }
         if (end >= 0) {
           add(source.slice(i + 1, end), false);
           i = end + 1;

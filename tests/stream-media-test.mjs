@@ -24,7 +24,7 @@ function semantic(tag, children = [], attrs = {}) {
   node.querySelector = selector => nodes.find(child => child.tagName?.toLowerCase() === selector) || nodes.map(child => child.querySelector?.(selector)).find(Boolean) || null;
   return node;
 }
-function browser({ data = '', chunks, readError, cloneError, cancelReject = false, hold = false, type = 'text/event-stream', networkError, httpError, emitHook, chunkDelays = [], responseOverride, netDisabled = false, requestIdentity = true } = {}) {
+function browser({ data = '', chunks, readError, cloneError, cancelReject = false, hold = false, type = 'text/event-stream', networkError, httpError, emitHook, chunkDelays = [], responseOverride, netDisabled = false, requestIdentity = true, unobservedRequest = false, ignoredClicks = 0 } = {}) {
   let now = 0, serial = 0, reads = 0, cancels = 0, clicks = 0, stop = false, pending = false, pickerClicks = 0;
   let assistants = [], users = [], composerText = '', submitted = false, inputs = [], attachmentButton, heldRead, originalPart = 0, removeButtons = [], newChats = 0, previewButtons = [];
   const ordered = (node, order) => { node.order = order; node.compareDocumentPosition = other => node.order < other.order ? 4 : 2; return node; };
@@ -61,8 +61,10 @@ function browser({ data = '', chunks, readError, cloneError, cancelReject = fals
     clone() { if (cloneError) throw new Error('cannot clone'); return cloned; } };
   const sendButton = element('button');
   sendButton.click = () => {
-    clicks++; submitted = true; submissions.push({ text: composerText, attachments: removeButtons.length });
+    if (++clicks <= ignoredClicks) return;
+    submitted = true; submissions.push({ text: composerText, attachments: removeButtons.length });
     users.push(ordered(element('div', { 'data-message-author-role': 'user', 'data-message-id': 'current-user' }, composerText), 100));
+    if (unobservedRequest) return;
     window.fetch('/backend-api/f/conversation', { method: 'POST', ...(requestIdentity ? { body: JSON.stringify({ messages: [{ id: 'historical-user', author: { role: 'user' } }, { id: 'current-user', author: { role: 'user' } }] }) } : {}) });
   };
   const stopButton = element('button'); stopButton.click = () => { stop = false; };
@@ -406,6 +408,44 @@ test('completed DIL fallback preserves semantic code fences, inline formatting a
   assert.ok(done(b)?.text.includes('```js\n' + code + '```'));
   assert.match(done(b)?.text, /- First 😀\n- Second/);
   assert.doesNotMatch(done(b)?.text, /<pre|<strong/);
+});
+
+test('streaming DIL reads each paragraph once and ignores accessibility copies', async () => {
+  for (const raw of ['<box><text>layout</text></box>', 'Network prefix']) {
+    const b = browser({ data: sse(message([raw])), hold: true });
+    b.stop(true); await b.send(); await b.tick(100);
+    b.resume(); await b.tick(100);
+    const first = 'I found several genuinely credible firsthand accounts.';
+    const second = "The interesting part is that the feedback isn't universally positive.";
+    const turn = b.dil(first + '\n' + second);
+    const body = turn.querySelector('[data-dil-message-id]');
+    body.childNodes = [semantic('p', ['I found ',
+      semantic('span', ['several genuinely credible firsthand ']),
+      semantic('span', ['several genuinely credible firsthand '], { className: 'sr-only' }), 'accounts.']),
+      semantic('p', [second, semantic('span', [second], { className: 'sr-only' })])];
+    await b.tick(300);
+    // A detached observer must read the clean, scoped DOM throughout the
+    // remaining stream, whether the network carried layout or a stale prefix.
+    await b.tick(300);
+    const expected = first + '\n\n\n\n' + second;
+    assert.equal(b.events.filter(event => event.type === 'delta').at(-1)?.text, expected);
+    assert.equal(terminal(b).length, 0, 'the response is still generating');
+    body.childNodes.push(semantic('p', ['Again. Again.']));
+    body.innerText += '\nAgain. Again.';
+    await b.tick(300);
+    assert.equal(b.events.filter(event => event.type === 'delta').at(-1)?.text, expected + '\n\n\n\nAgain. Again.');
+    b.stop(false); await b.tick(2000);
+    assert.equal(done(b)?.text, expected + '\n\n\n\nAgain. Again.');
+  }
+});
+
+test('DIL conversion does not fall back to hidden-only innerText', async () => {
+  const b = browser({ data: sse(message(['<box>layout</box>'])), hold: true });
+  b.stop(true); await b.send(); await b.tick(100);
+  const turn = b.dil('Accessibility copy still mounting');
+  turn.querySelector('[data-dil-message-id]').childNodes = [semantic('span', ['Accessibility copy still mounting'], { 'aria-hidden': 'true' })];
+  await b.tick(300);
+  assert.equal(b.events.filter(event => event.type === 'delta').length, 0);
 });
 test('DIL markdown links use opaque registered media and safe normal HTTPS links', async () => {
   const file = semantic('a', ['Download CSV'], { href: 'sandbox:/mnt/data/report.csv' }); file.href = 'sandbox:/mnt/data/report.csv';
@@ -922,6 +962,74 @@ test('attachment-only Send waits for processing and a quiet upload window', asyn
   await b.tick(2000); assert.equal(b.clicks, 0);
   b.pending(false); await b.tick(500); assert.equal(b.clicks, 0);
   await b.tick(600); await sent; assert.equal(b.clicks, 1); assert.equal(done(b)?.text, 'uploaded');
+});
+
+test('image replies complete without refresh when their request and Stop button are not observed', async () => {
+  for (const prompt of ['', 'Describe this image']) {
+    const b = browser({ unobservedRequest: true });
+    b.pendingAttachment('photo.png'); b.pending(false);
+    const sent = b.send({ prompt, attachmentCount: 1 }); await b.tick(1500); await sent;
+    b.dom('A red square in the image.'); await b.tick(22000);
+    assert.equal(b.clicks, 1);
+    assert.equal(b.events.filter(event => event.type === 'start').length, 1);
+    assert.equal(done(b)?.text, 'A red square in the image.');
+    assert.equal(terminal(b).length, 1);
+  }
+});
+
+test('an image-only reply also completes when its request and Stop button are not observed', async () => {
+  const b = browser({ unobservedRequest: true });
+  b.pendingAttachment('photo.png'); b.pending(false);
+  const sent = b.send({ prompt: '', attachmentCount: 1 }); await b.tick(1200); await sent;
+  const image = element('img', { alt: 'Edited image' }); image.src = image.currentSrc = 'blob:https://chatgpt.com/edited'; image.naturalWidth = 1024;
+  b.dom('', [image]); await b.tick(1500);
+  image.src = image.currentSrc = 'blob:https://chatgpt.com/edited-final';
+  await b.tick(1000); assert.equal(terminal(b).length, 0);
+  await b.tick(1500);
+  assert.equal(done(b)?.text, '');
+  assert.equal(b.events.filter(event => event.type === 'media').at(-1).items.length, 1);
+  assert.equal(terminal(b).length, 1);
+});
+
+test('an ignored image Send is retried only while the exact unsent draft and files remain', async () => {
+  for (const prompt of ['', 'Describe this image']) {
+    const b = browser({ ignoredClicks: 1, data: sse(message(['Image received']), '[DONE]') });
+    b.pendingAttachment('photo.png'); b.pending(false);
+    const sent = b.send({ prompt, attachmentCount: 1 }); await b.tick(5000); await sent;
+    assert.equal(b.clicks, 2);
+    assert.deepEqual(b.submissions, [{ text: prompt, attachments: 1 }]);
+    assert.equal(done(b)?.text, 'Image received');
+  }
+});
+
+test('image Send confirmation never retries a changed draft, removed/replaced file or resumed upload', async () => {
+  for (const change of ['draft', 'composer', 'removed', 'replaced', 'upload', 'stop']) {
+    const b = browser({ ignoredClicks: 99 });
+    const file = b.pendingAttachment('photo.png'); b.pending(false);
+    const sent = b.send({ prompt: 'Describe this image', attachmentCount: 1 }); await b.tick(1300); await sent;
+    if (change === 'draft') b.resetComposer();
+    if (change === 'composer') b.remountComposer();
+    if (change === 'removed' || change === 'replaced') file.click();
+    if (change === 'replaced') { b.pendingAttachment('photo.png'); b.pending(false); }
+    if (change === 'upload') b.pending(true);
+    if (change === 'stop') b.stop(true);
+    await b.tick(5000);
+    assert.equal(b.clicks, 1, change);
+    assert.equal(b.submissions.length, 0, change);
+  }
+});
+
+test('an image reply with an unobserved request stays active while its DOM reports streaming', async () => {
+  const b = browser({ unobservedRequest: true });
+  b.pendingAttachment('photo.png'); b.pending(false);
+  const sent = b.send({ prompt: '', attachmentCount: 1 }); await b.tick(1200); await sent;
+  const reply = b.dom('Partial image reply'), streaming = element('div', { 'data-is-streaming': 'true' });
+  reply.closest = selector => selector === '[data-is-streaming]' ? streaming : null;
+  await b.tick(22000);
+  assert.equal(terminal(b).length, 0);
+  assert.ok(b.events.some(event => event.type === 'delta' && event.text === 'Partial image reply'));
+  streaming.setAttribute('data-is-streaming', 'false'); b.dom('Complete image reply'); await b.tick(2500);
+  assert.equal(done(b)?.text, 'Complete image reply');
 });
 
 const PROMPT = 'Line one\n\n  indented “quotes” <b>&amp;</b> héllo 🌸 日本語\nlast';

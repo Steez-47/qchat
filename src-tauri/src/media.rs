@@ -1328,4 +1328,139 @@ mod tests {
             Some((0, 8 * 1024 * 1024 - 1))
         );
     }
+
+    #[test]
+    fn safe_names_stay_inside_the_folder_and_on_windows_rules() {
+        for hostile in ["../../evil.exe", "..\\..\\evil.exe", "C:\\Windows\\evil.exe", "/etc/passwd", "a/b\\c", "a:b", "a|b", "a?b", "a*b", "a\"b", "a<b>c", "a\u{0}b", "a\nb", "a\u{7f}b"] {
+            let name = safe_name(hostile);
+            assert!(!name.contains(['/', '\\', ':', '|', '?', '*', '"', '<', '>']), "{hostile} => {name}");
+            assert!(!name.chars().any(char::is_control), "{hostile} => {name}");
+            assert!(!name.starts_with('.') && !name.ends_with('.') && !name.ends_with(' '), "{hostile} => {name}");
+        }
+        for empty in ["", " ", ".", "..", "...", " . ", "   "] {
+            assert_eq!(safe_name(empty), "file_", "{empty:?}");
+        }
+        for reserved in ["CON", "con", "Con.txt", "PRN.tar.gz", "aux", "NUL.", "nul.txt", "COM1", "com9.log", "LPT1", "lpt9.txt", " CON ", "CON "] {
+            assert!(safe_name(reserved).starts_with("file_"), "{reserved}");
+        }
+        for fine in ["CONSOLE.txt", "COM10", "LPT0x", "NULL", "report.pdf", "名前.png", "😀.txt", "a b.txt"] {
+            assert_eq!(safe_name(fine), fine);
+        }
+        // Long names are cut by characters, so a multi-byte name can't split inside a character.
+        assert_eq!(safe_name(&"é".repeat(500)).chars().count(), 150);
+        assert_eq!(safe_name(&"😀".repeat(500)).chars().count(), 150);
+        // A cut can leave a trailing dot or space, which Windows would silently drop.
+        let cut = safe_name(&format!("{}. tail", "a".repeat(149)));
+        assert!(!cut.ends_with('.') && !cut.ends_with(' '), "{cut}");
+    }
+
+    #[test]
+    fn image_names_only_gain_an_extension_when_they_lack_one() {
+        assert_eq!(image_name("photo".into(), "image/png"), "photo.png");
+        assert_eq!(image_name("photo".into(), "image/jpeg"), "photo.jpg");
+        assert_eq!(image_name("photo.gif".into(), "image/png"), "photo.gif");
+        assert_eq!(image_name("photo".into(), "image/svg+xml"), "photo");
+        assert_eq!(image_name("photo".into(), "text/html"), "photo");
+        assert_eq!(image_name("photo".into(), ""), "photo");
+    }
+
+    #[test]
+    fn only_inert_image_types_count_as_images() {
+        for image in ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"] {
+            assert_eq!(kind(image), "image");
+        }
+        for not_inert in ["image/svg+xml", "text/html", "application/xhtml+xml", "image/", "IMAGE/PNG", "", "text/javascript"] {
+            assert_eq!(kind(not_inert), "file", "{not_inert}");
+        }
+        assert_eq!(kind("audio/ogg"), "audio");
+        assert_eq!(kind("video/mp4"), "video");
+    }
+
+    #[test]
+    fn mime_types_are_cleaned_or_taken_from_the_name() {
+        assert_eq!(mime_for("a.PNG"), "image/png");
+        assert_eq!(mime_for("a.tar.gz"), "application/octet-stream");
+        assert_eq!(mime_for("a.png.exe"), "application/octet-stream");
+        assert_eq!(mime_for("noextension"), "application/octet-stream");
+        assert_eq!(mime_for(".png"), "application/octet-stream");
+        assert_eq!(mime_for(""), "application/octet-stream");
+        assert_eq!(clean_mime("IMAGE/PNG; charset=x", "a"), "image/png");
+        assert_eq!(clean_mime(" text/plain ;x", "a"), "text/plain");
+        assert_eq!(clean_mime("application/octet-stream", "a.png"), "image/png");
+        assert_eq!(clean_mime("binary/octet-stream", "a.mp4"), "video/mp4");
+        for junk in ["", ";", "nothing", "a b/c", "text/plain\r\nX-Evil: 1", "text/<script>", "a/b\"c"] {
+            assert_eq!(clean_mime(junk, "a.png"), "image/png", "{junk:?}");
+        }
+        assert_eq!(clean_mime(&format!("a/{}", "b".repeat(200)), "a.png"), "image/png");
+    }
+
+    #[test]
+    fn media_urls_stay_on_the_provider_hosts() {
+        for good in [
+            "https://chatgpt.com/a.png",
+            "https://files.oaiusercontent.com/a",
+            "https://cdn.openai.com/a",
+            "https://images.openai.com/a",
+            "https://x.oaistatic.com/a",
+            "blob:https://chatgpt.com/1234",
+            "blob:https://gemini.google.com/1234",
+            "data:image/png;base64,AAAA",
+            "data:image/jpeg;base64,AAAA",
+        ] {
+            assert!(allowed_media_url(good), "{good}");
+        }
+        for bad in [
+            "",
+            "not a url",
+            "http://chatgpt.com/a.png",
+            "https://chatgpt.com.evil.test/a.png",
+            "https://evilchatgpt.com/a.png",
+            "https://evil.test/chatgpt.com/a.png",
+            "https://evil.test/?x=https://chatgpt.com",
+            "https://chatgpt.com@evil.test/a.png",
+            "https://user@chatgpt.com/a.png",
+            "https://user:pass@chatgpt.com/a.png",
+            "https://chatgpt.com:8443/a.png",
+            "https://evil.test#chatgpt.com",
+            "https://localhost/a.png",
+            "https://127.0.0.1/a.png",
+            "https://169.254.169.254/latest",
+            "file:///c:/windows/win.ini",
+            "javascript:alert(1)",
+            "ftp://chatgpt.com/a.png",
+            "blob:https://evil.test/1234",
+            "blob:https://chatgpt.com.evil.test/1234",
+            "blob:http://chatgpt.com/1234",
+            "data:text/html;base64,AAAA",
+            "data:image/svg+xml;base64,AAAA",
+            "data:image/png,AAAA",
+            "data:image/png;charset=x;base64,AAAA",
+        ] {
+            assert!(!allowed_media_url(bad), "{bad}");
+        }
+        assert!(!allowed_media_url(&format!("data:image/png;base64,{}", "A".repeat(48 * 1024 * 1024))), "oversized data URL");
+    }
+
+    #[test]
+    fn byte_ranges_never_leave_the_file_or_grow_past_the_chunk_limit() {
+        const CHUNK: u64 = 8 * 1024 * 1024;
+        assert_eq!(byte_range(None, 0), Some((0, 0)));
+        assert_eq!(byte_range(Some("bytes=0-"), 0), None);
+        assert_eq!(byte_range(None, 10), Some((0, 9)));
+        assert_eq!(byte_range(Some("bytes=0-0"), 10), Some((0, 0)));
+        assert_eq!(byte_range(Some("bytes=9-9"), 10), Some((9, 9)));
+        assert_eq!(byte_range(Some("bytes=0-"), 10), Some((0, 9)));
+        assert_eq!(byte_range(Some("bytes=5-"), 10), Some((5, 9)));
+        assert_eq!(byte_range(Some("bytes=5-999"), 10), Some((5, 9)));
+        assert_eq!(byte_range(Some("bytes=-3"), 10), Some((7, 9)));
+        assert_eq!(byte_range(Some("bytes=-999"), 10), Some((0, 9)));
+        assert_eq!(byte_range(Some("bytes=0-"), 3 * CHUNK), Some((0, CHUNK - 1)));
+        assert_eq!(byte_range(Some("bytes=0-999999999999"), 3 * CHUNK), Some((0, CHUNK - 1)));
+        assert_eq!(byte_range(Some("bytes=-1"), 3 * CHUNK), Some((3 * CHUNK - 1, 3 * CHUNK - 1)));
+        assert_eq!(byte_range(Some(&format!("bytes=-{}", 2 * CHUNK)), 3 * CHUNK), Some((CHUNK, 2 * CHUNK - 1)));
+        for junk in ["", "bytes", "bytes=", "bytes=-", "bytes=-0", "bytes=10-", "bytes=10-11", "bytes=5-2", "bytes=a-b", "bytes=1-b", "bytes=a-1", "bytes= 1-2", "bytes=1 -2", "bytes=-1-2", "bytes=0-1,3-4", "BYTES=0-1", "items=0-1", "0-1", "bytes=18446744073709551616-", "bytes=-18446744073709551616"] {
+            assert_eq!(byte_range(Some(junk), 10), None, "{junk:?}");
+        }
+        assert_eq!(byte_range(Some("bytes=-18446744073709551615"), 10), Some((0, 9)), "the largest suffix can't overflow");
+    }
 }

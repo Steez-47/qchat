@@ -409,4 +409,62 @@ mod tests {
         assert_eq!(std::fs::read(&exe).unwrap(), b"old");
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    #[test]
+    fn version_parsing_refuses_anything_odd() {
+        for bad in ["", " ", "v", "1.", ".1", "1..2", "1.2.", "a.b.c", "1.b", "-1.2.3", "+1", "1.2.3.4.5", "18446744073709551616", "1.18446744073709551616", "1 .2", "١.٢", "1,2"] {
+            assert_eq!(parse_version(bad), None, "{bad:?}");
+        }
+        assert_eq!(parse_version("  v1.2.3  "), Some((1, 2, 3)));
+        assert_eq!(parse_version("V2"), Some((2, 0, 0)));
+        assert_eq!(parse_version("1.2.3+build.5"), Some((1, 2, 3)));
+        assert_eq!(parse_version("01.002.0003"), Some((1, 2, 3)));
+        assert_eq!(parse_version("18446744073709551615.0.0"), Some((u64::MAX, 0, 0)));
+        assert!(parse_version("2.0.0") > parse_version("1.99.99"));
+        assert!(parse_version("1.0.10") > parse_version("1.0.9"));
+    }
+
+    #[test]
+    fn digests_must_be_exact_lowercase_hex() {
+        let good = "a".repeat(64);
+        assert_eq!(hex_digest(&good).as_deref(), Some(good.as_str()));
+        assert_eq!(hex_digest(&format!("  {}\n", "A".repeat(64))).as_deref(), Some(good.as_str()));
+        for bad in [String::new(), "a".repeat(63), "a".repeat(65), "g".repeat(64), format!("{} ", "é".repeat(32))] {
+            if bad.trim().len() != 64 || !bad.trim().bytes().all(|b| b.is_ascii_hexdigit()) {
+                assert_eq!(hex_digest(&bad), None, "{bad:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn checksum_lines_match_only_the_exact_file() {
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        let sums = format!("{a}  other.exe\n{b} *QChat.exe\n");
+        assert_eq!(sum_for(&sums, "QChat.exe").as_deref(), Some(b.as_str()));
+        assert_eq!(sum_for(&sums, "other.exe").as_deref(), Some(a.as_str()));
+        assert_eq!(sum_for(&sums, "Chat.exe"), None);
+        assert_eq!(sum_for(&sums, "qchat.exe"), None);
+        assert_eq!(sum_for(&sums, ""), None);
+        assert_eq!(sum_for("", "QChat.exe"), None);
+        assert_eq!(sum_for("no hash here", "QChat.exe"), None);
+        assert_eq!(sum_for("QChat.exe", "QChat.exe"), None);
+        assert_eq!(sum_for(&format!("xyz  QChat.exe\n{b}  QChat.exe\n"), "QChat.exe").as_deref(), Some(b.as_str()), "a bad line doesn't hide a good one");
+        assert_eq!(sum_for(&format!("{b}  QChat.exe\r\n"), "QChat.exe").as_deref(), Some(b.as_str()), "Windows line ends");
+    }
+
+    #[test]
+    fn releases_need_a_trusted_page_tag_and_download() {
+        let hash = "73ea650e184d73ea34b72b831ec6716fb965216a30ef63b5a4dcd14947eb1036";
+        let good = release_json(Some(&format!("sha256:{hash}")), false);
+        assert!(parse_release(&good).is_ok());
+        let with = |key: &str, value: Value| { let mut json = good.clone(); json[key] = value; json };
+        for (key, value) in [("tag_name", json!("latest")), ("tag_name", json!(5)), ("tag_name", Value::Null), ("html_url", json!("https://evil.test/x")), ("html_url", json!(5)), ("draft", json!(true)), ("prerelease", json!(true)), ("assets", json!("x")), ("assets", json!([])), ("assets", Value::Null)] {
+            assert!(parse_release(&with(key, value.clone())).is_err(), "{key} = {value}");
+        }
+        assert!(parse_release(&json!({})).is_err());
+        assert!(parse_release(&Value::Null).is_err());
+        assert!(parse_release(&json!([])).is_err());
+        assert_eq!(parse_release(&release_json(Some("sha256:nothex"), false)).err().as_deref(), Some("no_checksum"), "a broken digest with no checksums file is refused");
+        assert_eq!(parse_release(&release_json(Some(&format!("md5:{hash}")), false)).err().as_deref(), Some("no_checksum"), "only sha256 counts");
+    }
 }

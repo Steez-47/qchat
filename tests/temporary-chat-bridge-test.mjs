@@ -1,17 +1,10 @@
-import {spawn, spawnSync} from 'node:child_process';
-import {mkdtemp, readFile, rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import path from 'node:path';
+import {readFile} from 'node:fs/promises';
+import {openPage, sleep} from './lib/ui-harness.mjs';
 import assert from 'node:assert/strict';
-const profile=await mkdtemp(path.join(tmpdir(),'qchat-temp-bridge-'));
-const browser=spawn(process.env.QCHAT_TEST_EDGE||'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',['--headless=new','--disable-gpu','--no-first-run','--disable-extensions','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{windowsHide:true,stdio:'ignore'});
-const sleep=ms=>new Promise(r=>setTimeout(r,ms)); let ws, count=0;
+let browserPage, count=0;
 try {
- let port; for(let i=0;i<100&&!port;i++){try{port=Number((await readFile(path.join(profile,'DevToolsActivePort'),'utf8')).split('\n')[0])}catch{} if(!port) await sleep(100)}
- const pages=await(await fetch(`http://127.0.0.1:${port}/json`)).json(); ws=new WebSocket(pages.find(p=>p.type==='page').webSocketDebuggerUrl); await new Promise((ok,no)=>{ws.onopen=ok;ws.onerror=no});
- let n=0; const pending=new Map();
- const cdp=(method,params={})=>new Promise((ok,no)=>{const id=++n;pending.set(id,{ok,no});ws.send(JSON.stringify({id,method,params}))});
- ws.onmessage=({data})=>{const m=JSON.parse(data);if(m.id){const p=pending.get(m.id);if(p){pending.delete(m.id);m.error?p.no(Error(m.error.message)):p.ok(m.result)}} else if(m.method==='Fetch.requestPaused'){cdp('Fetch.fulfillRequest',{requestId:m.params.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'text/html'}],body:Buffer.from('<!doctype html><html><body></body></html>').toString('base64')}).catch(()=>{})}};
+ browserPage=await openPage('temp-bridge',{onEvent:m=>{if(m.method==='Fetch.requestPaused'){cdp('Fetch.fulfillRequest',{requestId:m.params.requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'text/html'}],body:Buffer.from('<!doctype html><html><body></body></html>').toString('base64')}).catch(()=>{})}}});
+ const {cdp}=browserPage;
  await cdp('Page.enable');await cdp('Runtime.enable');await cdp('Fetch.enable',{patterns:[{urlPattern:'*'}]});
  const ev=async expr=>{const r=await cdp('Runtime.evaluate',{expression:expr,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result.value};
  const check=async(name,expr)=>{assert.equal(await ev(expr),true,name);console.log('PASS '+name);count++};
@@ -60,4 +53,4 @@ try {
   }
  }
  console.log(`ALL PASS (${count})`);
-} finally {if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({id:999999,method:'Browser.close'}));ws?.close();if(browser.pid&&browser.exitCode===null)spawnSync('taskkill.exe',['/PID',String(browser.pid),'/T','/F'],{stdio:'ignore',windowsHide:true});await rm(profile,{recursive:true,force:true,maxRetries:5,retryDelay:200}).catch(()=>{})}
+} finally {await browserPage?.close();}

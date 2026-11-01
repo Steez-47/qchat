@@ -753,7 +753,8 @@
 
   // A Send that did not take leaves the prompt in the composer and no new turn. Only then may it be
   // clicked again, so one prompt can never be sent twice.
-  async function confirmSend(job, composer) {
+  async function confirmSend(job, composer, temporary) {
+    const controls = job.attachmentCount > 0 ? attachmentRemovers(job.attachmentNames, true) : [];
     for (let i = 0; i < 12 && active === job && !job.started && !job.cancelled; i++) {
       await sleep(1500);
       sampleDOM(job);
@@ -762,9 +763,16 @@
       await sleep(200);
       sampleDOM(job);
       if (active !== job || job.started || job.cancelled) return;
+      if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
+      if (find('composer') !== composer) return;
+      const pending = String(composer.tagName === 'TEXTAREA' ? composer.value : composer.innerText ?? composer.textContent ?? '').trim();
+      if (pending !== job.prompt) return;
+      if (job.attachmentCount > 0) {
+        const files = attachmentRemovers(job.attachmentNames, true);
+        if (uploads || document.querySelector('input-container [role="progressbar"], input-area-v2 [role="progressbar"], mat-progress-spinner') || controls.length < job.attachmentCount || files.length !== controls.length || files.some(node => !controls.includes(node))) return;
+      } else if (!pending) return;
       const button = find('send');
-      const pending = (composer.innerText || composer.value || composer.textContent || '').trim();
-      if (pending && button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') button.click();
+      if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') button.click();
     }
   }
 
@@ -1291,9 +1299,10 @@
           if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
             job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
             job.submitted = true;
+            const confirmation = confirmSend(job, composer, temporary);
             button.click();
             sampleDOM(job);
-            confirmSend(job, composer).catch(() => {});
+            confirmation.catch(() => {});
             return;
           }
           const block = blocking();
