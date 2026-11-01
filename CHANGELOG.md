@@ -4,6 +4,15 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-11-02
+
+### Fixed
+- Image sends on ChatGPT and Gemini confirm submission before retrying, avoiding duplicate sends when the provider is slow to respond.
+- Replies skip hidden and screen-reader-only copies of text, avoiding duplicated content.
+
+### Changed
+- Expanded edge-case coverage for hostile input, settings storage, provider bridges, media handling and update verification.
+
 ## [1.5.1] - 2026-11-02
 
 ### Changed
@@ -153,6 +162,7 @@ First beta: Snapshot attachments, per-chat reasoning, file attachments and media
 [0.1.2]: https://github.com/Steez-47/qchat/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Steez-47/qchat/releases/tag/v0.1.1
 
+[1.5.2]: https://github.com/Steez-47/qchat/releases/tag/v1.5.2
 [1.5.1]: https://github.com/Steez-47/qchat/releases/tag/v1.5.1
 [1.5.0]: https://github.com/Steez-47/qchat/releases/tag/v1.5.0
 [1.4.2]: https://github.com/Steez-47/qchat/releases/tag/v1.4.2
