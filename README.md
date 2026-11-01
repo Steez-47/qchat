@@ -43,7 +43,7 @@ Temporary mode can be refused on guest, localized or changed provider interfaces
 
 ## Install
 
-Download `QChat_1.3.0_x64-setup.exe` from the [v1.3.0 release](https://github.com/Steez-47/qchat/releases/tag/v1.3.0). The Windows x64 installer includes WebView2, installs for your current user, and creates a Start menu shortcut. Quit any existing QChat tray instance first. This release is unsigned; Windows may show an unknown-publisher warning. See [installation and testing notes](packaging/INSTALL.txt).
+Download `QChat_1.3.1_x64-setup.exe` from the [v1.3.1 release](https://github.com/Steez-47/qchat/releases/tag/v1.3.1). The Windows x64 installer includes WebView2, installs for your current user, and creates a Start menu shortcut. Quit any existing QChat tray instance first. This release is unsigned; Windows may show an unknown-publisher warning. See [installation and testing notes](packaging/INSTALL.txt).
 
 ## Build and run
 ```

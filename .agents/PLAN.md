@@ -1,3 +1,14 @@
+## Public v1.3.1 release (2026-11-01)
+
+Goal: consolidate all committed work into t3/main and publish the public Windows x64 patch release. Preserve the running v1.3.0 app, saved profile, canonical portable and historical worktrees.
+
+| task | owner | status |
+|---|---|---|
+| Audit all branch tips and pull merged PR #9 into t3/main | parent | done: all committed tips are ancestors; historical dirty prototypes preserved |
+| Bump package, Cargo, Tauri and install documentation to 1.3.1 | parent | done |
+| Verify combined source, review release readiness and build installer/portable | parent + bounded reviewer | in progress |
+| Push t3/main, tag the exact source, publish Latest and verify uploaded assets | parent | pending |
+
 ## Completed-block response streaming (2026-11-01)
 
 Goal: keep tool activity live and show response text only at complete Markdown or closed tag/template block boundaries. Use one buffered path for all saved streaming styles; preserve final/Stop text, formatting, selection and reading position.
