@@ -3262,10 +3262,12 @@
     if (provider === "gemini" ? geminiChoice && cached?.models?.length : cached && !cached.error && (cached.models?.length || cached.levels?.length)) return;
     if (modelRequest?.provider === provider && modelRequest.mode === mode) return;
     if (modelRequest) cancelModelRequest();
-    const request = { provider, mode };
-    modelRequest = request;
     modelCache[provider] = cached ? { ...cached, loading: true, error: null } : { loading: true, models: [], levels: [], _mode: mode };
     renderPicker();
+    // A newly created provider page may not have its bridge yet. Its ready status resumes the read.
+    if (!bridge.ready) return;
+    const request = { provider, mode };
+    modelRequest = request;
     const finish = event => {
       if (modelRequest !== request) return;
       cancelModelRequest();
@@ -5034,6 +5036,7 @@
   listen("bridge", ({ payload: evt }) => {
     if (!evt || typeof evt !== "object") return;
     const provider = evt.provider || "chatgpt";
+    const previousStatus = providerStates[provider];
     if (evt.type === "status") {
       // A status sent before the mode switcher has drawn has no model: keep the one we know.
       const known = providerStates[provider]?.model;
@@ -5048,6 +5051,12 @@
       case "status":
         if (![...readyWaiters].some(w => w.temporary && w.provider === activeProvider && w.generation === chatGeneration && (evt.temporary !== true || evt.setupId !== w.setupId))) updateStatusHeader({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
         settleReadyWaiters(evt);
+        if (!evt.ready && modelRequest?.provider === provider) cancelModelRequest();
+        // Gemini can draw the model switcher after its composer. Retry an early read when it arrives.
+        if (pickerOpen && evt.ready && !isBusy() && (!previousStatus?.ready || (evt.model && evt.model !== previousStatus?.model) || evt.loggedIn !== previousStatus?.loggedIn)) {
+          requestModes();
+          requestPickerModels();
+        }
         break;
       case "transcript":
         if (evt.conversationId && evt.conversationId === chats.current.conversationId) {
