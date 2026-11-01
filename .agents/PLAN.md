@@ -6,8 +6,12 @@ Goal: consolidate all committed work into t3/main and publish the public Windows
 |---|---|---|
 | Audit all branch tips and pull merged PR #9 into t3/main | parent | done: all committed tips are ancestors; historical dirty prototypes preserved |
 | Bump package, Cargo, Tauri and install documentation to 1.3.1 | parent | done |
-| Verify combined source, review release readiness and build installer/portable | parent + bounded reviewer | in progress |
+| Verify combined source, review release readiness and build installer/portable | parent + bounded reviewer | done: 55 suites; Rust 34 passed, 1 intentional ignore; review found no blockers |
 | Push t3/main, tag the exact source, publish Latest and verify uploaded assets | parent | pending |
+
+Production build: commit `de6128159bc6deab2c227d0e651940733e82ebe2`, version 1.3.1, staged in `dist/v1.3.1`. Portable SHA256 `a01f8af45edc7129fc3e879028ce80de6b395851154884a56aed9f270db0dec2`; installer SHA256 `b3038f737bfac7cbf8ea1d6205bf26b6a8309d6465fc0a21f07ae9b84bb4717b`. Staged outputs match compiled outputs. Extracted payload differs from the portable only at the expected three UNK-to-NSS marker bytes; install notes/notices match, WebView2 has a valid Microsoft signature, installer manifest is asInvoker, and both executable versions are 1.3.1.
+
+Release gate: 52 unit/bridge/UI suites plus 3 rebuilt hidden native suites pass. The initial aggregate exposed a stale keyboard-copy fixture that selected a paragraph before its completion boundary; retained its assertions, added explicit unfinished-paragraph/code buffering checks, and independently reran all 26 copy checks. No application changes followed the production build. Logs and build/validation manifests are in `.tmp/release-1.3.1`; the current hidden native draft screenshot was inspected. One Terra medium reviewer found no release blockers. Running PID42228, its v1.3.0 hash, the canonical portable and historical worktrees are preserved. Release executable/installer launch and signed-in sending remain unverified.
 
 ## Completed-block response streaming (2026-11-01)
 
