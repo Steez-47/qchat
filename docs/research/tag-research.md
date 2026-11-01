@@ -31,7 +31,7 @@ All links below were fetched on 2026-10-31. Tier meanings are in the next sectio
 | A | [ChatKit widgets](https://developers.openai.com/api/docs/guides/chatkit-widgets) | A **separate product** with a JSON widget schema (`Card`, `Box`, `Row`, `Col`, `Text`, `Title`, `Caption`, `Divider`, `Icon`, `Image`, `Markdown`, `Button`, `ListView`, ...). It is not evidence of ChatGPT's private in-message registry; do not conflate the two. |
 | A | [API docs index](https://developers.openai.com/api/docs/llms.txt), [developer docs index](https://developers.openai.com/llms.txt), [ChatGPT product docs index](https://learn.chatgpt.com/llms.txt) | These official indexes were searched; no complete registry of ChatGPT's private rich-reply markup was found. |
 | B | QChat bridge + prior live observations (`src-tauri/bridge/chatgpt-bridge.js`, `.agents/PLAN.md` §"Rich replies") | The ChatGPT app emits a private layout language in message text, with images and citations resolved from message metadata. Recorded from real replies during this project; **not** re-verified against the live site in this research pass. |
-| C | QChat test fixtures (`tools/*-test.mjs`, `.agents/PLAN.md`) | Synthetic fixtures shaped like observed payloads. Useful as regression input, not independent proof that a tag exists. |
+| C | QChat test fixtures (`tests/*-test.mjs`, `.agents/archive/PLAN-2026-10.md`) | Synthetic fixtures shaped like observed payloads. Useful as regression input, not independent proof that a tag exists. |
 
 ### Search limitation (runtime probe)
 
@@ -150,9 +150,9 @@ hallucination). Required contract:
 
 ## Tests the implementation ought to have
 
-Primary checks: `tools/response-tags-test.mjs` (unit parser),
-`tools/response-tags-ui-test.mjs` (actual Edge rendering/streaming) and
-`tools/stream-media-test.mjs` (native bridge snapshots). Coverage includes:
+Primary checks: `tests/response-tags-test.mjs` (unit parser),
+`tests/response-tags-ui-test.mjs` (actual Edge rendering/streaming) and
+`tests/stream-media-test.mjs` (native bridge snapshots). Coverage includes:
 
 1. Unit: nesting, attributes with `>`/quotes/braces, self-closing, unbalanced close, deep
    nesting bound, partial tag at EOF.

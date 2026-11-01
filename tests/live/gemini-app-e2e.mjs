@@ -1,5 +1,5 @@
 // Whole-app Gemini check: real QChat, real UI, real gemini.google.com as a guest. Hidden isolated profile.
-// Usage: node tools/live/gemini-app-e2e.mjs   (needs `cargo build`; sends a few harmless guest prompts)
+// Usage: node tests/live/gemini-app-e2e.mjs   (needs `cargo build`; sends a few harmless guest prompts)
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

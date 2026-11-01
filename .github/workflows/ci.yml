@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Offline suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax check
+        run: for f in ui/*.js src-tauri/bridge/*.js tests/*.mjs tools/*.mjs; do node --check "$f"; done
+      - name: Point the UI suites at Chrome
+        run: |
+          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)"
+          test -n "$browser" || { echo "No Chromium-based browser on the runner"; exit 1; }
+          printf '#!/bin/sh\nexec "%s" --no-sandbox "$@"\n' "$browser" > "$RUNNER_TEMP/edge.sh"
+          chmod +x "$RUNNER_TEMP/edge.sh"
+          echo "QCHAT_TEST_EDGE=$RUNNER_TEMP/edge.sh" >> "$GITHUB_ENV"
+      - name: Run tests
+        run: npm test

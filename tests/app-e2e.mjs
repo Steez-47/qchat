@@ -1,5 +1,5 @@
 // Real guest ChatGPT through QChat/WebView2. Hidden, isolated profile only.
-// Usage: node tools/app-e2e.mjs (fresh cargo build first; sends harmless guest prompts).
+// Usage: node tests/app-e2e.mjs (fresh cargo build first; sends harmless guest prompts).
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';

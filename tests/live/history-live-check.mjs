@@ -1,5 +1,5 @@
 // Opt-in, read-only check of chat history against the real account. Uses the rate-limited chat list,
-// so run it sparingly; tools/live/old-image-check.mjs avoids that list. Needs QChat closed so the
+// so run it sparingly; tests/live/old-image-check.mjs avoids that list. Needs QChat closed so the
 // signed-in profile can be copied. Runs the debug build off screen on a disposable copy, sends
 // nothing, prints only counts and shapes, and deletes the copy (it holds a session) when done.
 import { spawn, spawnSync } from 'node:child_process';

@@ -1,5 +1,5 @@
 // End-to-end check of the real QChat app, driven over WebView2 CDP. No windows are shown.
-// Usage: node tools/provider-native-test.mjs (needs `cargo build` first).
+// Usage: node tests/provider-native-test.mjs (needs `cargo build` first).
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';

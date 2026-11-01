@@ -1,9 +1,18 @@
+# Dependencies and build output
 node_modules/
-src-tauri/target/
-src-tauri/gen/
 dist/
+src-tauri/target/
+src-tauri/target-*/
+src-tauri/gen/
+src-tauri/resources/THIRD-PARTY-NOTICES.txt
+
+# Test and bridge scratch
+.tmp/
 .bridge-profile/
 *.log
-.tmp/
-src-tauri/target-*/
-src-tauri/resources/THIRD-PARTY-NOTICES.txt
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

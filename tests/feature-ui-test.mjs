@@ -177,7 +177,7 @@ try {
   }
   check('every menu command runs without console errors', problems.length===0);
   check('attachment chips use quiet 28px height', (await readFile(path.join(root,'ui/app.css'),'utf8')).includes('height: 28px; min-height: 28px'));
-  check('README documents feature checks', (await readFile(path.join(root,'README.md'),'utf8')).includes('feature-ui-test.mjs'));
+  check('testing guide documents feature checks', (await readFile(path.join(root,'docs','TESTING.md'),'utf8')).includes('feature-ui-test.mjs'));
   await open('/', { chats: { v:1,current:chatSeed('current'),recent:[chatSeed('a',{ago:MIN}),chatSeed('b',{ago:2*MIN}),chatSeed('c',{ago:3*MIN})] }, settings:{animations:'off',autoDismiss:0} });
   await key('p', { ctrlKey: true });
   await waitFor(`!document.querySelector('.feature-list').hidden && document.querySelectorAll('.feature-list .feature-row').length===3`);

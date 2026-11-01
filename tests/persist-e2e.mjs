@@ -1,5 +1,5 @@
 // Checks that data in the app's WebView2 profile survives Quit and a restart. No windows are shown.
-// Usage: node tools/persist-e2e.mjs   (needs `cargo build` first; uses the debug exe)
+// Usage: node tests/persist-e2e.mjs   (needs `cargo build` first; uses the debug exe)
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync } from 'node:fs';
