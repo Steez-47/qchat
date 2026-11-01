@@ -54,7 +54,8 @@ pub fn set_selection_hotkey(
         return Err("Shortcut already used by QChat".into());
     }
     let mut saved = state.0.lock().unwrap();
-    let old = parse(&saved)?;
+    // A saved shortcut that no longer parses was never registered, and must not block a new one.
+    let old = parse(&saved).ok().flatten();
     let real = crate::test_profile().is_none();
     if real {
         if let Some(v) = old {

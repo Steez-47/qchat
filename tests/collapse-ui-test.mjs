@@ -302,8 +302,14 @@ try {
   await send('Streaming fixture');
   await until(`__mock.last('chat_send') && document.getElementById('btn-send').dataset.mode==='stop'`, 'streaming');
   await blur();
+  await folded();
+  check('folds while a reply is only being waited for', await evalJS(`document.documentElement.dataset.orbTask==='working'`));
+  await focus();
+  await opened();
+  await evalJS(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:'First words of the reply'})`);
+  await blur();
   await sleep(IDLE * 1.5);
-  check('never folds while a reply is streaming', await state() === 'open');
+  check('never folds once the words of a reply are arriving', await state() === 'open');
   await evalJS(`__mock.release?.()`);
   await finishReply();
   const done = Date.now();

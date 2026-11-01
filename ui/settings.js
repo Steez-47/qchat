@@ -448,9 +448,8 @@
       if (e.key === "Escape") { stopRecording(); return; }
       if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return;
       if (kind === "selection" && e.key === "Backspace") {
-        await invoke("set_selection_hotkey", { accelerator: "" });
-        current = "";
-        stopRecording();
+        try { await invoke("set_selection_hotkey", { accelerator: "" }); current = ""; hint.textContent = defaultHint; stopRecording(); }
+        catch (err) { hint.textContent = String(err.message || err); }
         return;
       }
       if (!e.ctrlKey && !e.altKey && !e.metaKey) { hint.textContent = "Include Ctrl, Alt or Windows"; return; }

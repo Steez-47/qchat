@@ -1044,6 +1044,7 @@
     if (!chat.conversationId || backfilled.has(chat) || isBusy()) return;
     backfilled.add(chat);
     setHistoryStatus("Loading earlier messages");
+    clearTimeout(backfillTimer);
     backfillTimer = setTimeout(() => backfillFailed(chat), 20000);
     invoke("chat_read_transcript", { conversationId: chat.conversationId }).catch(() => backfillFailed(chat));
   }
@@ -1300,6 +1301,10 @@
       // Each site keeps its own page, so returning must remember which chat that page still holds.
       pageByProvider[activeProvider] = page;
       activeProvider = provider;
+      // A pick still pending on the old site can't be confirmed from here, so it mustn't fail here.
+      clearTimeout(modeChoice?.timer);
+      modeChoice = null;
+      settleGeminiChoice();
       pageSync = Promise.resolve();
       setModelLabel("");
       cancelModelRequest();
@@ -3027,11 +3032,14 @@
 
   async function switchToChat(key) {
     if (refuseWhileBusy()) return;
-    const index = chats.recent.findIndex((c) => c.key === key);
-    if (index < 0) return;
+    const wanted = chats.recent.find((c) => c.key === key);
+    if (!wanted) return;
     // Before the provider switch, which can close History or replace the current chat.
     rememberReadingPosition();
-    if (!await setProvider(chats.recent[index].provider || "chatgpt")) return;
+    if (!await setProvider(wanted.provider || "chatgpt")) return;
+    // The list can change during that wait: Clear chats, history turned off, another window.
+    const index = chats.recent.findIndex((c) => c.key === key);
+    if (index < 0) return;
     chatGeneration++;
     discardPendingFiles();
     hideGlobalError();
@@ -4766,8 +4774,9 @@
     // Hide-on-blur already takes the window away, and a hidden window has nothing to fold.
     seconds: () => (QSettings.settings.hideOnBlur || windowHidden ? 0 : QSettings.settings.idleCollapse),
     // Keep drafts visible, including whitespace; Settings also previews on the live bar.
-    // An ordinary reply keeps the window open; a Work reply can run for minutes, so it may fold.
-    blocked: () => el.promptInput.value.length > 0 || switchingProvider || ((sending || isStreaming()) && effectiveMode() !== "work") || filePickerOpen || snapshotCapturing || settingsOpen || document.visibilityState === "hidden",
+    // Any reply may fold while it is only being waited for, and the orb shows the wait. Once an
+    // ordinary reply's words arrive they are being read, so it stays open; Work can run for minutes.
+    blocked: () => el.promptInput.value.length > 0 || switchingProvider || (effectiveMode() !== "work" && turns.some(t => t.role === "assistant" && t.status === "streaming" && (t.text || t.media?.length))) || filePickerOpen || snapshotCapturing || settingsOpen || document.visibilityState === "hidden",
     motion: () => QSettings.motionOn,
     timings: () => QSettings.timings,
     drag: dragWindow,
@@ -4800,6 +4809,7 @@
     try {
       const result = await updater.check(true);
       if (result?.available) { hideCommandFeedback(); updater.focus(); }
+      else if (result?.status === "no_nightly") showCommandFeedback("No Nightly builds have been published yet.");
       else showCommandFeedback(`QChat is up to date${result?.current ? ` (v${result.current})` : ""}`);
     } catch (_) { showCommandFeedback("Couldn't check for updates. Try again later."); }
   }
@@ -5206,7 +5216,8 @@
           scheduleTurnRender(turn.id, true);
           updateComposerMode();
           if (evt.code === "auth") updateStatusHeader({ ready: true, loggedIn: false, signedOut: true });
-        } else if (!turn) {
+        } else if (!turn && !evt.id) {
+          // An error naming a turn that has gone (dismissed or stopped) has nothing left to report on.
           showGlobalError(evt.code, evt.message);
           updateComposerMode();
         }

@@ -28,6 +28,7 @@ use windows::{
 };
 
 const LATEST: &str = "https://api.github.com/repos/Steez-47/qchat/releases/latest";
+const NIGHTLIES: &str = "https://api.github.com/repos/Steez-47/qchat/releases?per_page=100";
 const DOWNLOADS: &str = "https://github.com/Steez-47/qchat/releases/download/";
 const PAGES: &str = "https://github.com/Steez-47/qchat/releases/";
 const ASSET: &str = "QChat.exe";
@@ -41,6 +42,7 @@ type Version = (u64, u64, u64);
 #[derive(Clone, Debug, PartialEq)]
 struct Release {
     version: Version,
+    nightly: Option<u64>,
     label: String,
     page: String,
     exe_url: String,
@@ -81,11 +83,30 @@ fn hex_digest(text: &str) -> Option<String> {
 }
 
 fn parse_release(json: &Value) -> Result<Release, String> {
-    if json["draft"].as_bool() == Some(true) || json["prerelease"].as_bool() == Some(true) {
+    parse_channel_release(json, false)
+}
+
+fn nightly_number(tag: &str) -> Option<u64> {
+    let (_, number) = tag.split_once("-nightly.")?;
+    if number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) { return None; }
+    number.parse().ok()
+}
+
+fn parse_channel_release(json: &Value, nightly: bool) -> Result<Release, String> {
+    if json["draft"].as_bool() == Some(true) || (json["prerelease"].as_bool() == Some(true)) != nightly {
         return Err("no_release".into());
     }
     let tag = json["tag_name"].as_str().ok_or("no_release")?;
+    let number = nightly_number(tag);
+    if nightly != number.is_some() || (!nightly && tag.contains('-')) {
+        return Err("no_release".into());
+    }
     let version = parse_version(tag).ok_or("bad_version")?;
+    if let Some(n) = number {
+        if tag.trim_start_matches('v') != format!("{}.{}.{}-nightly.{n}", version.0, version.1, version.2) {
+            return Err("bad_version".into());
+        }
+    }
     let page = json["html_url"].as_str().filter(|u| u.starts_with(PAGES)).ok_or("no_release")?;
     let assets = json["assets"].as_array().ok_or("no_asset")?;
     let find = |name: &str| {
@@ -102,13 +123,23 @@ fn parse_release(json: &Value) -> Result<Release, String> {
     }
     Ok(Release {
         version,
-        label: format!("{}.{}.{}", version.0, version.1, version.2),
+        nightly: number,
+        label: match number {
+            Some(n) => format!("{}.{}.{}-nightly.{n}", version.0, version.1, version.2),
+            None => format!("{}.{}.{}", version.0, version.1, version.2),
+        },
         page: page.to_owned(),
         exe_url: exe["browser_download_url"].as_str().unwrap_or_default().to_owned(),
         size: exe["size"].as_u64().unwrap_or(0),
         sha256,
         sums_url,
     })
+}
+
+fn select_nightly(json: &Value) -> Result<Option<Release>, String> {
+    Ok(json.as_array().ok_or("bad_releases")?.iter()
+        .filter_map(|item| parse_channel_release(item, true).ok())
+        .max_by_key(|release| release.nightly))
 }
 
 // A SHA256SUMS.txt line is "<hex>  <name>" (or "<hex> *<name>" from binary-mode tools).
@@ -191,12 +222,23 @@ pub async fn update_check(app: tauri::AppHandle) -> Result<Value, String> {
     if crate::test_profile().is_some() {
         return Ok(json!({"available": false, "current": label}));
     }
-    let body = tauri::async_runtime::spawn_blocking(|| get(LATEST, "application/vnd.github+json", MAX_JSON, |_| {}))
+    let nightly = nightly_number(label);
+    let endpoint = if nightly.is_some() { NIGHTLIES } else { LATEST };
+    let body = tauri::async_runtime::spawn_blocking(move || get(endpoint, "application/vnd.github+json", MAX_JSON, |_| {}))
         .await
         .map_err(|e| e.to_string())??;
     let json: Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
-    let release = parse_release(&json)?;
-    let available = release.version > now;
+    let release = if nightly.is_some() { select_nightly(&json)? } else { Some(parse_release(&json)?) };
+    let Some(release) = release else {
+        // A local Nightly can exist before CI has published the first one.
+        // An empty channel is a successful check, not a network failure.
+        *app.state::<State>().found.lock().unwrap() = None;
+        return Ok(json!({"available": false, "current": label, "status": "no_nightly"}));
+    };
+    let available = match nightly {
+        Some(number) => release.nightly.is_some_and(|n| n > number),
+        None => release.version > now,
+    };
     let result = json!({"available": available, "version": release.label, "current": label, "url": release.page});
     *app.state::<State>().found.lock().unwrap() = available.then_some(release);
     Ok(result)
@@ -213,7 +255,10 @@ fn sibling(exe: &Path, suffix: &str) -> PathBuf {
 fn swap(exe: &Path, bytes: &[u8]) -> Result<(), String> {
     let new = sibling(exe, ".new");
     let old = sibling(exe, ".old");
-    std::fs::write(&new, bytes).map_err(|e| format!("not_writable: {e}"))?;
+    if let Err(e) = std::fs::write(&new, bytes) {
+        let _ = std::fs::remove_file(&new);
+        return Err(format!("not_writable: {e}"));
+    }
     let _ = std::fs::remove_file(&old);
     if let Err(e) = std::fs::rename(exe, &old) {
         let _ = std::fs::remove_file(&new);
@@ -383,6 +428,39 @@ mod tests {
         let mut page = release_json(None, true);
         page["html_url"] = json!("https://example.com/");
         assert!(parse_release(&page).is_err());
+    }
+
+    fn nightly_json(number: u64) -> Value {
+        let mut json = release_json(None, true);
+        json["tag_name"] = json!(format!("v1.5.2-nightly.{number}"));
+        json["prerelease"] = json!(true);
+        json
+    }
+
+    #[test]
+    fn nightly_channel_is_isolated_and_compares_build_numbers() {
+        let nightly = nightly_json(10);
+        assert!(parse_release(&nightly).is_err(), "stable never installs Nightly");
+        assert!(parse_channel_release(&release_json(None, true), true).is_err());
+        let found = select_nightly(&json!([nightly_json(9), release_json(None, true), nightly.clone()])).unwrap().unwrap();
+        assert_eq!(found.nightly, Some(10));
+        assert_eq!(found.label, "1.5.2-nightly.10");
+        assert!(found.nightly > nightly_number("1.5.2-nightly.9"));
+        assert_eq!(found.nightly, nightly_number("1.5.2-nightly.10"));
+        let mut draft = nightly_json(11);
+        draft["draft"] = json!(true);
+        assert_eq!(select_nightly(&json!([draft, nightly])).unwrap().unwrap().nightly, Some(10));
+        for tag in ["v1.5.2-beta.1", "v1.5.2-nightly.", "v1.5.2-nightly.10+extra", "v1.5.2-beta-nightly.10"] {
+            let mut bad = nightly_json(10);
+            bad["tag_name"] = json!(tag);
+            assert!(parse_channel_release(&bad, true).is_err(), "{tag}");
+        }
+        let mut no_hash = nightly_json(20);
+        no_hash["assets"] = json!([]);
+        assert!(parse_channel_release(&no_hash, true).is_err());
+        assert_eq!(select_nightly(&json!([])).unwrap(), None);
+        assert_eq!(select_nightly(&json!([release_json(None, true)])).unwrap(), None);
+        assert!(select_nightly(&json!({"message": "API error"})).is_err());
     }
 
     #[test]

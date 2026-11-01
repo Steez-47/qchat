@@ -252,6 +252,8 @@
     } catch (_) {
       html = `<code class="math-raw">${escapeHtml(tex)}</code>`;
     }
+    // QChat stays running for days, so the cache can't grow with every formula it ever saw.
+    if (rendered.size >= 500) rendered.clear();
     rendered.set(key, html);
     return html;
   }

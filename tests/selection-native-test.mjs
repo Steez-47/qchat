@@ -76,7 +76,7 @@ try {
     const input=document.getElementById('prompt-input'); input.value='Draft';
     await window.__TAURI__.event.emit('qchat://selection','line one\\nline two');
     await new Promise(r=>setTimeout(r,100));
-    return {invalid,duplicate,reverse,unchanged,disabled,compactSelection:input.value==='Draft' && !!document.querySelector('#attachments .selection-chip') && !document.body.textContent.includes('line one'),caret:input.selectionStart===input.value.length};
+    return {invalid,duplicate,reverse,unchanged,disabled,compactSelection:input.value==='Draft' && document.querySelector('#attachments .selection-chip .attachment-name')?.textContent==='line one line two',caret:input.selectionStart===input.value.length};
   })()`);
   for (const [label,ok] of Object.entries(result)) check(label,ok);
   await evaluate(`window.__TAURI__.core.invoke('open_settings')`);

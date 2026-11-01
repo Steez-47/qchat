@@ -38,6 +38,14 @@ Download `QChat_1.5.2_x64-setup.exe` from the [latest release](https://github.co
 
 See [packaging/INSTALL.txt](packaging/INSTALL.txt) for upgrade, uninstall and testing notes.
 
+### Nightly builds
+
+To test features before a release, install the newest **QChat Nightly** from [Releases](https://github.com/Steez-47/qchat/releases). Every push or PR merge into `main` runs the offline tests, then builds and tests Windows before publishing a prerelease. Failed builds leave the previous Nightly available.
+
+Install Nightly once and it will offer newer Nightlies through the orb's **Update** button. Checks run at startup and every six hours; use `/update` to check immediately after a build finishes. Updating waits for your click and restarts QChat. Stable builds continue to receive stable releases only.
+
+Nightly uses your existing settings, chats and sign-in; quit QChat before installing it. To return to stable, quit Nightly and replace its portable executable with `QChat.exe` from the latest stable release. Nightlies contain unfinished features, so keep a backup of your profile before testing.
+
 ## Using QChat
 
 **Getting started**

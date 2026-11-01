@@ -2,7 +2,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openPage, serveUI, sleep } from './lib/ui-harness.mjs';
+import { openPage, serveUI, sleep, timerMs } from './lib/ui-harness.mjs';
 
 const { base, close: closeServer } = await serveUI();
 
@@ -406,6 +406,23 @@ try {
   check('opening by mouse focuses the selected provider without a focus ring', await pickerOpen() && await evalJS(`document.activeElement.dataset.pickerKey==='provider:chatgpt' && !document.activeElement.matches(':focus-visible')`));
   await mouse('#picker [data-picker-key="provider:gemini"]'); await sleep(400);
   check('a mouse pick keeps the popover open with focus on the picked provider', await pickerOpen() && await evalJS(`document.activeElement.dataset.pickerKey==='provider:gemini' && !document.activeElement.matches(':focus-visible')`));
+  // ---- a pick still pending when the provider changes never fails on the next provider
+  await open0();
+  await pill(); await sleep(100);
+  await evalJS(`__mock.modeHold=true`);
+  await click('#picker [data-picker-key="mode:work"]');
+  await click('#picker [data-picker-key="provider:gemini"]');
+  await waitFor(`__mock.provider==='gemini' && document.querySelector('#picker [data-picker-key="model:thinking"]')`);
+  await sleep(timerMs(8400));
+  check('a pending mode pick does not fail on the next provider', await evalJS(`${q('#global-error')}.hidden`), await evalJS(`${q('#global-error-text')}.textContent`));
+  await evalJS(`__mock.modelHold=true`);
+  await click('#picker [data-picker-key="model:thinking"]');
+  await sleep(50);
+  await pill(); await sleep(100);
+  await click('#picker [data-picker-key="provider:chatgpt"]');
+  await waitFor(`__mock.provider==='chatgpt'`);
+  await sleep(timerMs(8400));
+  check('a pending Gemini model pick does not fail on ChatGPT', await evalJS(`${q('#global-error')}.hidden`), await evalJS(`${q('#global-error-text')}.textContent`));
   check('no runtime errors', problems.length === 0, problems.join(' | '));
 } catch (e) {
   console.error(e);
