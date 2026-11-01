@@ -1,6 +1,6 @@
 {
   "name": "qchat",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "A tiny glassy Windows popup for chatting with ChatGPT or Gemini through your own signed-in sessions.",
   "private": true,
   "repository": {

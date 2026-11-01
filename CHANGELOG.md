@@ -4,6 +4,8 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-11-01
+
 ### Changed
 - QChat sizes itself for your screen. On first start it measures the screen in logical pixels, so Windows display scaling counts. On 1080p screens it uses slightly smaller text, bar and reply sizes. On 768p and 720p screens, and on 1080p at 125% scaling or more, it uses compact sizes. Big screens keep the current sizes. If you're upgrading, any size you never changed gets the fitted value. Sizes you set yourself stay as they are.
 - The settings and sign-in windows shrink to fit the screen instead of running off the bottom of 720p and 768p displays.

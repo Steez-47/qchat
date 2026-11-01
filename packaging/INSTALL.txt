@@ -1,7 +1,7 @@
-QChat 1.4.2 for Windows x64
+QChat 1.4.3 for Windows x64
 
 INSTALL
-Run QChat_1.4.2_x64-setup.exe. Install for your Windows user, then open
+Run QChat_1.4.3_x64-setup.exe. Install for your Windows user, then open
 QChat from the Start menu or the installer's Finish page.
 The setup file contains the Microsoft Edge WebView2 runtime installer.
 No separate Node.js, Rust, Python or Visual C++ download is needed.
@@ -58,7 +58,7 @@ not beside the exe. Use the setup exe for a new device.
 
 CHECKSUMS AND NOTICES
 SHA256SUMS.txt covers the release files. In PowerShell, use:
-  Get-FileHash .\QChat_1.4.2_x64-setup.exe -Algorithm SHA256
+  Get-FileHash .\QChat_1.4.3_x64-setup.exe -Algorithm SHA256
 THIRD-PARTY-NOTICES.txt contains dependency notices and source references.
 
 VALIDATION

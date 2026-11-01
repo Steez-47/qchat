@@ -8,6 +8,13 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 
 ## Current state
 
+## v1.4.3 public release (2026-11-01)
+
+- Goal: merge PR17 screen sizing and PR18 website feature tour, then publish v1.4.3 publicly.
+- Parent owns integration, small review fixes, version metadata, package verification and publication.
+- Review: Luna high found a high-scaling window-fit minimum exceeding available height; parent removed the minimum and added a 200% regression case. Rust 40 pass / 1 intentional ignore.
+- Status: running. Full offline suites, release build and publication pending. Preserve running app and saved profile.
+
 ## v1.4.2 public release (2026-11-01)
 
 - Goal: publish the merged settings overhaul, website and GitHub updater as v1.4.2.
