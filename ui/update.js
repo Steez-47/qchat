@@ -26,10 +26,12 @@
     const readSkip = () => { try { return localStorage.getItem(SKIP_KEY) || ""; } catch (_) { return ""; } };
     const writeSkip = (v) => { try { localStorage.setItem(SKIP_KEY, v); } catch (_) {} };
     const available = () => !!found && (enabled() || phase !== "idle");
+    // A reply task owns the orb's corner and the hover surface while it is shown.
+    const taskShown = () => Boolean(root.dataset.orbTask);
 
     function paint() {
-      badge.hidden = !available();
-      if (!available()) { hide(true); return; }
+      badge.hidden = !available() || taskShown();
+      if (!available() || taskShown()) { hide(true); return; }
       button.disabled = phase === "installing";
       skip.hidden = phase !== "idle";
       if (phase === "idle") label.textContent = `Update to v${found.version}`;
@@ -55,7 +57,7 @@
       stack?.toggleAttribute("data-update-chip", visible);
     }
     function show() {
-      if (!available()) return false;
+      if (!available() || taskShown()) return false;
       clearTimeout(hideTimer); hideTimer = null;
       place();
       setVisible(true);

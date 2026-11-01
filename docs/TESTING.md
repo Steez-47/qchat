@@ -40,6 +40,9 @@ Highlights:
 - `node tests/rename-chat-ui-test.mjs`: local titles, Unicode, persistence, privacy, keyboard undo and editor lifecycle.
 - `node tests/gemini-bridge-test.mjs`: Gemini sending, streaming and Markdown conversion on synthetic pages.
 - `node tests/provider-ui-test.mjs`: provider picker, switching, per-chat providers and startup settings.
+- `node tests/picker-ui-test.mjs`: the compact picker's rows, modes, keyboard use, dismissal and layout stability.
+- `node tests/orb-task-ui-test.mjs`: minimizing during a reply, and the orb's working, ready and attention states.
+- `node tests/mode-bridge-test.mjs`: Work and Spark detection, switching and safe refusal on synthetic pages.
 
 Every other `tests/*-test.mjs` that isn't native or live is also part of the run: animation, glass, history, reasoning, response tags, snapshot, collapse, smoothness and more.
 

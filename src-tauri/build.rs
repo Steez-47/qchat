@@ -2,7 +2,7 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "provider_set", "provider_get", "launch_info", "show_main", "surfaces_debug", "bridge_event", "surfaces_set", "surfaces_set_blur", "get_selection_hotkey", "set_selection_hotkey", "set_selection_clipboard", "get_hotkey_available", "get_selection_hotkey_available", "get_hotkey", "set_hotkey", "get_autostart", "set_autostart",
-            "chat_models", "chat_model_choose", "chat_send",
+            "chat_models", "chat_modes", "chat_mode_set", "chat_model_choose", "chat_send",
             "chat_stop",
             "chat_new",
             "chat_status",

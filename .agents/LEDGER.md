@@ -5,8 +5,21 @@ Usage and rate-limit log for delegated work. The full log through v1.4.0 is in `
 ## Budget status
 
 - codex (gpt-6.1-sol, terra): exhausted until 2026-11-07 19:18 local (recorded 2026-11-01).
+- antigravity (gemini-4-argon): usage limit reached, resets in 4 days 23 hours (recorded 2026-11-01).
+- opencode free: usage limit reached 2026-11-01, no reset time shown.
+- opencode go: the owner has a subscription and approved `opencode-go/deepseek-v4.1-flash` (2026-11-01). Blocked until Global regions is selected in the OpenCode workspace Privacy settings; only the owner can change that.
 
 ## Log
+
+2026-11-01 | Picker and orb completion | native integrator (Sonnet 5.5) | done | two runs after the 40-turn limit; 58/58 suites. codex/gpt-6.1-terra medium also ran: build task made no changes, review delivered 4 valid findings, so Terra is usable despite the note above. Parent fixed the findings and integrated.
+
+2026-11-01 | Finish picker and orb | codex/gpt-6-luna high | partial | two runs, minor provider fix only. opencode-go/deepseek-v4.1-flash max | unavailable | requires Global regions, no work produced. Finishing on codex/gpt-6.1-terra medium.
+
+2026-11-01 | Compact picker and orb states | opencode/deepseek-v4.1-flash-free max | limit hit | UI code partly landed, no tests or report; finishing on codex/gpt-6-luna high (Argon, Sol and OpenCode free all out).
+
+2026-11-01 | Bridge Work/Spark modes | opencode/deepseek-v4.1-flash-free max | limit hit at end | code landed without a report; parent ran acceptance: mode-bridge 30PASS, reasoning/gemini/temporary bridges PASS, validate_mode PASS.
+
+2026-11-01 | Compact picker and orb states | antigravity/gemini-4-argon medium | unavailable | usage limit, no work produced; Sol exhausted, so rerouted to DeepSeek per the UI fallback chain.
 
 2026-11-01 | v1.4.3 public release | parent | done | PR17/18 merged; tag13fafd1f0457680c8a686c69c9771b49cbc9f64d; 55offlinePASS, Rust40PASS/1ignore, 109syntaxPASS; desktop/phone/reduced-motion website smokePASS; installer220297480bytes SHA256 ea0cbf01ab12f1bdf6999499f4ff2d4f1e260ba46297748475cbe51134328720; portable6234112bytes SHA256 44251034457976cbd97b29234e1f7c3ef2bcd5fd7bf241e5307d2eda17b98dfa; public/latest, extracted payload/resources/manifest/runtime signature and five server hashes/sizesPASS. One Luna review; parent fixed high-scale bounds and mobile glow overflow. Native mixedDPI, signed-in, updater restart and clean install unverified.
 

@@ -24,6 +24,21 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 - Full offline run: 50/56 suites passed before updating two obsolete quote fixtures. Those two now pass. The other four failures reproduced against the pre-change picker/mode UI: feature/provider/reasoning pickers and missing `chat_modes`/`chat_mode_set` command permissions. Preserve that separate work; no unrelated test expectations were changed.
 - Parent corrected a pre-existing stale `showReasoningPicker` listener to `openPicker` to allow startup. This depends on the unfinished picker work and remains with that work, outside the quote commit. Build output is `src-tauri/target/release/qchat.exe`; installed/dist application was not replaced.
 
+## Work modes, compact picker, minimized orb (2026-11-01)
+
+- Goal: ChatGPT Work and Gemini Spark as a per-chat mode; one compact provider/mode/model popover; minimize while waiting, with a spinning ring, then a green orb with a "1" badge when ready.
+- Decisions: mode ids are `chat` and `work`, labels come from the site (fallback "Work"/"Spark"). Changing mode starts a new chat keeping the draft. A missing control fails with `mode_unavailable`, never a silent normal chat. Effort applies to Chat only. Ordinary replies still don't auto-fold; Work tasks can. Real Work/Spark DOM is unverified because the running app has no debug port and its profile stays untouched; `tests/live/mode-probe.mjs` covers that once the owner allows it.
+
+| task | model | owns | status |
+|---|---|---|---|
+| Bridge modes, Rust commands, bridge tests, live probe | opencode/deepseek-v4.1-flash-free max | src-tauri/bridge/*, src-tauri/src/main.rs, tests/mode-bridge-test.mjs, tests/live/mode-probe.mjs | done |
+| Picker popover, orb states, mock, UI tests | native integrator (Sonnet 5.5), after Argon, DeepSeek, Luna and Terra stopped or hit limits | ui/*, tests/*-ui-test.mjs, tests/feature-ui-test.mjs | done |
+| Docs, integration, cross-family review, full suite | parent + codex/gpt-6.1-terra medium review | docs/*, README.md, CHANGELOG.md, .agents/* | done |
+
+- Review: Terra found three high issues and one medium, all fixed by the parent: an unconfirmed switch could send as chat, a Work prompt could land in an unrecorded thread, five quiet seconds ended a task, and a late mode error could cancel a newer pick. Parent also found the native allow-list was missing both commands, and that a paused task lost its thread.
+- Verified: 58/58 headless suites, Rust 41 pass / 1 intentional ignore, every script syntax-checks; 7 of 7 deliberate logic breaks caught by the suites; screenshots reviewed in dist/qa-picker (mock backend).
+- Not verified: real Work and Spark pages (selectors come from public docs only; run `tests/live/mode-probe.mjs` against a debug instance), native window appearance, the signed-in send path. Completion with no visible running indicator is a 10-minute quiet guess. Spark may not be offered in New Zealand yet.
+
 ## v1.4.3 public release (2026-11-01)
 
 - Goal: merge PR17 screen sizing and PR18 website feature tour, then publish v1.4.3 publicly.

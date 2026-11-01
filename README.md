@@ -47,8 +47,8 @@ See [packaging/INSTALL.txt](packaging/INSTALL.txt) for upgrade, uninstall and te
 - Drag the orb to move QChat.
 
 **Providers and models**
-- Switch between ChatGPT and Gemini with `/chatgpt` and `/gemini`, or from the last row of the picker beside the prompt.
-- That picker sets reasoning on ChatGPT and the model on Gemini. `/model` picks a ChatGPT model on a signed-in account.
+- The pill beside the prompt opens one small picker for provider, mode, effort and model. `/chatgpt` and `/gemini` also switch provider.
+- Choose Work on ChatGPT, or Spark on Gemini, for long agent tasks where your plan includes them. It starts a new chat and keeps your draft. If a task stops to ask for your approval, QChat tells you to open the chat on the site.
 - Each chat stays with the provider it started on, and tabs show its logo. Settings has a default provider and a sign-in for each. Gemini only loads once you first use it.
 
 **Chats**
@@ -73,6 +73,7 @@ See [packaging/INSTALL.txt](packaging/INSTALL.txt) for upgrade, uninstall and te
 **Window**
 - The desktop really is blurred behind the glass, and clicks pass through the empty space around it. Desktop blur can be turned off in Settings.
 - Click away, and after 5 seconds QChat folds into its orb. Click the orb or bring QChat back with Alt+Q to open it again, or drag it to move QChat while folded. It opens toward the middle of whichever screen you leave it on. Settings > Window sets the delay, and 0 turns folding off.
+- Click the orb, or the minimize button during a reply, to fold QChat while it waits. A spinning ring shows the reply is on its way. The orb turns green with a "1" when it's ready, or shows a "!" if something needs you.
 - **Open at startup** (Settings, the tray or `/startup`) starts QChat quietly in the tray at login. Turn on *Show the bar at startup* to see it straight away.
 - When a new release is out on GitHub, a small arrow appears on the orb. Hover the orb and press **Update**: QChat downloads the new version, checks its checksum, and restarts into it. `/update` checks by hand; Settings > General turns checking off. QChat only asks GitHub for its latest release, about every six hours.
 - A connection error retries by itself when the network returns or QChat regains focus, keeping your draft and files.

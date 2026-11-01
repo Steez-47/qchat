@@ -31,6 +31,12 @@
     failModel: false,
     models: {gemini:[{id:"flash",label:"Flash-Lite",selected:true,meta:"Fast answers"},{id:"pro",label:"Pro",meta:"Advanced reasoning",disabled:true},{id:"thinking",label:"Thinking",meta:"Deeper answers"}]},
     levels: [],
+    modes: {
+      chatgpt: {available:true, modes:[{id:"chat",label:"Chat",selected:true},{id:"work",label:"Work",selected:false}]},
+      gemini: {available:true, modes:[{id:"chat",label:"Chat",selected:true},{id:"work",label:"Spark",selected:false}]}
+    },
+    modeUnavailable: false,
+    sendError: null,
     calls: [],
     attachmentFaults: {},
     attachmentFiles: mockFiles,
@@ -99,6 +105,16 @@
   const emitStatus = (delay, url = "https://chatgpt.com/") => setTimeout(() => {
     emitMock("bridge", { type: "status", setupId: mock.setupId || null, temporary: Boolean(mock.temporary), ready: true, loggedIn: mock.loggedIn, model:mock.provider === "gemini" ? mock.model : undefined, url });
   }, delay);
+
+  const emitModes = () => {
+    const state = mock.modes[mock.provider] || mock.modes.chatgpt;
+    emitMock("bridge", {
+      type: "modes",
+      provider: mock.provider,
+      available: mock.modeUnavailable ? false : state.available !== false,
+      modes: state.modes.map(mode => ({...mode}))
+    });
+  };
 
   const runStream = (id, targetText) => {
     const tokens = targetText.match(/\S+\s*/g) || [targetText];
@@ -184,6 +200,18 @@
           case "chat_models":
             if (mock.silentModels || params.get("mock") === "silent-models") return null;
             emitMock("bridge", { type: "models", levels:mock.provider === "gemini" ? mock.levels : undefined, models: mock.models[mock.provider] || (params.get("mock") === "no-models" ? [] : [{ id: "0", label: "Mock model", selected: true }, { id: "1", label: "Mock alternate", selected: false }]) }); return null;
+          case "chat_modes":
+            emitModes(); return null;
+          case "chat_mode_set": {
+            const state = mock.modes[mock.provider] || mock.modes.chatgpt;
+            if (mock.modeUnavailable || state.available === false) {
+              emitMock("bridge", { type: "error", provider: mock.provider, code: "mode_unavailable", mode: args.mode, message: `${mock.provider === "gemini" ? "Gemini Spark" : "ChatGPT Work"} isn't available on this account yet.` });
+              return null;
+            }
+            state.modes = state.modes.map(mode => ({...mode, selected: mode.id === args.mode}));
+            emitModes();
+            return null;
+          }
           case "chat_model_choose":
             if (mock.failModel) throw new Error("unavailable");
             if (mock.modelHold) await new Promise(resolve => { mock.releaseModel = resolve; });
@@ -211,6 +239,14 @@
             if (mode === "media") setTimeout(() => emitMock("bridge", { type: "media", id, items: [{ id: "demo-raster", kind: "image", name: "Demo image.png", mime: "image/png" }, { id: "demo-file", kind: "file", name: "Demo file.txt" }] }), 40);
             for (const token of args.attachmentIds || []) mockFiles.delete(token);
 
+            if (mock.sendError) {
+              const failure = typeof mock.sendError === "string" ? { code: mock.sendError } : mock.sendError;
+              mockTimer = setTimeout(() => {
+                mockTimer = null;
+                emitMock("bridge", { type: "error", id, code: failure.code || "send_failed", message: failure.message || "Send failed" });
+              }, 80);
+              return null;
+            }
             if (forceError) {
               mockTimer = setTimeout(() => {
                 mockTimer = null;

@@ -4,6 +4,13 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+### Added
+- ChatGPT Work and Gemini Spark as a mode for each chat, for accounts that have them. If the site doesn't offer the mode, QChat says so and doesn't send the prompt as a normal chat.
+- Minimize while waiting: click the orb or the minimize button during a reply. The folded orb shows a spinning ring, then turns green with a "1" when the reply is ready, or shows a "!" if something needs you.
+
+### Changed
+- The model and provider menus are now one compact picker above a small pill in the bar.
+
 ## [1.4.3] - 2026-11-01
 
 ### Changed

@@ -111,7 +111,7 @@
       emit({ type: 'progress', id: job.id });
     }
     clearTimeout(job.watchdog);
-    job.watchdog = setTimeout(() => fail(job, 'timeout', 'No stream progress for five minutes.'), 300000);
+    job.watchdog = setTimeout(() => fail(job, 'timeout', 'No stream progress for five minutes.'), job.work ? 7200000 : 300000);
   }
   function delta(job, final = false) {
     clearTimeout(job.deltaTimer);
@@ -602,6 +602,11 @@
   }
   function sampleDOM(job) {
     if (active !== job || job.finished || job.cancelled) return;
+    // A work turn may not use the observed request; its own user message is proof it started.
+    if (job.work && !job.started && [...document.querySelectorAll(userSelector)].some(node => !job.previousUsers.has(node))) {
+      job.started = true; clearTimeout(job.startTimer); progress(job);
+      emit({ type: 'start', id: job.id });
+    }
     const nodes = currentAssistants(job);
     // Inspect only explicit, visible status surfaces in this submitted turn.
     // Never infer tool use from reply prose, source links, or old turns.
@@ -636,7 +641,15 @@
     if (body) domMedia(job, body);
     if (text && text !== job.domText && !window.QResponseTags.hasInteractive(job.netText)) {
       job.domText = text; job.stableAt = Date.now(); progress(job);
-      if ((!job.canonicalFallback && (!job.netText || job.detached)) || job.requiresDOM) { job.text = text; delta(job); }
+      if (job.work) job.workStableAt = job.stableAt;
+      if (job.work || (!job.canonicalFallback && (!job.netText || job.detached)) || job.requiresDOM) { job.text = text; delta(job); }
+    }
+    if (job.work && modeAttention(node)) {
+      // The follow-up needs this thread on record, and a paused task never reaches done.
+      const pausedIn = location.pathname.match(/^\/(?:c|uc)\/([^/]+)/)?.[1];
+      if (pausedIn) emit({ type: 'conversation', id: job.id, conversationId: pausedIn });
+      fail(job, 'needs_attention', 'ChatGPT Work is waiting for your approval. Open the chat in ChatGPT to continue.');
+      return;
     }
     // Current signed-in DIL streams can contain richer updates than the parsed
     // text packets. At completion prefer a longer scoped visible reply over a
@@ -651,9 +664,13 @@
     if (find('stop')) job.sawStop = true;
     if (find('stop')) job.noStopAt = null;
     else job.noStopAt ||= Date.now();
-    if ((!job.stream || (job.sawImageGeneration && !job.imageGenerating)) && (job.domText || job.media?.size) && !find('stop') && !job.imageGenerating &&
+    if (!job.work && (!job.stream || (job.sawImageGeneration && !job.imageGenerating)) && (job.domText || job.media?.size) && !find('stop') && !job.imageGenerating &&
         (job.sawStop || job.streamEnded) && Date.now() - (job.stableAt || job.noStopAt) >= 800 &&
         Date.now() - job.noStopAt >= 800) finish(job);
+    // Work may run far longer than a streamed reply; its settled DOM text is the completion.
+    // A task can pause between steps, so quiet only counts for long, and for far longer if its stop button was never seen.
+    const workQuiet = job.sawStop ? 15000 : 600000;
+    if (job.work && job.started && !find('stop') && job.workStableAt != null && Date.now() - job.workStableAt >= workQuiet && Date.now() - job.noStopAt >= workQuiet) finish(job);
   }
   function richLayout(text) {
     return window.QResponseTags.hasLayout(text);
@@ -871,6 +888,121 @@
     const composer = find('composer');
     return composer?.closest('form') || composer?.parentElement?.parentElement;
   }
+  // Chat and Work are read from the page's own switch. Only that exact control is clicked.
+  const MODE_MESSAGE = "ChatGPT Work isn't available on this account right now.";
+  const modeSelector = '[role="tab"], [role="radio"], [role="menuitemradio"], button, a[role]';
+  const modeExcluded = '[data-message-author-role], [data-message-role], user-query, model-response, nav a[href*="/c/"], [data-testid^="history-item"], conversations-list, .conversation, [contenteditable="true"]';
+  const modeShown = node => !!node && node.isConnected !== false && !!node.getClientRects?.().length && !node.closest?.(modeExcluded);
+  const modeName = node => {
+    const text = String(node.innerText ?? node.textContent ?? '').split('\n').map(line => line.trim()).find(Boolean) || '';
+    const label = String(node.getAttribute?.('aria-label') || '').split('\n')[0].trim();
+    return { text, label };
+  };
+  const modeMatch = (node, pattern) => { const { text, label } = modeName(node); return pattern.test(text) || pattern.test(label); };
+  const modeLabel = node => { const { text, label } = modeName(node); return text || label; };
+  const modeCandidates = pattern => [...document.querySelectorAll(modeSelector)].filter(node =>
+    modeShown(node) && !node.disabled && node.getAttribute?.('aria-disabled') !== 'true' && modeMatch(node, pattern));
+  const modeRole = node => /^(?:tab|radio|menuitemradio)$/i.test(node.getAttribute?.('role') || '');
+  // A work tab and the chat tab normally share the switch that contains both.
+  const modeNear = (a, b) => {
+    if (!a || !b) return false;
+    for (let node = a, depth = 0; node && depth <= 3; node = node.parentElement, depth++)
+      for (let other = b; other; other = other.parentElement) if (other === node) return true;
+    return false;
+  };
+  function modeControls() {
+    const chat = modeCandidates(/^chat$/i), work = modeCandidates(/^work$/i);
+    const pick = (nodes, other) => {
+      if (nodes.length <= 1) return nodes[0] || null;
+      const near = other ? nodes.filter(node => modeNear(node, other)) : [];
+      const pool = near.length ? near : nodes;
+      const roled = pool.filter(modeRole);
+      return roled.length === 1 ? roled[0] : pool.length === 1 ? pool[0] : null;
+    };
+    const chatNode = pick(chat, work[0]);
+    return { chat: chatNode, work: pick(work, chatNode) };
+  }
+  const modeFlag = node => {
+    if (!node) return null;
+    const attr = key => node.getAttribute?.(key);
+    if (attr('aria-selected') === 'true' || attr('aria-checked') === 'true' || attr('aria-current') === 'true' ||
+        attr('aria-current') === 'page' || attr('aria-pressed') === 'true' || ['active', 'on'].includes(attr('data-state'))) return true;
+    if (attr('aria-selected') === 'false' || attr('aria-checked') === 'false' || attr('aria-pressed') === 'false' || ['inactive', 'off'].includes(attr('data-state'))) return false;
+    return null;
+  };
+  function modeState(controls) {
+    const chat = modeFlag(controls.chat), work = modeFlag(controls.work);
+    if (chat === true && work !== true) return 'chat';
+    if (work === true && chat !== true) return 'work';
+    if (chat === true && work === true) return null;
+    if (chat === false && work !== false) return 'work';
+    if (work === false && chat !== false) return 'chat';
+    return null;
+  }
+  function modeReport() {
+    const controls = modeControls(), state = modeState(controls);
+    return { type: 'modes', available: !!controls.work, modes: [
+      { id: 'chat', label: controls.chat ? modeLabel(controls.chat) : 'Chat', selected: state !== 'work' },
+      { id: 'work', label: controls.work ? modeLabel(controls.work) : 'Work', selected: state === 'work' }
+    ] };
+  }
+  function listModes() { emit(modeReport()); }
+  function modeClick(node) {
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'])
+      node.dispatchEvent(new (type.startsWith('pointer') ? PointerEvent : MouseEvent)(type, { bubbles: true, cancelable: true, button: 0 }));
+  }
+  const inConversation = () => location.pathname.includes('/c/');
+  const modeSign = () => {
+    const composer = find('composer');
+    const hint = composer?.querySelector?.('[data-placeholder]')?.getAttribute?.('data-placeholder') || composer?.getAttribute?.('data-placeholder') || composer?.getAttribute?.('placeholder') || composer?.getAttribute?.('aria-label') || '';
+    return `${location.pathname}|${hint}`;
+  };
+  async function ensureMode(job, mode) {
+    const alive = () => !job || (active === job && !job.cancelled && !job.finished);
+    const deny = () => {
+      if (job) fail(job, 'mode_unavailable', MODE_MESSAGE);
+      // Carries the mode, so a late failure can't cancel a newer pick.
+      else emit({ type: 'error', code: 'mode_unavailable', message: MODE_MESSAGE, mode });
+      return false;
+    };
+    // Only the exact thread QChat recorded as a Work chat may continue here.
+    if (job && mode === 'work' && inConversation() && !(job.expectedConversation && location.pathname.includes(job.expectedConversation))) return deny();
+    let controls = modeControls();
+    if (!controls[mode]) {
+      // A missing work switch is only safe inside a thread, which keeps its own mode.
+      if (mode === 'chat') return true;
+      if (inConversation()) return true;
+      for (let i = 0; i < 30 && alive(); i++) {
+        await sleep(100);
+        controls = modeControls();
+        if (controls.work) break;
+      }
+      if (!controls.work) return alive() ? deny() : false;
+    }
+    const before = modeState(controls);
+    // Unknown state counts as chat; work must be clicked, chat need not be.
+    if (mode === 'chat' && before !== 'work') return true;
+    if (mode === 'work' && before === 'work') return true;
+    const target = controls[mode];
+    if (!target) return true;
+    // With no readable selection, the page has to change visibly before a prompt can go out.
+    const signBefore = modeSign();
+    try { modeClick(target); } catch (_) { return deny(); }
+    let verified = false;
+    for (let i = 0; i < 30 && !verified && alive(); i++) {
+      await sleep(100);
+      if (modeState(modeControls()) === mode || (before === null && modeSign() !== signBefore)) verified = true;
+    }
+    // A drawer tab can navigate; a composer on the new page is the proof it settled.
+    let composer = find('composer');
+    for (let i = 0; i < 50 && !composer && alive(); i++) { await sleep(100); composer = find('composer'); }
+    if (!alive()) return false;
+    return composer && verified ? true : deny();
+  }
+  const modeAttention = node => [...(node?.querySelectorAll('button, [role="button"]') || [])].find(button =>
+    !!button.getClientRects?.().length && !button.closest?.('[hidden], [aria-hidden="true"]') &&
+    /^(?:approve|allow|confirm|continue|review)\b/i.test(
+      String(button.innerText ?? button.textContent ?? button.getAttribute?.('aria-label') ?? '').trim().split('\n')[0].trim()));
   function attachmentRemovers(names = []) {
     return [...(composerArea()?.querySelectorAll('button') || [])].filter(node => {
       if (node.disabled || node.getAttribute('aria-disabled') === 'true') return false;
@@ -1303,8 +1435,15 @@
     activateMedia,
     mediaDownloadAction,
     resolveMedia,
-    async send({ id, prompt = '', attachmentCount = 0, reasoningEffort, temporary = false }) {
+    listModes,
+    async setMode(mode) {
+      if (!['chat', 'work'].includes(mode)) { error(undefined, 'invalid_mode', 'Choose chat or work mode.'); return; }
+      if (active) { error(undefined, 'busy', 'A request is already in progress.'); return; }
+      if (await ensureMode(null, mode)) emit(modeReport());
+    },
+    async send({ id, prompt = '', attachmentCount = 0, reasoningEffort, temporary = false, mode, conversationId }) {
       if (reasoningEffort != null && !['low', 'medium', 'high'].includes(reasoningEffort)) { error(id, 'invalid_reasoning_effort', 'Choose low, medium or high reasoning.'); return; }
+      if (mode != null && !['chat', 'work'].includes(mode)) { error(id, 'invalid_mode', 'Choose chat or work mode.'); return; }
       if (temporary && !temporaryReady()) { error(id, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
       if (active || reasoningSelection) { error(id, 'busy', 'A request is already in progress.'); return; }
       if (cancelledAttachments) {
@@ -1316,9 +1455,9 @@
       let settle;
       const settled = new Promise(resolve => { settle = resolve; });
       const previousAssistants = assistantNodes(), previousUsers = [...document.querySelectorAll(userSelector)];
-      const job = active = { id, attachmentCount, attachmentNames, settled, settle, prompt: prompt.trim(), text: '', sentText: '', lastDelta: 0,
+      const job = active = { id, attachmentCount, attachmentNames, settled, settle, prompt: prompt.trim(), text: '', sentText: '', lastDelta: 0, work: mode === 'work',
         responseIds: new Set(), scopedAssistants: new Set(), previousAssistants: new Set(previousAssistants), previousAssistantIds: new Set(previousAssistants.flatMap(messageIds)),
-        previousUsers: new Set(previousUsers), previousUserIds: new Set(previousUsers.flatMap(messageIds)) };
+        previousUsers: new Set(previousUsers), previousUserIds: new Set(previousUsers.flatMap(messageIds)), expectedConversation: conversationId };
       job.observer = new MutationObserver(() => sampleDOM(job));
       job.observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
       job.domTimer = setInterval(() => sampleDOM(job), 100);
@@ -1331,7 +1470,11 @@
         }
         if (active !== job || job.cancelled) return;
         if (!composer) { fail(job, 'not_ready', 'Composer did not appear within 15 seconds.'); return; }
-        if (reasoningEffort != null && !await selectReasoning(job, composer, reasoningEffort)) return;
+        if (mode != null && !await ensureMode(job, mode)) return;
+        if (active !== job || job.cancelled) return;
+        composer = find('composer');
+        if (!composer) { fail(job, 'not_ready', 'ChatGPT composer changed. Please try again.'); return; }
+        if (reasoningEffort != null && !job.work && !await selectReasoning(job, composer, reasoningEffort)) return;
         if (active !== job || job.cancelled) return;
         composer = find('composer');
         if (!composer) { fail(job, 'not_ready', 'ChatGPT composer changed. Please try again.'); return; }
@@ -1373,7 +1516,7 @@
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           const button = find('send');
           if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
-            job.startTimer = setTimeout(() => fail(job, 'send_failed', 'No conversation request started within 20 seconds.'), 20000);
+            job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
             job.submitted = true; button.click(); return;
           }
           const block = blocking(); if (block) { fail(job, ...block); return; }
@@ -1383,7 +1526,7 @@
           if (attachmentCount > 0) { fail(job, 'attachment_failed', 'Attachments did not become ready within two minutes. Check them in ChatGPT.'); return; }
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           if (!composer) { fail(job, 'not_ready', 'ChatGPT composer changed. Please try again.'); return; }
-          job.startTimer = setTimeout(() => fail(job, 'send_failed', 'No conversation request started within 20 seconds.'), 20000);
+          job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
           job.submitted = true; composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
         }
       } catch (e) { fail(job, 'send_failed', e.message); }

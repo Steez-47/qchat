@@ -336,10 +336,12 @@
   const formatErrorCopy = (code, fallback) =>
     ((code && ERROR_MESSAGES[code]) || fallback || "Something went wrong.").replaceAll("ChatGPT", providerName());
 
+  // Send failures can carry their own human copy; keep those codes intact so it is shown.
+  const PASSTHROUGH_ERRORS = new Set(["mode_unavailable", "needs_attention"]);
   // Native errors look like "busy: details".
   const errorCode = (err) => {
     const code = err?.code || String(err?.message || err || "").split(":", 1)[0].trim();
-    return ERROR_MESSAGES[code] ? code : "send_failed";
+    return ERROR_MESSAGES[code] || PASSTHROUGH_ERRORS.has(code) ? code : "send_failed";
   };
 
   const $ = (id) => document.getElementById(id);
@@ -374,11 +376,14 @@
     tabs: $("tabs"),
     promptInput: $("prompt-input"),
     btnReasoning: $("btn-reasoning"),
+    picker: $("picker"),
+    btnMinimize: $("btn-minimize"),
     btnSend: $("btn-send"),
     btnAttach: $("btn-attach"),
     btnSnapshot: $("btn-snapshot"),
     attachmentInput: $("attachment-input"),
-    attachments: $("attachments")
+    attachments: $("attachments"),
+    orbBadge: $("orb-badge")
   };
 
   let recallIndex = -1;
@@ -406,6 +411,11 @@
   const bridge = { ready: false, loggedIn: false, signedOut: false };
   let connectTimer = null;
   let connectErrorShown = false;
+  // Created near the end of this file; early bindings let the composer and orb state use them.
+  let collapse = null;
+  let updater = null;
+  let orbOutcome = null;
+  let lastOrbTask = null;
 
   const isStreaming = () => turns.some((t) => t.status === "streaming");
   const isBusy = () => sending || isStreaming() || switchingProvider;
@@ -462,6 +472,7 @@
   const freshChat = () => ({
     key: crypto.randomUUID(),
     provider: activeProvider,
+    mode: "chat",
     conversationId: null,
     title: "",
     lastActive: Date.now(),
@@ -1076,6 +1087,7 @@
     return {
       key: raw.key,
       provider: raw.provider === "gemini" ? "gemini" : "chatgpt",
+      mode: raw.mode === "work" ? "work" : "chat",
       conversationId: typeof raw.conversationId === "string" && raw.conversationId ? raw.conversationId : null,
       title: normalizeChatTitle(raw.title),
       lastActive: time(raw.lastActive),
@@ -1134,18 +1146,37 @@
     try { localStorage.setItem(GEMINI_MODEL_KEY, label); } catch (_) {}
   }
 
+  // Chat and Work (Spark on Gemini) are per chat. The labels come from the site, with a
+  // readable fallback before its hidden page has drawn the switcher.
+  const modeCache = {
+    chatgpt: { available: true, modes: [{ id: "chat", label: "Chat", selected: true }, { id: "work", label: "Work", selected: false }] },
+    gemini: { available: true, modes: [{ id: "chat", label: "Chat", selected: true }, { id: "work", label: "Spark", selected: false }] }
+  };
+  let modeChoice = null;
+  const modeState = (provider = activeProvider) => modeCache[provider] || modeCache.chatgpt;
+  const modeAvailable = (provider = activeProvider) => modeState(provider).available !== false;
+  const modeLabel = (id, provider = activeProvider) =>
+    modeState(provider).modes.find(mode => mode.id === id)?.label || (id === "work" ? (provider === "gemini" ? "Spark" : "Work") : "Chat");
+  const effectiveMode = (chat = chats.current) => (chat?.temporary ? "chat" : chat?.mode === "work" ? "work" : "chat");
+  const providerModelLabel = () => geminiChoice?.short || providerStates.gemini?.model || geminiModel || "";
+
   function syncReasoningButton() {
     el.btnReasoning.hidden = false;
     el.zone.setAttribute("aria-label", `${providerName()} response`);
     const busy = isBusy();
     if (!busy) sentReasoning = null;
     const value = busy && sentReasoning ? sentReasoning : effectiveReasoning();
-    const label = activeProvider === "gemini" ? geminiChoice?.short || providerStates.gemini?.model || geminiModel || "Model" : REASONING_LABELS[value];
+    const mode = effectiveMode();
+    const label = mode === "work" ? modeLabel("work") : activeProvider === "gemini" ? providerModelLabel() || "Model" : REASONING_LABELS[value];
+    const mark = makeProviderLogo(activeProvider);
+    mark.setAttribute("class", "reasoning-mark");
+    el.btnReasoning.querySelector(".reasoning-mark").replaceWith(mark);
     el.btnReasoning.querySelector(".reasoning-label").textContent = label;
-    el.btnReasoning.setAttribute("aria-label", `${activeProvider === "gemini" ? "Model" : "Reasoning"}: ${label}`);
+    el.btnReasoning.setAttribute("aria-label", `${providerName()}, ${label}. Change model`);
     el.btnReasoning.dataset.value = value;
+    el.btnReasoning.dataset.mode = mode;
     el.btnReasoning.disabled = busy || switchingProvider;
-    el.btnReasoning.title = activeProvider === "gemini" ? "Model" : "Reasoning";
+    el.btnReasoning.title = "Model and provider";
   }
 
   function chooseReasoning(value) {
@@ -1154,19 +1185,7 @@
     saveChats();
     syncReasoningButton();
     queueSizes();
-  }
-
-  function showReasoningPicker() {
-    if (isBusy()) return;
-    if (featureListAnchor === el.btnReasoning) { closeFeatureList(); return; }
-    if (activeProvider === "gemini") { requestModels(); return; }
-    const selected = effectiveReasoning();
-    showFeatureList("Reasoning", REASONING_LEVELS.map((value) => ({
-      title: REASONING_LABELS[value],
-      meta: value === "low" ? "Instant / Light" : value === "medium" ? "Standard" : "Extended",
-      selected: value === selected,
-      run: () => chooseReasoning(value)
-    })).concat(switchProviderRows()), false, el.btnReasoning);
+    renderPicker();
   }
 
   async function setProvider(provider) {
@@ -1197,17 +1216,24 @@
     const selections = chats.current.selectionTexts.slice();
     const temporary = Boolean(chats.current.temporary);
     const chat = chats.current;
+    const mode = effectiveMode(chat);
+    const pickerKey = pickerOpen && el.picker.contains(document.activeElement) ? document.activeElement.dataset.pickerKey : null;
     const title = !(chat.transcript?.length || chat.lastPrompt || chat.lastResponse || chat.lastHasMedia || chat.conversationId) ? chat.title : "";
     await startNewChat(false, { preserveFiles: true, movingDraft: true });
     input.value = draft;
     chats.current.selectionTexts = selections;
     chats.current.temporary = temporary;
+    chats.current.mode = temporary ? "chat" : mode;
     if (title) chats.current.title = title;
     setModeLabel(temporary ? "Temporary" : "");
     renderAttachments();
     chats.current.draft = draftValue();
     saveChats(); autoResizePrompt(); updateIdleChips(); updateComposerMode();
-    input.focus();
+    if (pickerOpen && pickerKey) {
+      renderPicker();
+      const next = el.picker.querySelector(`[data-picker-key="${CSS.escape(pickerKey)}"]`);
+      if (next && !next.disabled) pickerFocus(next); else focusPicker();
+    } else input.focus();
     input.setSelectionRange(start, end, direction);
   }
   async function chooseProvider(provider) {
@@ -1215,10 +1241,11 @@
     if (refuseWhileBusy()) return;
     if (!await setProvider(provider)) return;
     await resetChatPreservingComposer();
-  }
-  function switchProviderRows() {
-    const provider = activeProvider === "gemini" ? "chatgpt" : "gemini";
-    return [{divider:true}, {title:`Switch to ${provider === "gemini" ? "Gemini" : "ChatGPT"}`, meta:providerStates[provider]?.loggedIn ? "Signed in" : "Signed out", run:() => chooseProvider(provider)}];
+    // A mode belongs to the provider that offered it; a fresh site starts in Chat.
+    chats.current.mode = "chat";
+    saveChats();
+    syncReasoningButton();
+    if (pickerOpen) { renderPicker(); requestModes(); requestPickerModels(); }
   }
 
   function storedChat(chat, capped = false) {
@@ -2377,6 +2404,8 @@
     const seconds = QSettings.settings.autoDismiss;
     if (!seconds) return;
     const check = () => {
+      // A folded reply waits for the orb to be opened, however long that takes.
+      if (collapse?.folded) { autoDismissTimer = setTimeout(check, 1500); return; }
       const entry = responseEntry();
       if (!entry || isBusy()) return;
       // Text selected in the reply is being read or copied, even once the pointer has moved away.
@@ -2386,6 +2415,41 @@
       dismissExchange();
     };
     autoDismissTimer = setTimeout(check, seconds * 1000);
+  }
+
+  // A reply can keep running while the window rests as its orb. The orb shows the work in
+  // progress, then keeps a ready or attention count until the window is opened again.
+  const replyInFlight = () => sending || isStreaming();
+  let statusBeforeTask = null;
+  function syncOrbTask() {
+    const folded = collapse ? collapse.folded : /^clos/.test(document.documentElement.dataset.collapse || "");
+    let state = null;
+    if (folded) {
+      if (replyInFlight()) state = "working";
+      else if (orbOutcome === "attention") state = "attention";
+      else if (orbOutcome === "ready") state = "ready";
+    }
+    const root = document.documentElement;
+    if (state) root.dataset.orbTask = state; else delete root.dataset.orbTask;
+    const shown = state === "ready" || state === "attention";
+    el.orbBadge.hidden = !shown;
+    if (shown) el.orbBadge.textContent = state === "attention" ? "!" : "1";
+    if (state === "ready") el.bar.title = "Reply ready. Click to open";
+    else if (state === "attention") el.bar.title = "Needs your attention. Click to open";
+    else if (state === "working") el.bar.title = "Waiting for a reply…";
+    else el.bar.removeAttribute("title");
+    if (state === lastOrbTask) return;
+    lastOrbTask = state;
+    // The screen-reader line says it once on entering, then gives the connection text back.
+    const announced = state === "ready" ? "Reply ready" : state === "attention" ? "Needs your attention" : null;
+    if (announced) {
+      if (statusBeforeTask === null) statusBeforeTask = el.statusLabel.textContent;
+      el.statusLabel.textContent = announced;
+    } else if (statusBeforeTask !== null) {
+      el.statusLabel.textContent = statusBeforeTask;
+      statusBeforeTask = null;
+    }
+    updater?.sync();
   }
 
   function showCachedResponse(chat) {
@@ -2439,8 +2503,10 @@
     for (const button of el.attachments.querySelectorAll('[data-action="retry-attachment"]')) button.disabled = isBusy();
     el.btnSnapshot.disabled = active || sending || snapshotCapturing;
     el.btnSend.disabled = !active && (!bridge.ready || sending || staging || snapshotCapturing || (!el.promptInput.value.trim() && !attachable && !chats.current.selectionTexts.length));
+    el.btnMinimize.hidden = !(sending || isStreaming());
     syncReasoningButton();
     syncTabsDisabled();
+    syncOrbTask();
   }
 
   let promptMeasure;
@@ -2510,9 +2576,11 @@
     readingPositions.delete(chat.key);
     const previousMeta = { title: chat.title, lastPrompt: chat.lastPrompt, lastHadAttachments: chat.lastHadAttachments, lastActive: chat.lastActive };
     const reasoningEffort = effectiveReasoning(chat);
+    const mode = effectiveMode(chat);
     const consumeSelections = fromInput || (selectionTexts.length > 0 && selectionTexts.every((text, index) => chat.selectionTexts[index] === text));
     sending = true;
     sentReasoning = reasoningEffort;
+    orbOutcome = null;
     const generation = chatGeneration;
     const draft = el.promptInput.value;
     const selectionStart = el.promptInput.selectionStart, selectionEnd = el.promptInput.selectionEnd, selectionDirection = el.promptInput.selectionDirection;
@@ -2526,6 +2594,7 @@
     hideGlobalError();
     closeSlashMenu();
     if (!featureList.hidden) closeFeatureList();
+    closePicker();
     hideClearConfirm();
     setHistoryOpen(false);
     for (const turn of turns) {
@@ -2535,7 +2604,7 @@
     sentThisSession = true;
 
     const userTurn = { id: crypto.randomUUID(), role: "user", text: prompt, selectionTexts, selectionMatch: selectionTexts.length ? selectionMatch(wirePrompt(prompt, selectionTexts)) : undefined, status: "done", chatKey: chat.key, attachments: files.map((f) => ({ name: f.file.name, size: f.file.size, previewURL: imagePreview(f.file) })) };
-    const assistantTurn = { id: crypto.randomUUID(), role: "assistant", text: "", status: "streaming", prompt, selectionTexts, hadAttachments: files.length > 0, chatKey: chat.key };
+    const assistantTurn = { id: crypto.randomUUID(), role: "assistant", text: "", status: "streaming", prompt, selectionTexts, mode, hadAttachments: files.length > 0, chatKey: chat.key };
     assistantTurn.restoreDraft = restoreDraft;
     assistantTurn.retryFiles = files.length ? files : null;
     assistantTurn.temporaryFiles = chat.temporary ? files : null;
@@ -2576,7 +2645,11 @@
       await ensurePage(chat);
       if (generation !== chatGeneration) return;
       if (assistantTurn.status !== "streaming") throw { code: "stopped" };
-      await invoke("chat_send", { id: assistantTurn.id, prompt: wirePrompt(prompt, selectionTexts), attachmentIds: files.map((f) => f.id), provider: activeProvider, temporary: Boolean(chat.temporary), ...(activeProvider === "chatgpt" ? {reasoningEffort} : {}) });
+      const args = { id: assistantTurn.id, prompt: wirePrompt(prompt, selectionTexts), attachmentIds: files.map((f) => f.id), provider: activeProvider, temporary: Boolean(chat.temporary), mode };
+      // Work decides its own thinking; Chat keeps the chosen effort (ChatGPT only).
+      if (mode === "work") { args.reasoningEffort = null; args.conversationId = chat.conversationId || null; }
+      else if (activeProvider === "chatgpt") args.reasoningEffort = reasoningEffort;
+      await invoke("chat_send", args);
       if (consumeSelections && assistantTurn.status !== "error" && !(assistantTurn.status === "done" && !assistantTurn.text && !assistantTurn.media?.length)) {
         chat.selectionTexts.splice(0, selectionTexts.length);
         assistantTurn.selectionConsumed = true;
@@ -2609,6 +2682,7 @@
       flushReveal(assistantTurn);
       assistantTurn.status = "error";
       assistantTurn.code = code;
+      orbOutcome = "attention";
       if (attachmentRetryCodes.has(code)) retainTurnFiles(assistantTurn);
       else releaseTurnFiles(assistantTurn, unavailable || code === "attachment_pending" ? pendingFiles.map(file => file.id) : []);
       assistantTurn.error = assistantTurn.error || formatErrorCopy(code);
@@ -2618,6 +2692,7 @@
     } finally {
       if (generation === chatGeneration) sending = false;
       renderAttachments();
+      syncOrbTask();
     }
   }
 
@@ -2648,6 +2723,8 @@
       const entry = turnNodes.get(t.id);
       if (entry) { revealResponse(t); scheduleTurnRender(t.id, true); }
     }
+    // A reply the user stopped leaves nothing waiting on the orb.
+    orbOutcome = null;
     updateComposerMode();
     queueSizes();
     const retainedIds = await stopBackend();
@@ -2677,6 +2754,8 @@
     autoResizePrompt();
     hideGlobalError();
     closeSlashMenu();
+    // Provider and mode changes restart the chat from inside the open picker.
+    if (!movingDraft) closePicker();
     hideClearConfirm();
     dismissExchange();
 
@@ -2704,6 +2783,7 @@
   async function startTemporaryChat() {
     await startNewChat(false);
     chats.current.temporary = true;
+    chats.current.mode = "chat";
     setModeLabel("Temporary");
     pageSync = freshInPage(chats.current);
     pageSync.catch(() => {});
@@ -2997,23 +3077,127 @@
   let modelRequest = null;
   function cancelModelRequest() { if (modelRequest) clearTimeout(modelRequest.timer); modelRequest = null; }
   const modelCache = {};
+  let pickerOpen = false;
+
+  // `/model` and the pill open one compact popover: provider, mode, effort and models.
   function requestModels() {
+    if (pickerOpen) { closePicker({ focus: true }); return; }
+    openPicker();
+  }
+
+  function openPicker() {
     if (refuseWhileBusy()) return;
-    if (activeProvider === "gemini") {
-      showModels(modelCache.gemini || {loading:true});
-      // A pick is being applied, and the list on screen already shows it.
-      if (geminiChoice && modelCache.gemini) return;
-    } else showFeatureList("Loading models…", []);
-    const request = { provider: activeProvider };
+    if (!featureList.hidden) closeFeatureList();
+    closeRenameChat(false);
+    finder.close({ focus: false });
+    closeSlashMenu();
+    hideClearConfirm();
+    pickerOpen = true;
+    el.picker.hidden = false;
+    el.btnReasoning.setAttribute("aria-expanded", "true");
+    renderPicker();
+    placePicker();
+    requestModes();
+    requestPickerModels();
+    focusPicker();
+    queueSizes();
+  }
+
+  function closePicker({ focus = false } = {}) {
+    if (!pickerOpen) return;
+    pickerOpen = false;
+    cancelModelRequest();
+    el.picker.hidden = true;
+    el.picker.replaceChildren();
+    el.btnReasoning.setAttribute("aria-expanded", "false");
+    if (focus) el.btnReasoning.focus({ preventScroll: true });
+    queueSizes();
+  }
+
+  function placePicker() {
+    const box = el.bar.getBoundingClientRect();
+    const pill = el.btnReasoning.getBoundingClientRect();
+    if (!box.width) return;
+    const width = Math.min(244, box.width);
+    const right = Math.max(8, Math.min(box.right - pill.right, box.width - width - 8));
+    el.picker.style.right = `${Math.round(right)}px`;
+  }
+
+  function requestPickerModels() {
+    const provider = activeProvider;
+    const cached = modelCache[provider];
+    // Gemini rereads its list on every open, unless a pick is still being applied.
+    if (provider === "gemini" ? geminiChoice && cached?.models?.length : cached && !cached.error && (cached.models?.length || cached.levels?.length)) return;
+    if (modelRequest?.provider === provider) return;
+    const request = { provider };
     modelRequest = request;
+    modelCache[provider] = cached ? { ...cached, loading: true, error: null } : { loading: true, models: [], levels: [] };
+    renderPicker();
     const finish = event => {
       if (modelRequest !== request) return;
       cancelModelRequest();
-      // A failed refresh leaves a usable list in place.
-      if (!(request.provider === "gemini" && modelCache.gemini)) showModels(event);
+      showModels(event);
     };
     request.timer = setTimeout(() => finish({ error: "unavailable" }), 6000);
     invoke("chat_models").catch(() => finish({ error: "unavailable" }));
+  }
+
+  function requestModes() {
+    invoke("chat_modes").catch(() => {});
+  }
+
+  function receiveModes(provider, payload) {
+    const modes = Array.isArray(payload.modes) ? payload.modes.map(mode => ({ ...mode })) : [];
+    modeCache[provider] = { available: payload.available !== false, modes };
+    if (provider !== activeProvider) return;
+    if (modeChoice && modeChoice.provider === provider) {
+      const selected = modes.find(mode => mode.selected)?.id;
+      if (selected === modeChoice.mode) settleModeChoice(selected);
+    }
+    syncReasoningButton();
+    if (pickerOpen) renderPicker();
+  }
+
+  function chooseMode(mode) {
+    if (isBusy() || switchingProvider) return;
+    if (mode === effectiveMode()) return;
+    if (mode === "work" && !modeAvailable()) {
+      showCommandFeedback(`${modeLabel("work")} isn't available on this account yet.`);
+      return;
+    }
+    clearTimeout(modeChoice?.timer);
+    const label = modeLabel(mode);
+    modeChoice = {
+      provider: activeProvider,
+      mode,
+      timer: setTimeout(() => failModeChoice(`Couldn't switch to ${label}. Try again in a moment.`), 8000)
+    };
+    invoke("chat_mode_set", { mode }).catch(err => failModeChoice(err?.message || `Couldn't switch to ${label}. Try again in a moment.`));
+    renderPicker();
+  }
+
+  function settleModeChoice(selected) {
+    const choice = modeChoice;
+    if (!choice) return false;
+    clearTimeout(choice.timer);
+    modeChoice = null;
+    if (choice.provider !== activeProvider) return false;
+    chats.current.mode = selected === "work" ? "work" : "chat";
+    saveChats();
+    syncReasoningButton();
+    // A mode switch belongs to a fresh conversation; keep the draft.
+    void resetChatPreservingComposer();
+    return true;
+  }
+
+  function failModeChoice(message) {
+    if (!modeChoice) return false;
+    clearTimeout(modeChoice.timer);
+    modeChoice = null;
+    showGlobalError("mode_unavailable", message);
+    syncReasoningButton();
+    if (pickerOpen) renderPicker();
+    return true;
   }
   let featureListHideTimer = null;
   function hideFeatureList() {
@@ -3041,6 +3225,7 @@
     el.promptInput.focus();
   }
   function showFeatureList(title, rows, searchable = false, anchor = null) {
+    closePicker();
     closeRenameChat(false);
     finder.close({ focus: false });
     cancelModelRequest();
@@ -3172,42 +3357,244 @@
     if (modelCache.gemini) modelCache.gemini = withGeminiChoice(modelCache.gemini, choice);
     syncReasoningButton();
     queueSizes();
+    if (pickerOpen) renderPicker();
     const failed = () => { if (failGeminiChoice(choice)) showGlobalError(null, "Couldn't change the model. Try again in a moment."); };
     choice.timer = setTimeout(failed, 8000);
     invoke("chat_model_choose", {id:model.id}).catch(failed);
   }
-  function showModels(event) {
-    const models = event.models || [];
-    const choose = (model, level) => {
-      if (activeProvider === "gemini") { chooseGeminiModel(model, level); return; }
-      invoke("chat_model_choose", {id:model.id}).catch(() => showGlobalError(null, "Couldn't change the model. Try again in a moment."));
-    };
-    const rows = (items, level = false) => items.map(model => ({title:model.label, meta:[model.meta, model.disabled && !providerStates[activeProvider]?.loggedIn ? "Sign in" : ""].filter(Boolean).join(" · "), selected:Boolean(model.selected), disabled:model.disabled, run:() => choose(model, level)}));
-    if (activeProvider === "gemini") {
-      const items = models.length ? rows(models) : [{title:event.loading ? "Loading models…" : "Couldn't read the model list", disabled:true, run:() => {}}];
-      if (event.levels?.length) items.push({divider:true}, {heading:"Reasoning"}, ...rows(event.levels, true));
-      showFeatureList("Model", items.concat(switchProviderRows()), false, el.btnReasoning);
-    } else showFeatureList(models.length ? "Model" : event.error ? "Couldn't read the model list" : "Sign in to choose a model", models.length ? rows(models) : [{title:event.error ? `Open ${providerName()}` : "Sign in", run:openSignin}]);
+  function chooseModel(model, level = false) {
+    const provider = activeProvider;
+    closePicker();
+    if (provider === "gemini") { chooseGeminiModel(model, level); return; }
+    if (modelCache[provider]?.models) {
+      modelCache[provider] = { ...modelCache[provider], models: modelCache[provider].models.map(item => ({ ...item, selected: item.id === model.id })) };
+    }
+    syncReasoningButton();
+    invoke("chat_model_choose", {id:model.id}).catch(() => showGlobalError(null, "Couldn't change the model. Try again in a moment."));
   }
-  listen("bridge", ({ payload }) => {
-    const provider = payload.provider || "chatgpt";
-    if (payload.type === "status" && modelCache[provider] && modelCache[provider]._loggedIn !== payload.loggedIn) delete modelCache[provider];
-    if (provider !== activeProvider) return;
-    if (payload.type === "models") {
-      const previous = modelCache[provider];
-      if (provider === "gemini" && payload.error && previous) {
-        if (modelRequest?.provider === provider) cancelModelRequest();
-        return;
-      }
-      const list = {...payload, _loggedIn:providerStates[provider]?.loggedIn};
+
+  function showModels(event) {
+    const provider = activeProvider;
+    const previous = modelCache[provider];
+    if (event.error && !(event.models?.length)) {
+      // A failed refresh leaves a usable list in place.
+      modelCache[provider] = { ...(previous || {}), loading: false, error: event.error, models: previous?.models || [], levels: previous?.levels || [] };
+    } else {
+      const list = { ...event, loading: false, _loggedIn: providerStates[provider]?.loggedIn };
       // A list read before a pick took effect must not undo it.
       modelCache[provider] = provider === "gemini" && geminiChoice ? withGeminiChoice(list, geminiChoice) : list;
-      if (modelRequest?.provider === provider) {
-        cancelModelRequest();
-        if (provider !== "gemini" || featureListAnchor === el.btnReasoning && !featureList.hasAttribute("data-leaving")) {
-          if (provider !== "gemini" || JSON.stringify(previous) !== JSON.stringify(modelCache[provider])) showModels(modelCache[provider]);
-        }
+    }
+    syncReasoningButton();
+    if (pickerOpen) renderPicker();
+  }
+
+  function pickerFocus(node) {
+    if (!node) return;
+    const body = node.closest(".picker-body");
+    if (body) for (const row of body.querySelectorAll(".picker-row")) row.tabIndex = row === node ? 0 : -1;
+    const seg = node.closest(".picker-seg, .picker-effort-seg");
+    if (seg) for (const button of seg.querySelectorAll("button")) button.tabIndex = button === node && !button.disabled ? 0 : -1;
+    if (document.activeElement !== node) node.focus({ preventScroll: true });
+    node.scrollIntoView({ block: "nearest" });
+  }
+
+  function focusPicker() {
+    const target = el.picker.querySelector('[data-picker-key^="provider:"][aria-checked="true"]:not(:disabled)') ||
+      el.picker.querySelector('button:not(:disabled)');
+    if (target) pickerFocus(target);
+  }
+
+  function pickerModelRows(provider, models, level) {
+    return models.map(model => {
+      const signIn = Boolean(model.disabled) && providerStates[provider]?.loggedIn === false;
+      const row = make("button", "picker-row");
+      row.type = "button";
+      row.dataset.pickerKey = `${level ? "level" : "model"}:${model.id}`;
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", String(Boolean(model.selected)));
+      row.tabIndex = model.selected ? 0 : -1;
+      const check = make("span", "picker-check", "\u2713");
+      check.setAttribute("aria-hidden", "true");
+      row.append(check, make("span", "picker-title", model.label));
+      const meta = [model.meta, signIn ? "Sign in" : ""].filter(Boolean).join(" \u00b7 ");
+      if (meta) row.append(make("span", "picker-meta", meta));
+      row.disabled = (Boolean(model.disabled) && !signIn) || isBusy();
+      if (row.disabled) row.tabIndex = -1;
+      row.addEventListener("focus", () => pickerFocus(row));
+      row.addEventListener("click", () => {
+        if (row.disabled) return;
+        if (signIn) { closePicker(); openSignin(); } else chooseModel(model, level);
+      });
+      return row;
+    });
+  }
+
+  function pickerSegment(label, entries, className = "picker-seg") {
+    const group = make("div", className);
+    group.setAttribute("role", "radiogroup");
+    group.setAttribute("aria-label", label);
+    for (const entry of entries) {
+      const button = make("button", className === "picker-seg" ? "picker-seg-btn" : "");
+      button.type = "button";
+      button.dataset.pickerKey = entry.key;
+      button.setAttribute("role", "radio");
+      button.setAttribute("aria-checked", String(Boolean(entry.checked)));
+      button.tabIndex = entry.checked ? 0 : -1;
+      button.disabled = isBusy();
+      if (entry.disabled) button.setAttribute("aria-disabled", "true");
+      if (entry.mark) {
+        const mark = makeProviderLogo(entry.mark);
+        mark.setAttribute("class", "picker-mark");
+        button.append(mark);
       }
+      button.append(make("span", "picker-choice-label", entry.label));
+      if (entry.dot) {
+        const dot = make("span", "picker-dot");
+        dot.setAttribute("aria-hidden", "true");
+        button.append(dot);
+      }
+      if (entry.title) button.title = entry.title;
+      button.addEventListener("focus", () => pickerFocus(button));
+      button.addEventListener("click", () => { if (!button.disabled && !entry.disabled && !entry.checked) entry.run(); });
+      group.append(button);
+    }
+    return group;
+  }
+
+  function renderPicker() {
+    if (!pickerOpen) return;
+    const focusedKey = el.picker.contains(document.activeElement) ? document.activeElement.dataset.pickerKey : null;
+    const scroll = el.picker.scrollTop;
+    const provider = activeProvider;
+    const mode = effectiveMode();
+    const temporary = Boolean(chats.current.temporary);
+    const workOff = temporary || !modeAvailable(provider);
+    const fragment = document.createDocumentFragment();
+    const signedOut = (name) => providerStates[name]?.loggedIn === false;
+
+    fragment.append(pickerSegment("Provider", ["chatgpt", "gemini"].map(name => ({
+      key: `provider:${name}`,
+      label: name === "gemini" ? "Gemini" : "ChatGPT",
+      mark: name,
+      checked: provider === name,
+      dot: signedOut(name),
+      title: signedOut(name) ? "Signed out" : "",
+      run: () => { void chooseProvider(name); }
+    }))));
+
+    fragment.append(pickerSegment("Mode", [
+      { key: "mode:chat", label: modeLabel("chat", provider), checked: mode === "chat", run: () => chooseMode("chat") },
+      { key: "mode:work", label: modeLabel("work", provider), checked: mode === "work", disabled: workOff, title: temporary ? "Not in temporary chats" : !modeAvailable(provider) ? "Not available on this account yet" : "", run: () => chooseMode("work") }
+    ]));
+
+    const cached = modelCache[provider];
+    const models = cached?.models || [];
+    const body = make("div", "picker-body");
+    body.setAttribute("role", "listbox");
+    body.setAttribute("aria-label", "Models");
+    if (models.length) body.append(...pickerModelRows(provider, models, false));
+    else if (provider === "gemini") body.append(make("div", "picker-empty", cached?.loading || !cached ? "Loading models\u2026" : "Couldn't read the model list"));
+    else if (signedOut(provider) && !cached?.loading) {
+      const row = make("button", "picker-row");
+      row.type = "button";
+      row.dataset.pickerKey = "model:signin";
+      row.tabIndex = -1;
+      row.append(make("span", "picker-check"), make("span", "picker-title", `Sign in to ${providerName({ provider })}`));
+      row.addEventListener("focus", () => pickerFocus(row));
+      row.addEventListener("click", () => { closePicker(); openSignin(); });
+      body.append(row);
+    }
+
+    const showEffort = provider === "chatgpt" && mode === "chat";
+    const levels = provider === "gemini" ? cached?.levels || [] : [];
+    if (showEffort || body.childElementCount || levels.length) fragment.append(make("div", "feature-divider"));
+    if (showEffort) {
+      const selected = effectiveReasoning();
+      const row = make("div", "picker-effort");
+      row.append(make("span", "picker-effort-label", "Effort"));
+      row.append(pickerSegment("Reasoning effort", REASONING_LEVELS.map(value => ({
+        key: `effort:${value}`,
+        label: REASONING_LABELS[value],
+        checked: value === selected,
+        run: () => chooseReasoning(value)
+      })), "picker-effort-seg"));
+      fragment.append(row);
+    }
+    if (body.childElementCount) fragment.append(body);
+    if (levels.length) {
+      if (body.childElementCount) fragment.append(make("div", "feature-divider"));
+      fragment.append(make("div", "picker-heading", "Reasoning"));
+      const group = make("div", "picker-body");
+      group.setAttribute("role", "listbox");
+      group.setAttribute("aria-label", "Reasoning");
+      group.append(...pickerModelRows(provider, levels, true));
+      fragment.append(group);
+    }
+
+    el.picker.replaceChildren(fragment);
+    if (focusedKey) {
+      const next = el.picker.querySelector(`[data-picker-key="${CSS.escape(focusedKey)}"]`);
+      if (next && !next.disabled) pickerFocus(next);
+    }
+    el.picker.scrollTop = scroll;
+  }
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!pickerOpen || el.picker.contains(event.target) || el.btnReasoning.contains(event.target)) return;
+    closePicker();
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !pickerOpen || el.picker.contains(event.target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closePicker({ focus: true });
+  }, true);
+  el.picker.addEventListener("keydown", (event) => {
+    if (event.isComposing || event.keyCode === 229) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closePicker({ focus: true });
+      return;
+    }
+    const seg = event.target.closest(".picker-seg, .picker-effort-seg");
+    if (seg && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      event.preventDefault();
+      const buttons = [...seg.querySelectorAll("button:not(:disabled):not([aria-disabled])")];
+      const index = buttons.indexOf(event.target);
+      if (index < 0 || !buttons.length) return;
+      const next = buttons[(index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length];
+      pickerFocus(next);
+      // Moving within a radiogroup also selects, as the pattern asks.
+      next.click();
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
+      const rows = [...el.picker.querySelectorAll(".picker-body .picker-row:not(:disabled)")];
+      if (!rows.length) return;
+      event.preventDefault();
+      let index = rows.indexOf(event.target);
+      if (event.key === "Home") index = 0;
+      else if (event.key === "End") index = rows.length - 1;
+      else index = index < 0 ? 0 : (index + (event.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length;
+      pickerFocus(rows[index]);
+    }
+  });
+  listen("bridge", ({ payload }) => {
+    const provider = payload.provider || "chatgpt";
+    if (payload.type === "status" && modelCache[provider] && modelCache[provider]._loggedIn !== payload.loggedIn && !(provider === "gemini" && geminiChoice)) delete modelCache[provider];
+    if (payload.type === "modes") { receiveModes(provider, payload); return; }
+    if (provider !== activeProvider) return;
+    if (payload.type === "error" && payload.code === "mode_unavailable" && !payload.id) {
+      // A late failure for an earlier pick must not cancel the current one.
+      if (payload.mode && payload.mode !== (modeChoice?.mode ?? effectiveMode())) return;
+      if (!failModeChoice(payload.message)) showGlobalError("mode_unavailable", payload.message);
+      return;
+    }
+    if (payload.type === "models") {
+      // The list answers either a picker request or a refresh from the page itself.
+      if (modelRequest?.provider === provider) cancelModelRequest();
+      showModels(payload);
     } else if (payload.type === "model-chosen") {
       if (provider === "gemini") {
         providerStates.gemini = {...providerStates.gemini, model:payload.short || payload.model.label};
@@ -4067,7 +4454,12 @@
   }
   el.orb.addEventListener("pointerdown", e => { if (e.button !== 0) return; orbDown = [e.clientX, e.clientY]; orbDragged = false; el.orb.setPointerCapture?.(e.pointerId); });
   el.orb.addEventListener("pointermove", e => { if (orbDown && !orbDragged && Math.hypot(e.clientX-orbDown[0], e.clientY-orbDown[1]) >= 4) { orbDragged = true; dragWindow(); } });
-  el.orb.addEventListener("pointerup", () => { orbDown = null; });
+  el.orb.addEventListener("pointerup", () => {
+    const click = orbDown && !orbDragged;
+    orbDown = null;
+    // A plain click on the open bar's orb folds it; the folded circle handles its own presses.
+    if (click && collapse.state === "open") collapse.collapse();
+  });
   el.orb.addEventListener("pointercancel", () => { orbDown = null; });
   document.addEventListener("pointerdown", e => { if (!el.slashMenu.contains(e.target) && e.target !== el.promptInput) closeSlashMenu(); });
   // Pressing the shortcut again puts the menu away, keeping the draft and the caret.
@@ -4127,25 +4519,36 @@
   // Idle collapse: out of focus for a few seconds, the bar folds into its orb (collapse.js).
   let windowHidden = false;
   let settingsOpen = false;
-  const collapse = window.QCollapse.create({
+  collapse = window.QCollapse.create({
     stack: el.stack, bar: el.bar, orb: el.orb,
     // Hide-on-blur already takes the window away, and a hidden window has nothing to fold.
     seconds: () => (QSettings.settings.hideOnBlur || windowHidden ? 0 : QSettings.settings.idleCollapse),
     // Keep drafts visible, including whitespace; Settings also previews on the live bar.
-    blocked: () => el.promptInput.value.length > 0 || isBusy() || filePickerOpen || snapshotCapturing || settingsOpen || document.visibilityState === "hidden",
+    // An ordinary reply keeps the window open; a Work reply can run for minutes, so it may fold.
+    blocked: () => el.promptInput.value.length > 0 || switchingProvider || ((sending || isStreaming()) && effectiveMode() !== "work") || filePickerOpen || snapshotCapturing || settingsOpen || document.visibilityState === "hidden",
     motion: () => QSettings.motionOn,
     timings: () => QSettings.timings,
     drag: dragWindow,
     move: moveWindow,
-    onCollapse: () => closeSlashMenu(),
+    onCollapse: () => { closeSlashMenu(); closePicker(); orbOutcome = null; },
+    onState: (next) => {
+      // Opening clears the task state at once; a reply that finished before the fold shows nothing.
+      if (next !== "closing" && next !== "closed") orbOutcome = null;
+      syncOrbTask();
+    },
     onExpand: (focus) => {
       autoResizePrompt();
       if (focus) el.promptInput.focus({ preventScroll: true });
     },
-    onOpened: () => queueSizes()
+    onOpened: () => {
+      queueSizes();
+      // The reply is seen now, so its dismiss count starts from here.
+      if (responseEntry() && !isBusy()) armAutoDismiss();
+    }
   });
+  el.btnMinimize.addEventListener("click", () => collapse.collapse());
   // Update notice on the orb (update.js).
-  const updater = window.QUpdate.create({
+  updater = window.QUpdate.create({
     bar: el.bar, orb: el.orb, composer: el.bar.parentElement, invoke, listen,
     enabled: () => QSettings.settings.checkUpdates !== false
   });
@@ -4256,7 +4659,7 @@
     else submitFromInput();
     el.promptInput.focus();
   });
-  el.btnReasoning.addEventListener("click", showReasoningPicker);
+  el.btnReasoning.addEventListener("click", requestModels);
 
   el.btnGuestSignin.addEventListener("click", openSignin);
   el.btnGuestDismiss.addEventListener("click", () => {
@@ -4511,12 +4914,24 @@
           }
           paceTurn(turn);
           if (turn.media?.length) revealResponse(turn);
+          orbOutcome = "ready";
           updateComposerMode();
           queueSizes();
         }
         break;
       }
+      case "conversation": {
+        const turn = turns.find((t) => t.id === evt.id);
+        if (turn?.chatKey === chats.current.key && typeof evt.conversationId === "string" && evt.conversationId) {
+          chats.current.conversationId = evt.conversationId;
+          page = { key: chats.current.key, conv: evt.conversationId, pristine: false };
+          saveChats();
+        }
+        break;
+      }
       case "error": {
+        // The picker listener owns these, including dropping late ones.
+        if (!evt.id && evt.code === "mode_unavailable") break;
         if (!evt.id && evt.code === "temporary_unavailable") {
           for (const waiter of [...readyWaiters]) if (waiter.temporary && waiter.provider === provider && waiter.generation === chatGeneration && evt.setupId && waiter.setupId === evt.setupId) waiter.reject();
           break;
@@ -4533,6 +4948,7 @@
           }
           turn.status = "error";
           turn.code = evt.code;
+          orbOutcome = "attention";
           if (attachmentRetryCodes.has(evt.code)) retainTurnFiles(turn);
           else releaseTurnFiles(turn);
           turn.error = formatErrorCopy(evt.code, evt.message);
