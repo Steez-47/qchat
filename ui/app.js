@@ -1256,7 +1256,9 @@
   };
   let modeChoice = null;
   const modeState = (provider = activeProvider) => modeCache[provider] || modeCache.chatgpt;
-  const modeAvailable = (provider = activeProvider) => modeState(provider).available !== false;
+  // A missing control can mean the page is still loading or an open thread hides it.
+  // Let signed-in accounts retry; the bridge still has to confirm the actual switch.
+  const modeAvailable = (provider = activeProvider) => providerStates[provider]?.loggedIn === true || modeState(provider).available !== false;
   const modeLabel = (id, provider = activeProvider) =>
     modeState(provider).modes.find(mode => mode.id === id)?.label || (id === "work" ? (provider === "gemini" ? "Task" : "Work") : "Chat");
   const effectiveMode = (chat = chats.current) => (chat?.temporary ? "chat" : chat?.mode === "work" ? "work" : "chat");
@@ -1315,14 +1317,13 @@
     } catch (_) { showGlobalError(null, "Couldn't switch providers. Try again in a moment."); return false; }
     finally { switchingProvider = false; updateComposerMode(); }
   }
-  async function resetChatPreservingComposer() {
+  async function resetChatPreservingComposer({ mode = effectiveMode() } = {}) {
     const input = el.promptInput;
     const draft = input.value;
     const start = input.selectionStart, end = input.selectionEnd, direction = input.selectionDirection;
     const selections = chats.current.selectionTexts.slice();
     const temporary = Boolean(chats.current.temporary);
     const chat = chats.current;
-    const mode = effectiveMode(chat);
     const pickerKey = pickerOpen && el.picker.contains(document.activeElement) ? document.activeElement.dataset.pickerKey : null;
     const title = !(chat.transcript?.length || chat.lastPrompt || chat.lastResponse || chat.lastHasMedia || chat.conversationId) ? chat.title : "";
     await startNewChat(false, { preserveFiles: true, movingDraft: true });
@@ -2876,6 +2877,8 @@
   }
 
   async function startNewChat(notifyBackend = true, { preserveFiles = false, movingDraft = false } = {}) {
+    clearTimeout(modeChoice?.timer);
+    modeChoice = null;
     if (isStreaming()) await stopStreaming();
     rememberReadingPosition();
     chats.current.draft = draftValue();
@@ -3293,7 +3296,7 @@
     const modes = Array.isArray(payload.modes) ? payload.modes.map(mode => ({ ...mode })) : [];
     modeCache[provider] = { available: payload.available !== false, modes };
     if (provider !== activeProvider) return;
-    if (modeChoice && modeChoice.provider === provider) {
+    if (modeChoice && !modeChoice.preparing && modeChoice.provider === provider) {
       const selected = modes.find(mode => mode.selected)?.id;
       if (selected === modeChoice.mode) settleModeChoice(selected);
     }
@@ -3301,22 +3304,38 @@
     if (pickerOpen) renderPicker();
   }
 
-  function chooseMode(mode) {
+  async function chooseMode(mode) {
     if (isBusy() || switchingProvider) return;
     if (mode === effectiveMode()) return;
     if (mode === "work" && !modeAvailable()) {
-      showCommandFeedback(`${modeLabel("work")} isn't available on this account yet.`);
+      showCommandFeedback(`Sign in to use ${modeLabel("work")}.`);
       return;
     }
     clearTimeout(modeChoice?.timer);
     const label = modeLabel(mode);
-    modeChoice = {
+    const chat = chats.current, generation = chatGeneration;
+    const choice = modeChoice = {
       provider: activeProvider,
       mode,
-      timer: setTimeout(() => failModeChoice(`Couldn't switch to ${label}. Try again in a moment.`), 8000)
+      preparing: true,
+      timer: setTimeout(() => failModeChoice(`Couldn't switch to ${label}. Try again in a moment.`), 15000)
     };
-    invoke("chat_mode_set", { mode }).catch(err => failModeChoice(err?.message || `Couldn't switch to ${label}. Try again in a moment.`));
     renderPicker();
+    try {
+      // Existing conversations can hide the switch; keep the local chat and draft
+      // until the fresh provider page has confirmed the requested mode.
+      if (chat.conversationId || onConversationURL(providerStates[choice.provider]?.url)) await freshInPage(chat);
+      if (modeChoice !== choice) return;
+      if (choice.provider !== activeProvider || chat !== chats.current || generation !== chatGeneration || isBusy()) {
+        clearTimeout(choice.timer);
+        modeChoice = null;
+        return;
+      }
+      choice.preparing = false;
+      await invoke("chat_mode_set", { mode });
+    } catch (err) {
+      if (modeChoice === choice) failModeChoice(err?.message || `Couldn't switch to ${label}. Try again in a moment.`);
+    }
   }
 
   function settleModeChoice(selected) {
@@ -3325,11 +3344,9 @@
     clearTimeout(choice.timer);
     modeChoice = null;
     if (choice.provider !== activeProvider) return false;
-    chats.current.mode = selected === "work" ? "work" : "chat";
-    saveChats();
-    syncReasoningButton();
-    // A mode switch belongs to a fresh conversation; keep the draft.
-    void resetChatPreservingComposer().then(() => { if (pickerOpen) requestPickerModels(); });
+    // Archive the old conversation with its own mode, then apply this choice to
+    // the fresh chat. The composer snapshot is taken after any page-loading wait.
+    void resetChatPreservingComposer({ mode: selected === "work" ? "work" : "chat" }).then(() => { if (pickerOpen) requestPickerModels(); });
     return true;
   }
 
@@ -3705,7 +3722,7 @@
 
     fragment.append(pickerSegment("Mode", [
       { key: "mode:chat", label: modeLabel("chat", provider), checked: mode === "chat", run: () => chooseMode("chat") },
-      { key: "mode:work", label: modeLabel("work", provider), checked: mode === "work", disabled: workOff, title: temporary ? "Not in temporary chats" : !modeAvailable(provider) ? "Not available on this account yet" : "", run: () => chooseMode("work") }
+      { key: "mode:work", label: modeLabel("work", provider), checked: mode === "work", disabled: workOff, title: temporary ? "Not in temporary chats" : !modeAvailable(provider) ? `Sign in to use ${modeLabel("work", provider)}` : "", run: () => chooseMode("work") }
     ]));
 
     const cached = modelCache[provider]?._mode === mode ? modelCache[provider] : null;
@@ -5046,6 +5063,7 @@
   listen("bridge", ({ payload: evt }) => {
     if (!evt || typeof evt !== "object") return;
     const provider = evt.provider || "chatgpt";
+    const previouslyAvailable = modeAvailable(provider);
     const previousStatus = providerStates[provider];
     if (evt.type === "status") {
       // A status sent before the mode switcher has drawn has no model: keep the one we know.
@@ -5061,6 +5079,7 @@
       case "status":
         if (![...readyWaiters].some(w => w.temporary && w.provider === activeProvider && w.generation === chatGeneration && (evt.temporary !== true || evt.setupId !== w.setupId))) updateStatusHeader({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
         settleReadyWaiters(evt);
+        if (pickerOpen && modeAvailable(provider) !== previouslyAvailable) renderPicker();
         if (!evt.ready && modelRequest?.provider === provider) cancelModelRequest();
         // Gemini can draw the model switcher after its composer. Retry an early read when it arrives.
         if (pickerOpen && evt.ready && !isBusy() && (!previousStatus?.ready || (evt.model && evt.model !== previousStatus?.model) || evt.loggedIn !== previousStatus?.loggedIn)) {

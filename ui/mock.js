@@ -208,7 +208,7 @@
             if (mock.modeHold) return null;
             const state = mock.modes[mock.provider] || mock.modes.chatgpt;
             if (mock.modeUnavailable || state.available === false) {
-              emitMock("bridge", { type: "error", provider: mock.provider, code: "mode_unavailable", mode: args.mode, message: `${mock.provider === "gemini" ? "Gemini Task" : "ChatGPT Work"} isn't available on this account yet.` });
+              emitMock("bridge", { type: "error", provider: mock.provider, code: "mode_unavailable", mode: args.mode, message: `Couldn't confirm ${mock.provider === "gemini" ? "Task mode in Gemini" : "Work mode in ChatGPT"}. Try again or open ${mock.provider === "gemini" ? "Gemini" : "ChatGPT"} to check the switch.` });
               return null;
             }
             state.modes = state.modes.map(mode => ({...mode, selected: mode.id === args.mode}));

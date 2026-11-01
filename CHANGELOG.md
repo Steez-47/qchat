@@ -19,6 +19,7 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 - A saved shortcut that's no longer valid can be replaced, and a failed Backspace clear in Settings shows why instead of staying stuck on "Press keys…".
 - A failed download or update no longer leaves a partial file behind.
 - A `$&` in a ChatGPT attachment's label no longer garbles the reply, and Gemini images no longer pile up in memory during a long chat.
+- A second message in a ChatGPT temporary chat no longer fails with "Temporary chat could not be confirmed". ChatGPT hides its temporary toggle once the chat has started, so QChat now remembers that the chat started in temporary mode.
 
 ## [1.5.2] - 2026-11-02
 

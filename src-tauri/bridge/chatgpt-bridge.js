@@ -160,6 +160,7 @@
     delta(job, true); job.finished = true; cancelTimers(job); active = null;
     disposeReader(job);
     if (job.media?.size) emit({ type: 'media', id: job.id, items: [...job.media.values()], final: true });
+    adoptTemporaryConversation(job);
     emit({ type: 'done', id: job.id, text: job.text, conversationId: job.conversationId || null, rich: !!job.rich });
   }
   function assistantNodes() {
@@ -632,6 +633,7 @@
   }
   function sampleDOM(job) {
     if (active !== job || job.finished || job.cancelled) return;
+    adoptTemporaryConversation(job);
     const nodes = currentAssistants(job);
     // Image sends can bypass the observed fetch. A correlated user/reply turn
     // is also an acknowledgement, even when a fast reply never displays Stop.
@@ -933,12 +935,14 @@
     return match ? { label: match[1], index: Number(match[2]) - 1, count: Number(match[3]) } : null;
   }
   // Chat and Work are read from the page's own switch. Only that exact control is clicked.
-  const MODE_MESSAGE = "ChatGPT Work isn't available on this account right now.";
-  const modeSelector = '[role="tab"], [role="radio"], [role="menuitemradio"], button, a[role]';
+  const MODE_MESSAGE = "Couldn't confirm Work mode in ChatGPT. Try again or open ChatGPT to check the switch.";
+  const modeSelector = '[role="tab"], [role="radio"], [role="menuitemradio"], [role="button"], button, a[role], a[href]';
   const modeExcluded = '[data-message-author-role], [data-message-role], user-query, model-response, nav a[href*="/c/"], [data-testid^="history-item"], conversations-list, .conversation, [contenteditable="true"]';
   const modeShown = node => !!node && node.isConnected !== false && !!node.getClientRects?.().length && !node.closest?.(modeExcluded);
   const modeName = node => {
-    const text = String(node.innerText ?? node.textContent ?? '').split('\n').map(line => line.trim()).find(Boolean) || '';
+    const copy = node.cloneNode(true);
+    for (const icon of copy.querySelectorAll('svg, mat-icon, [aria-hidden="true"], [hidden]')) icon.remove();
+    const text = String(copy.innerText ?? copy.textContent ?? '').split('\n').map(line => line.trim()).find(Boolean) || '';
     const label = String(node.getAttribute?.('aria-label') || '').split('\n')[0].trim();
     return { text, label };
   };
@@ -1110,19 +1114,48 @@
     }
     return false;
   }
-  function temporaryReady() {
-    const visible = node => {
-      if (!node?.isConnected || !node.getClientRects().length) return false;
-      for (let parent = node; parent; parent = parent.parentElement) {
-        const style = getComputedStyle(parent);
-        if (parent.hidden || parent.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility !== 'visible') return false;
-      }
-      return true;
-    };
-    if (new URL(location.href).searchParams.get('temporary-chat') !== 'true' || !visible(find('composer'))) return false;
+  function shown(node) {
+    if (!node?.isConnected || !node.getClientRects().length) return false;
+    for (let parent = node; parent; parent = parent.parentElement) {
+      const style = getComputedStyle(parent);
+      if (parent.hidden || parent.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.visibility !== 'visible') return false;
+    }
+    return true;
+  }
+  const temporaryQuery = () => new URL(location.href).searchParams.get('temporary-chat') === 'true';
+  const pageConversation = () => location.pathname.match(/^\/c\/([^/]+)\/?$/)?.[1] || null;
+  function headerControl(label) {
     const excluded = 'article, [role="article"], [role="dialog"], [role="menu"], [role="menuitem"], [data-message-author-role], [data-message-role], [data-message-id], [data-dil-source-message-id], [data-dil-message-id], [data-turn], [data-turn-key], [data-testid^="conversation-turn-"], [data-testid^="message-"], [hidden], [aria-hidden="true"]';
-    return [...document.querySelectorAll('button[aria-label="Turn off temporary chat"]')].some(button =>
-      visible(button) && !button.closest(excluded));
+    return [...document.querySelectorAll(`button[aria-label="${label}"]`)].some(button => shown(button) && !button.closest(excluded));
+  }
+  // ChatGPT offers "Turn off temporary chat" only while a temporary chat is empty.
+  // After the first message it shows a read-only label instead, so that control
+  // can't confirm later turns. A chat is temporary from its first message on and
+  // can't be switched back, so a chat this page started while the control
+  // confirmed it is still temporary as long as the page stays on that chat.
+  // A reload or a move to another chat drops the record and fails closed.
+  let temporaryThread = null;
+  function temporaryContinues() {
+    const thread = temporaryThread;
+    if (!thread || !document.querySelector(userSelector) || headerControl('Temporary chat')) return false;
+    const here = pageConversation();
+    if (!here) return location.pathname === '/' && temporaryQuery();
+    return here === thread.conversationId;
+  }
+  function temporaryReady() {
+    if (!shown(find('composer'))) return false;
+    if (temporaryQuery() && headerControl('Turn off temporary chat')) return true;
+    return temporaryContinues();
+  }
+  // The chat gets its id once the first message is under way.
+  function adoptTemporaryConversation(job) {
+    const thread = job.temporaryThread;
+    if (thread && thread === temporaryThread && !thread.conversationId) thread.conversationId = job.conversationId || pageConversation();
+  }
+  // Called just before a confirmed temporary send goes out.
+  function claimTemporaryThread(job) {
+    if (!temporaryThread || !temporaryContinues()) temporaryThread = { conversationId: pageConversation() };
+    job.temporaryThread = temporaryThread;
   }
   let temporaryStage = null, stageEpoch = 0;
   function clearTemporaryStage(id) {
@@ -1624,6 +1657,7 @@
             job.submitted = true;
             // Capture attachment identity before the click can remove the chips.
             const confirmation = attachmentCount > 0 ? confirmAttachmentSend(job, composer, temporary) : null;
+            if (temporary) claimTemporaryThread(job);
             button.click();
             sampleDOM(job);
             confirmation?.catch(() => {});
@@ -1642,6 +1676,7 @@
           // Enter can't send what the page never took, and could send leftovers on their own.
           if (prompt.trim() && !typed(find('composer') || composer)) { fail(job, 'send_failed', 'ChatGPT did not take the message text. Try again.'); return; }
           job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
+          if (temporary) claimTemporaryThread(job);
           job.submitted = true; composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
         }
       } catch (e) { fail(job, 'send_failed', e.message); }
@@ -1705,6 +1740,7 @@
     async openConversation(id) {
       if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(id)) throw new Error('invalid_id');
       await window.__qchat.stop();
+      temporaryThread = null;
       media.clear(); cancelledAttachments = null; downloadActivation = null;
       await status();
       if (!loginCache) return window.__qchat.newChat();
@@ -1777,7 +1813,7 @@
     },
     async chooseModel(id) { return window.__qchat.listModels(id); },
     async newChat(options = {}) {
-      clearTemporaryStage();
+      clearTemporaryStage(); temporaryThread = null;
       if (options.temporary) {
         await window.__qchat.stop(); media.clear();
         const target = new URL('https://chatgpt.com/?temporary-chat=true' + (options.setupId ? '#qchat-setup=' + encodeURIComponent(options.setupId) : ''));

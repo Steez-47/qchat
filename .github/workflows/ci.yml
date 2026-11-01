@@ -62,6 +62,8 @@ jobs:
           "NIGHTLY_VERSION=$version" >> $env:GITHUB_ENV
       - name: Check stamped manifests
         run: node tests/edge-contract-test.mjs
+      - name: Generate bundled notices
+        run: node tools/third-party-notices.mjs
       - run: npm run test:rust
       - run: npm run build:installer
       - name: Publish Nightly
