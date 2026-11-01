@@ -1,3 +1,18 @@
+## Edge cases and smoothness pass (2026-11-01)
+
+Goal: find edge cases and silent no-ops in the chat window and make everyday use smoother, without changing deliberate behaviour pinned by existing suites. Branch `claude/edge-cases-smoothness-ihvc3k`.
+
+| task | owns | status |
+|---|---|---|
+| Fair tab widths: short titles stay whole when long ones overflow (grid water-filling) | ui/glass.css | done |
+| Grapheme-safe titles (no split emoji/ZWJ/flags); first-line, word-boundary auto titles with an ellipsis | ui/app.js | done |
+| Busy feedback for chat/provider switches and /model mid-reply; "Already using" for the active provider; Enter while connecting explains and exact commands still run | ui/app.js | done |
+| Ctrl+K and Ctrl+P close what they opened; held repeats ignored; Ctrl+F starts from a one-line selection | ui/app.js | done |
+| Auto-dismiss waits while reply text is selected | ui/app.js | done |
+| Regression suite and full headless gate | tools/smoothness-ui-test.mjs | done |
+
+Verification is headless only (mock backend in Chromium with `QCHAT_TEST_EDGE` pointing at a `--no-sandbox` wrapper on Linux). The new suite fails on the previous UI (including a stored rename that ended in a dangling ZWJ) and passes now. Native/Windows suites, the Rust tests and a release build were not run in this environment. Left alone on purpose: Enter during streaming still inserts a newline even in an empty composer (pinned by send-repeat-ui-test).
+
 ## Public v1.3.1 release (2026-11-01)
 
 Goal: consolidate all committed work into t3/main and publish the public Windows x64 patch release. Preserve the running v1.3.0 app, saved profile, canonical portable and historical worktrees.

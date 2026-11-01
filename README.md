@@ -5,14 +5,16 @@
 A tiny Windows popup for chatting with ChatGPT or Gemini through your own signed-in sessions.
 
 - **Alt+Q** toggles the popup. The tray icon has New chat, Sign in and Quit.
-- Type `/` for commands, or press **Ctrl+K** for the menu. Drag the orb to move QChat.
-- **Ctrl+P** or `/chats` searches every saved chat. Up to 3 recent chats sit as tabs on the bar.
+- Type `/` for commands, or press **Ctrl+K** for the menu; press it again to put the menu away. Drag the orb to move QChat.
+- **Ctrl+P** or `/chats` searches every saved chat; Ctrl+P again closes the list. Up to 3 recent chats sit as tabs on the bar, and when titles don't all fit, short ones stay whole while long ones shorten.
+- New chats are named from the first line of the first prompt, shortened at a word. Titles never split an emoji or accented character.
+- Actions that can't run mid-reply, such as switching chats or providers, say so instead of doing nothing. Enter while QChat is still connecting says so too and keeps the draft.
 - Focus a recent tab and use Left/Right or Home/End to move between tabs, Enter or Space to open one, and Escape to return to the composer.
 - Switching chats remembers your reading position for the current app session, including in History.
 - `/copy` copies the current conversation as Markdown, including quoted selections and source links. Ctrl+K opens commands while keeping your draft.
 - `/export` saves the conversation as a Markdown file in Downloads, with a new filename if one already exists. It includes text received so far and also works when you explicitly export a temporary chat. Exports support up to 4 MiB of text.
 - **Ctrl+Shift+C** copies the latest reply or selected composer/reply text. **Ctrl+Shift+X** copies its last code block.
-- **Ctrl+F** or `/find` searches the whole open conversation. Enter or F3 moves to the next match; add Shift to move back. Escape closes search and keeps the conversation open.
+- **Ctrl+F** or `/find` searches the whole open conversation, starting from any words selected in it. Enter or F3 moves to the next match; add Shift to move back. Escape closes search and keeps the conversation open.
 - Unsent drafts recover after a reload or restart when local history is enabled. Starting or switching chats also keeps meaningful ordinary drafts in local chat history, even before the first message. Temporary chats keep their drafts out of saved history.
 - `/rename` changes the current chat's name in QChat, including a meaningful unsent draft or quoted context. Use Ctrl+K to rename without replacing a draft. Enter saves and Escape cancels.
 - A connection error retries when the network returns or QChat regains focus, keeping the draft, staged files and current conversation. Try again is available for manual recovery.
@@ -64,6 +66,7 @@ cd src-tauri && cargo build && target/debug/qchat.exe
 - `node tools/settings-presets-test.mjs`: opacity, presets, migration, saved presets and settings search.
 - `node tools/drag-sync-native-test.mjs`: the blur stays up and aligned while the real window moves (skips while a fullscreen app is in front).
 - `node tools/feature-ui-test.mjs`: menus, model picker, chat search, tabs, the shortcuts card and temporary chats.
+- `node tools/smoothness-ui-test.mjs`: fair tab widths, grapheme-safe and word-boundary titles, busy and connecting feedback, shortcut toggles and Find from a selection.
 - `node tools/conversation-copy-ui-test.mjs`: conversation copying, clipboard failures, draft selection, streaming and provider isolation.
 - `node tools/conversation-export-ui-test.mjs`: shared Copy formatting, export limits, pending requests, privacy and draft preservation.
 - `node tools/conversation-export-native-test.mjs`: real UTF-8 saves in an isolated profile, concurrent filenames, size bounds, failure recovery, window permissions and staged-file Undo. Requires a debug build.
