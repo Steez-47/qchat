@@ -18,6 +18,16 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 - Latest release: v1.4.1 (2026-11-01). `main` is the only long-lived branch.
 - `npm test` runs the 54 headless suites. CI runs them on every push and pull request.
 
+## Update from GitHub releases (2026-11-01)
+
+| task | owns | status |
+|---|---|---|
+| Check the latest GitHub release over WinHTTP; download QChat.exe, verify SHA-256 (asset digest or SHA256SUMS.txt), swap the running exe aside and relaunch | src-tauri/src/update.rs, main.rs, build.rs, Cargo.toml, capabilities/main.json | done |
+| Orb badge, hover chip with Update / skip, `/update`, "Updated to vX" after relaunch, Behavior setting | ui/update.js, ui/app.js, ui/index.html, ui/app.css, ui/settings*.js, ui/mock.js | done |
+| Regression checks | tests/update-ui-test.mjs, Rust unit tests in update.rs | done |
+
+Verified: `cargo check --target x86_64-pc-windows-msvc --all-targets` clean; update.rs pure-logic tests pass on Linux; headless UI suite passes. Not verified: a real download/swap/relaunch on Windows (needs a published release newer than the build), installed copies under a non-writable folder (falls back to "Get it on GitHub"). An exe swap does not update the uninstaller's recorded version.
+
 ## Gemini model label and dragged-orb collapse (2026-11-01)
 
 | task | owns | status |

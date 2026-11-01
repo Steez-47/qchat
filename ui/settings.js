@@ -362,7 +362,8 @@
           () => switchRow({ key: "alwaysOnTop", label: "Always on top" }),
           () => switchRow({ key: "hideOnBlur", label: "Hide when focus is lost" }),
           () => rangeRow({ key: "idleCollapse", label: "Fold into the orb when idle", hint: "After you click away. Click the orb to open it again", format: seconds }),
-          () => switchRow({ key: "rememberPosition", label: "Remember window position" })
+          () => switchRow({ key: "rememberPosition", label: "Remember window position" }),
+          () => switchRow({ key: "checkUpdates", label: "Check GitHub for updates", hint: "A badge on the orb shows when a new version is out" })
         ],
         [() => actionRow("Window position", "Puts the bar back at the bottom centre of your screen", actionButton("btn-reset-position", "Reset position", () => invoke("reset_position").catch(() => {})))]
       ]

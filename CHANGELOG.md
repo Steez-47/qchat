@@ -2,6 +2,11 @@
 
 Notable changes to QChat. Downloads, checksums and full verification notes for each version are on the [releases page](https://github.com/Steez-47/qchat/releases).
 
+## [Unreleased]
+
+### Added
+- Updates from GitHub. When a newer release is out, an arrow badge appears on the orb. Hover the orb (or the folded circle) and an **Update** button pops up above it. QChat downloads the new `QChat.exe`, checks its SHA-256, swaps it in and restarts. `/update` checks on demand, the × skips that version, and Settings > Behavior > *Check GitHub for updates* turns checking off.
+
 ## [1.4.1] - 2026-11-01
 
 ### Fixed

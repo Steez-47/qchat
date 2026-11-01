@@ -20,6 +20,7 @@ fn main() {
             "media_save",
             "conversation_export",
             "image_copy", "snapshot_capture",
+            "update_check", "update_install",
         ]),
     ))
     .expect("build manifest");
