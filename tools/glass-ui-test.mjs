@@ -207,9 +207,9 @@ try {
   await evalJS(`(()=>{window.streamId=__mock.last('chat_send').args.id;__mock.emit('bridge',{type:'delta',id:streamId,text:'Stable **paragraph**.\\n\\nGrowing tail'});})()`);
   await until(`document.querySelector('[data-role=assistant] .turn-content p')?.textContent==='Stable paragraph.'`);
   await evalJS(`window.stableParagraph=document.querySelector('[data-role=assistant] .turn-content p')`);
-  // This section is about the live word stream, not the default of whole paragraphs.
+  // Saved streaming styles use the same completed-block boundary.
   await evalJS(`QSettings.apply(document.documentElement,{...QSettings.settings,streamStyle:'fade'})`);
-  await evalJS(`__mock.emit('bridge',{type:'delta',id:streamId,text:'Stable **paragraph**.\\n\\nGrowing tail with more words 🌿'});`);
+  await evalJS(`__mock.emit('bridge',{type:'delta',id:streamId,text:'Stable **paragraph**.\\n\\nGrowing tail with more words 🌿\\n\\nPending'});`);
   await until(`document.querySelector('[data-role=assistant] .turn-content')?.textContent.includes('more words')`);
   check('stream updates retain completed paragraph nodes', await evalJS(`stableParagraph===document.querySelector('[data-role=assistant] .turn-content p')`));
   await evalJS(`__mock.emit('bridge',{type:'delta',id:streamId,text:'Corrected **paragraph**.\\n\\nFinal tail 🌿'});`);
@@ -564,8 +564,9 @@ try {
   await settle();
   check('settings window loads in mock mode', await evalJS(`document.querySelectorAll('.section').length===12 && !!document.getElementById('sheet')`));
   check('settings has the required sections', await evalJS(`['Presets','Appearance','Bar glass','Chat panel','Reading','Streaming','Motion','Bar & tabs','Behavior','Chats','Account','About'].every(t=>[...document.querySelectorAll('.section-title')].some(n=>n.textContent===t))`));
-  const allKeys = await evalJS(`Object.keys(QSettings.SCHEMA).filter(k=>k!=='look'&&!document.querySelector('.row[data-key="'+k+'"]'))`);
-  check('every setting has a control', allKeys.length === 0, allKeys.join());
+  const allKeys = await evalJS(`Object.keys(QSettings.SCHEMA).filter(k=>!['look','streamStyle','streamSpeed'].includes(k)&&!document.querySelector('.row[data-key="'+k+'"]'))`);
+  check('every active setting has a control', allKeys.length === 0, allKeys.join());
+  check('obsolete streaming controls are absent',await evalJS(`!document.querySelector('.row[data-key="streamStyle"],.row[data-key="streamSpeed"]')`));
   await evalJS(`document.getElementById('control-cornerWeight').value=10; document.getElementById('control-cornerWeight').dispatchEvent(new Event('input',{bubbles:true}))`);
   await sleep(160);
   check('a control change persists', await evalJS(`JSON.parse(localStorage.getItem('qchat.settings')).cornerWeight`) === 10);

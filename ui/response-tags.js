@@ -404,5 +404,5 @@
       return allowed && inert.has(allowed[1].toLowerCase()) ? part.toLowerCase() : escape(part);
     }).join('');
   }
-  window.QResponseTags = { toMarkdown, hasLayout, hasInteractive, bodyAt, decodeEntities, stabilize: text => toMarkdown(text), protect, sanitizeHTML, safeURL, tagAt, eachAt };
+  window.QResponseTags = { toMarkdown, hasLayout, hasInteractive, bodyAt, decodeEntities, stabilize: text => toMarkdown(text), protect, sanitizeHTML, safeURL, tagAt, eachAt, mathEnd };
 })();

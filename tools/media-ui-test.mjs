@@ -81,9 +81,10 @@ try {
     const scanStart=getComputedStyle(activity.querySelector('.tool-activity-track'),'::after').transform; await wait(120);
     check('search bar animates when motion is enabled',getComputedStyle(activity.querySelector('.tool-activity-track'),'::after').transform!==scanStart);
     document.documentElement.dataset.motion=previousMotion;
-    event('delta',{text:'Checking a result…'}); await wait(40);
+    event('delta',{text:'Checking a result…\\n\\nPending text'}); await wait(40);
     event('activity',{kind:'browse',state:'running'}); await wait(30);
     check('activity updates without replacing streamed text or status node',document.querySelector('.tool-activity')===activity && activity.textContent.includes('Reading sources') && document.querySelector('.turn-content').textContent.includes('Checking'));
+    check('activity updates keep the unfinished paragraph buffered',!document.querySelector('.turn-content').textContent.includes('Pending text'));
     event('activity',{kind:'code',state:'running',label:'<script>secret arguments</script>'}); await wait(30);
     check('tool labels describe activity without raw arguments',activity.textContent.includes('Running code') && !activity.textContent.includes('secret'));
     event('activity',{kind:'code',state:'complete'}); await wait(30);
@@ -110,7 +111,7 @@ try {
     check('attachments-only send',sent.args.prompt==='' && sent.args.attachmentIds.length===1 && document.querySelector('[data-role=user] .attachment-chip'));
     $('prompt-input').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
     check('double send prevented',test.calls.filter(c=>c.cmd==='chat_send').length===1);
-    event('delta',{text:'Hello 😀 👩🏽‍💻 é <script>bad()</script>'}); await wait(70);
+    event('delta',{text:'Hello 😀 👩🏽‍💻 é <script>bad()</script>\\n\\n'}); await wait(70);
     check('emoji and escaped response',document.querySelector('[data-role=assistant] .turn-content').textContent.includes('👩🏽‍💻') && !document.querySelector('.turn-content script'));
     test.mediaKind='audio'; test.mime='audio/mpeg';
     event('media',{items:[{id:'audio1',kind:'audio',name:'<script>audio</script>'}]});
@@ -151,10 +152,10 @@ try {
     test.badSrc=null;
     for(const mime of ['image/svg+xml','text/html','application/octet-stream']){test.mime=mime;event('media',{items:[{id:mime,kind:'image',name:'unknown'}]});await wait(5);}
     check('SVG HTML and unknown MIME previews rejected',!document.querySelector('.media-preview img'));
-    event('delta',{text:'![nice](https://example.com/image.png) [download](sandbox:/mnt/data/report.csv) [safe](https://example.com/)'}); await wait(70);
+    event('delta',{text:'![nice](https://example.com/image.png) [download](sandbox:/mnt/data/report.csv) [safe](https://example.com/)\\n\\n'}); await wait(70);
     check('web images render source links and sandbox downloads keep fallback',document.querySelectorAll('[data-action=view-media]').length===1 && !document.querySelector('.turn-content img') && document.querySelector('.turn-content a').href==='https://example.com/image.png');
     await reset(); $('prompt-input').value='sources'; $('prompt-input').dispatchEvent(new Event('input')); $('btn-send').click(); await wait(20);
-    event('delta',{text:'Reported details. <Cite ref="turn1news0"/> Unknown <Cite ref="missing"/>'}); await wait(70);
+    event('delta',{text:'Reported details. <Cite ref="turn1news0"/> Unknown <Cite ref="missing"/>\\n\\n'}); await wait(70);
     event('sources',{items:[{id:'turn1news0',url:'https://example.com/report',title:'Source report'},{id:'bad',url:'javascript:alert(1)',title:'unsafe'}]}); await wait(70);
     const sourceMenu=document.querySelector('.turn-sources');
     check('sources dropdown starts closed and rejects unsafe URLs',sourceMenu && !sourceMenu.open && sourceMenu.querySelectorAll('a').length===1);

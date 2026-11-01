@@ -1,6 +1,5 @@
-// Turns a partial Markdown stream into something safe to render on every frame: unfinished
-// syntax is closed or held back so text never flashes as raw markers and then jumps.
-// Also finds the point before which a stream can no longer change, so only the tail is reparsed.
+// Finds finished blocks for buffered response display. Legacy stabilization and reveal
+// helpers remain available, but live replies only use completeBoundary.
 (function () {
   "use strict";
 
@@ -47,34 +46,83 @@
     return boundary;
   }
 
-  // Commit paragraphs inside layout tags too: the renderer pairs their open scopes.
+  const LITERAL_TAG = /^(pre|code|script|style|iframe|svg|object|template)$/;
+  const VOID_TAG = /^(area|base|br|col|embed|hr|img|input|meta|param|source|track|wbr|divider|asyncimage|asyncimagegroup|entity|cite|icon)$/;
+  const INLINE_TAG = /^(a|b|i|s|u|em|strong|del|ins|mark|sub|sup|span|code|kbd|small|abbr)$/;
+  const SEMANTIC_TAG = /^(?:a$|b$|i$|s$|u$|em$|strong$|del$|ins$|mark$|sub$|sup$|span$|code$|pre$|div$|p$|box$|text$|section$|blockquote$|h[1-6]$)/;
+
+  // The largest prefix of finished blocks: the only text a response ever shows while it streams.
+  // Prose ends at a blank line. A fence, display maths, tag or {#each} scope ends at its real closer
+  // (at once, even with no newline after it), and never at a blank line inside the scope.
   function completeBoundary(text) {
-    let fence = null, offset = 0, end = 0, math = null, inline = null, container = false;
+    let fence = null, offset = 0, end = 0, math = null, mathFresh = false, inline = null, container = false;
+    let skipUntil = 0, prevBlank = true, scopeFresh = false, listIndent = 0;
     const tags = [];
-    let skipUntil = 0;
-    for (const line of text.split("\n").slice(0, -1)) {
-      const next = offset + line.length + 1;
-      const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    const lines = text.split("\n");
+    // Release a finished block, unless a list or quote may still continue around it.
+    const release = (to) => { if (!container && to > end) end = to; };
+    const releaseAfter = (at) => {
+      const nl = text.indexOf("\n", at), stop = nl < 0 ? text.length : nl;
+      release(!/\S/.test(text.slice(at, stop)) ? (nl < 0 ? text.length : nl + 1) : at);
+    };
+    for (let n = 0; n < lines.length; n++) {
+      const line = lines[n], last = n === lines.length - 1;
+      const next = offset + line.length + (last ? 0 : 1);
+      const fresh = prevBlank || offset === end;
+      // A closer belongs to the opener's quote/list context. A list marker or a
+      // four-space indent inside a top-level fence is code, not a closing fence.
+      let fenceLine = line.replace(/\r$/, "").replace(/\t/g, "    "), quotes = 0, quote;
+      while ((quote = /^ {0,3}> ?/.exec(fenceLine))) { quotes++; fenceLine = fenceLine.slice(quote[0].length); }
+      const list = !fence && /^ {0,3}(?:[-+*]|\d+[.)]) +/.exec(fenceLine);
+      if (!fence && !math && !tags.length && list) listIndent = list[0].length;
+      const indent = /^ */.exec(fenceLine)[0].length;
+      const baseIndent = fence ? fence.baseIndent : list ? list[0].length : (listIndent && indent >= listIndent ? listIndent : 0);
+      const sameContext = !fence || (quotes === fence.quotes && indent >= baseIndent);
+      const match = skipUntil <= offset && sameContext && /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(fenceLine.slice(baseIndent));
+      const literalTop = LITERAL_TAG.test(tags.at(-1) || "");
       if (!fence && !math && !tags.length && /^ {0,3}(?:[-+*]\s|\d+[.)]\s|>)/.test(line)) container = true;
-      if (!math && !inline && !tags.length && match) {
-        if (!fence) fence = { marker: match[1][0], size: match[1].length };
-        else if (match[1][0] === fence.marker && match[1].length >= fence.size && !match[2].trim()) fence = null;
+      if (!math && !inline && !literalTop && match) {
+        if (!fence) fence = { marker: match[1][0], size: match[1].length, quotes, baseIndent };
+        else if (match[1][0] === fence.marker && match[1].length >= fence.size && !match[2].trim()) {
+          fence = null;
+          if (!tags.length) release(next);
+        }
       } else if (!fence) {
         for (let i = Math.max(0, skipUntil - offset); i < line.length;) {
-          if (math) { if (line.startsWith(math, i)) { i += math.length; math = null; } else i += line[i] === '\\' ? 2 : 1; continue; }
+          if (math) {
+            if (line.startsWith(math, i)) {
+              i += math.length;
+              const display = math !== "\\)";
+              math = null;
+              if (display && mathFresh && !/\S/.test(line.slice(i))) release(next);
+            } else i += line[i] === "\\" ? 2 : 1;
+            continue;
+          }
           // HTML code and inert script bodies are literal until their matching closer.
           const raw = tags.at(-1);
-          if (/^(pre|code|script|style|iframe|svg|object|template)$/.test(raw || '') && (line[i] !== '<' || !new RegExp('^</' + raw + '\\s*>', 'i').test(line.slice(i)))) { i++; continue; }
+          if (LITERAL_TAG.test(raw || "") && (line[i] !== "<" || !new RegExp("^</" + raw + "\\s*>", "i").test(line.slice(i)))) { i++; continue; }
           const run = /^`+/.exec(line.slice(i));
           if (run) { if (!inline) inline = run[0]; else if (inline === run[0]) inline = null; i += run[0].length; continue; }
           if (inline) { i++; continue; }
-          const opener = line.startsWith('$$', i) ? '$$' : line.startsWith('\\[', i) ? '\\]' : line.startsWith('\\(', i) ? '\\)' : null;
-          if (opener) { math = opener; i += 2; continue; }
-          if (line[i] === '\\') { i += 2; continue; }
-          if (line[i] === '{') {
+          // Share the renderer's currency-aware inline math rules. Markup inside a
+          // finished $...$ expression is literal, including strings like <section>.
+          if (line[i] === "$" && !line.startsWith("$$", i)) {
+            const to = window.QResponseTags.mathEnd(text, offset + i);
+            if (to > offset + i) { i = to - offset; continue; }
+          }
+          const opener = line.startsWith("$$", i) ? "$$" : line.startsWith("\\[", i) ? "\\]" : line.startsWith("\\(", i) ? "\\)" : null;
+          if (opener) {
+            math = opener;
+            mathFresh = fresh && !tags.length && !container && !line.slice(0, i).trim();
+            i += 2;
+            continue;
+          }
+          if (line[i] === "\\") { i += 2; continue; }
+          if (line[i] === "{") {
             const body = window.QResponseTags.bodyAt(text, offset + i);
             if (body) {
               if (body.partial) return end;
+              if (!tags.length && !line.slice(0, i).trim()) releaseAfter(body.end);
               skipUntil = body.end;
               i = body.end - offset;
               continue;
@@ -83,43 +131,61 @@
             if (directive) {
               if (directive.partial) return end;
               if (directive.close) {
-                const index = tags.lastIndexOf('@each');
-                if (index >= 0) tags.length = index;
-              } else tags.push('@each');
+                const index = tags.lastIndexOf("@each");
+                if (index >= 0 && index === tags.length - 1) {
+                  tags.length = index;
+                  if (!tags.length && scopeFresh) releaseAfter(directive.end);
+                }
+              } else {
+                if (!tags.length) scopeFresh = offset + i === end || (fresh && !line.slice(0, i).trim());
+                tags.push("@each");
+              }
               skipUntil = directive.end;
               i = directive.end - offset;
               continue;
             }
           }
-          if (line[i] === '<' && /^<\/?[a-zA-Z]/.test(line.slice(i))) {
+          if (line[i] === "<" && /^<\/?[a-zA-Z]/.test(line.slice(i))) {
             // Share the renderer's quote/JSX-aware tokenizer; comparisons aren't tag prefixes.
             const at = offset + i;
             const tag = window.QResponseTags.tagAt(text, at);
-            const semantic = tag && /^(?:[A-Z]|a$|b$|i$|s$|u$|em$|strong$|del$|ins$|mark$|sub$|sup$|span$|code$|pre$|div$|p$|box$|text$|section$|blockquote$|h[1-6]$)/.test(tag.name);
-            if (!tag || (/[\p{L}\p{N}]/u.test(text[at - 1] || '') && !tag.close && !semantic)) { i++; continue; }
+            // Prose generics (Array<object>, List<Item>) are not tags; a letter before "<" needs
+            // a recognised element, or a component that clearly has attributes or self-closes.
+            const semantic = tag && (SEMANTIC_TAG.test(tag.name.toLowerCase()) || (/^[A-Z]/.test(tag.name) && (tag.self || Object.keys(tag.attrs || {}).length)));
+            if (!tag || (/[\p{L}\p{N}]/u.test(text[at - 1] || "") && !tag.close && !semantic)) { i++; continue; }
+            // A closer or attribute still arriving: nothing from here is finished.
             if (tag.partial) return end;
             const name = tag.name.toLowerCase();
-            if (tag.close) { const index = tags.lastIndexOf(name); if (index >= 0) tags.length = index; }
-            else if (!tag.self && !/^(area|base|br|col|embed|hr|img|input|meta|param|source|track|wbr|divider|asyncimage|asyncimagegroup|entity|cite|icon)$/.test(name)) tags.push(name);
+            if (tag.close) {
+              const index = tags.lastIndexOf(name);
+              if (index >= 0 && index === tags.length - 1) {
+                tags.length = index;
+                if (!tags.length && scopeFresh) releaseAfter(tag.end);
+              }
+            } else if (!tag.self && !VOID_TAG.test(name)) {
+              if (!tags.length) scopeFresh = !INLINE_TAG.test(name) && (offset + i === end || (fresh && !line.slice(0, i).trim()));
+              tags.push(name);
+            } else if (!tags.length && (offset + i === end || (fresh && !line.slice(0, i).trim()))) {
+              releaseAfter(tag.end);
+            }
             // Skip the complete token, including any following physical lines.
-            const tokenEnd = tag.end;
-            skipUntil = tokenEnd;
-            i = tokenEnd - offset;
+            skipUntil = tag.end;
+            i = tag.end - offset;
             continue;
           }
           i++;
         }
         // Inline math cannot span physical lines; display math remains buffered.
-        if (math === '\\)') math = null;
-        if (!line.trim() && skipUntil <= offset) {
+        if (math === "\\)") math = null;
+        if (!last && !line.trim() && skipUntil <= offset) {
           // An unmatched backtick is literal once its paragraph ends.
           inline = null;
-          const following = container ? /^(?:[ \t\r]*\n)*([^\n]*)/.exec(text.slice(next))[1] : '';
+          const following = container ? /^(?:[ \t\r]*\n)*([^\n]*)/.exec(text.slice(next))[1] : "";
           const continuation = container && (!following || /^(?:\s|[-+*](?:\s|$)|\d+(?:[.)](?:\s|$)|$)|>)/.test(following));
-          const literalTag = tags.some(name => /^(pre|code|script|style|iframe|svg|object|template)$/.test(name));
-          if (!math && !literalTag && (!container || !continuation)) { end = next; container = false; }
+          if (!math && !tags.length && (!container || !continuation)) { end = next; container = false; listIndent = 0; }
         }
       }
+      prevBlank = !fence && !math && !line.trim();
       offset = next;
     }
     return end;

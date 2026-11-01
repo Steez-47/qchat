@@ -143,16 +143,50 @@ try {
     check('unfinished compound block buffered',await evalJS(`(${plain})===''`));
   }
   await emit('delta','<section><mark>Paired paragraph.\n\nPending'); await sleep(80);
-  check('paragraph mode pairs open tags before their close arrives',await evalJS(`document.querySelector('.turn-content mark')?.textContent.trim()==='Paired paragraph.'`));
+  check('an open tag scope is withheld across its blank line',await evalJS(`(${plain})==='' && !document.querySelector('.turn-content mark')`));
+  await emit('delta','<section><mark>Paired paragraph.\n\nPending</mark></sec'); await sleep(80);
+  check('a split closing tag still withholds the block',await evalJS(`(${plain})===''`));
+  await emit('delta','<section><mark>Paired paragraph.\n\nPending</mark></section>'); await sleep(80);
+  check('a closing tag at the end of the text releases the finished block',await evalJS(`document.querySelector('.turn-content mark')?.textContent==='Paired paragraph.' && (${plain}).endsWith('Pending') && !(${plain}).includes('<')`));
   const openLoop='{#each [{name:"First"},{name:"Second"}] as item}<mark>{item.name}</mark>\n\n';
-  await emit('delta',openLoop); await sleep(80);
-  check('paragraph mode expands an open loop before its close arrives',await evalJS(`Array.from(document.querySelectorAll('.turn-content mark')).map(x=>x.textContent).join(',')==='First,Second'`));
+  const paired='<section><mark>Paired paragraph.\n\nPending</mark></section>\n\n';
+  await emit('delta',paired+openLoop); await sleep(80);
+  check('an open loop stays withheld until its closer',await evalJS(`!Array.from(document.querySelectorAll('.turn-content mark')).some(x=>x.textContent.includes('First'))`));
+  await emit('delta',paired+openLoop+'{/each}'); await sleep(80);
+  check('a loop closer at the end releases the expanded loop',await evalJS(`Array.from(document.querySelectorAll('.turn-content mark')).map(x=>x.textContent.trim()).join('|').endsWith('First|Second')`));
   await emit('delta','Stopped final prose');
   await evalJS(`document.getElementById('btn-send').click()`); await sleep(100);
   check('Stop flushes unfinished prose',await evalJS(`(${plain})==='Stopped final prose'`));
   await begin('paragraph'); await emit('delta','Interrupted final prose');
   await evalJS(`__mock.emit('bridge',{type:'error',id:__mock.last('chat_send').args.id,code:'stream_failed'})`); await sleep(80);
   check('an error flushes the buffered partial reply',await evalJS(`(${plain})==='Interrupted final prose' && document.querySelector('[data-role=assistant]').dataset.status==='error'`));
+  // Every saved style takes the same buffered path: only finished blocks, then the whole final text.
+  for (const style of ['paragraph','word','type','fade','instant']) {
+    await begin(style);
+    await emit('delta','One finished.\n\nTwo unfinished'); await sleep(120);
+    check(style+': only the finished paragraph is shown',await evalJS(`(${plain})==='One finished.'`));
+    await emit('delta','One finished.\n\n<section>Open\n\nscope'); await sleep(80);
+    check(style+': an open tag scope stays withheld',await evalJS(`(${plain})==='One finished.'`));
+    await emit('done','One finished.\n\n<section>Open\n\nscope</section>\n\nFinal tail'); await finishReply();
+    check(style+': final text is flushed whole',await evalJS(`(${plain}).endsWith('Final tail') && (${plain}).includes('scope')`));
+  }
+  await begin('type');
+  await emit('delta','Still composing <section>unfinished');
+  await evalJS(`__mock.emit('bridge',{type:'activity',id:__mock.last('chat_send').args.id,kind:'search',state:'running'})`); await sleep(80);
+  check('tool activity appears immediately while all text stays buffered',await evalJS(`!document.querySelector('.tool-activity').hidden && document.querySelector('.tool-activity-label').textContent==='Searching the web…' && (${plain})===''`));
+  await evalJS(`__mock.emit('bridge',{type:'sources',id:__mock.last('chat_send').args.id,items:[{id:'source1',url:'https://example.com/',title:'Source'}]});__mock.emit('qchat://settings-changed',{...QSettings.settings,animations:'off',streamStyle:'instant'})`); await sleep(80);
+  check('sources and a settings change cannot expose unfinished text',await evalJS(`(${plain})==='' && !document.querySelector('.tool-activity').hidden`));
+  await evalJS(`__mock.emit('bridge',{type:'activity',id:__mock.last('chat_send').args.id,kind:'search',state:'complete'})`); await sleep(80);
+  check('completed tool activity hides without exposing the text tail',await evalJS(`document.querySelector('.tool-activity').hidden && (${plain})===''`));
+  await emit('done','Final **answer**.'); await finishReply();
+  check('completion flushes the latest correction with proper formatting',await evalJS(`document.querySelector('.turn-content strong')?.textContent==='answer' && (${plain})==='Final answer.'`));
+  await cdp('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+  await open('/',{settings:{v:4,animations:'auto',autoDismiss:0,streamStyle:'word'}});
+  await evalJS(`__mock.hold=true`); await send('Reduced motion blocks'); await until(`__mock.last('chat_send')`);
+  await emit('delta','Finished.\n\nUnfinished'); await sleep(80);
+  check('system reduced motion still waits for complete blocks',await evalJS(`!QSettings.motionOn && (${plain})==='Finished.'`));
+  await emit('done','Finished.\n\nFinal tail'); await finishReply();
+  await cdp('Emulation.setEmulatedMedia',{features:[]});
   await begin('paragraph');
   const formatted=['## Streamed formatting','','<box><text>A **complete** paragraph with an <Entity value="inline label"/> and a [link](https://example.com/).</text></box>','','```js','const example = "<Entity value=\"literal\"/>";','```','','| Item | State |','| --- | --- |','| Paragraph | **Ready** |','','$$x^2 = 4$$','',''].join('\n');
   await emit('delta',formatted+'Unfinished next paragraph'); await sleep(100);

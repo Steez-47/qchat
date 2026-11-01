@@ -427,7 +427,7 @@
     text: "paragraphSpacing letterSpacing replyWeight headingScale codeSize codeFont codeWrap userLines userAlign showPrompt linkStyle quoteStyle softEdges scrollbarStyle",
     motion: "enterStyle",
     layout: "tabCount tabStyle showAttach orbStyle sendStyle placeholderText",
-    streaming: "streamStyle streamSpeed followStream streamCaret"
+    streaming: "followStream streamCaret"
   };
   const descriptions = {
     tintSource:["Glass colour source","Use the look or a custom tint"],tintColor:["Custom glass colour","Automatically chooses light or dark ink"],inkBoost:["Secondary text strength","Sharpen quieter text"],
@@ -602,7 +602,6 @@
     dim("showBarAtStartup", !autostartEnabled);
     const noMotion = !QSettings.motionOn;
     dim("tintColor", settings.tintSource !== "custom");
-    dim("streamSpeed", settings.streamStyle === "instant");
     dim("blur", !settings.nativeBlur);
     dim("replyBlur", !settings.replyNativeBlur);
     dim("accentColor", settings.accentSource !== "custom");

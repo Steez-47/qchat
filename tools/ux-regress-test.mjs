@@ -260,7 +260,7 @@ try {
     await send('mirror this reply');
     await waitFor(`__mock.last('chat_send')`);
     await evalJS(`QSettings.apply(document.documentElement,{...QSettings.settings,streamStyle:'fade'})`);
-    const full = 'abcdefghij '.repeat(20);
+    const full = 'A completed paragraph.\n\n'+'abcdefghij '.repeat(20);
     await evalJS(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(full)}})`);
     const growing = await waitFor(`(document.querySelector('#bubble-zone [data-role=assistant] .turn-content')?.textContent||'').length>2`, 3000);
     await evalJS(`document.getElementById('btn-history').click()`);

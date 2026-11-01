@@ -103,7 +103,8 @@ try {
   const seeded = (current, ...recent) => ({ v: 1, current, recent });
 
   await open('/settings.html');
-  check('settings rows cover schema', await evalJS(`Object.keys(QSettings.SCHEMA).every(k=>k==='look'||document.querySelector('.row[data-key="'+k+'"]'))`));
+  check('settings rows cover active schema', await evalJS(`Object.keys(QSettings.SCHEMA).every(k=>['look','streamStyle','streamSpeed'].includes(k)||document.querySelector('.row[data-key="'+k+'"]'))`));
+  check('obsolete streaming controls are hidden while saved choices remain compatible',await evalJS(`!document.querySelector('.row[data-key="streamStyle"],.row[data-key="streamSpeed"]') && QSettings.sanitize({...QSettings.DEFAULTS,streamStyle:'type',streamSpeed:2}).streamStyle==='type'`));
   check('literal glass and guarded replies',await evalJS(`(()=>{QSettings.apply(document.documentElement,{...QSettings.DEFAULTS,glassOpacity:20,replyOpacity:20});const s=document.documentElement.style;return s.getPropertyValue('--glass-a')==='0.200' && +s.getPropertyValue('--reply-a')>.2})()`));
   check('unguarded reply opacity',await evalJS(`(()=>{QSettings.apply(document.documentElement,{...QSettings.DEFAULTS,replyOpacity:20,readableGuard:false});return document.documentElement.style.getPropertyValue('--reply-a')==='0.200'})()`));
   check('chat settings grouped and independent',await evalJS(`['replyOpacity','replyNativeBlur','replyBlur','replyCorners','replyBorder','replyWidth','replyPadding','bubbleGap','maxHeightPct'].every(k=>document.querySelector('#section-chatpanel .row[data-key="'+k+'"]'))`));
