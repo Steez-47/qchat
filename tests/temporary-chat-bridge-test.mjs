@@ -46,6 +46,24 @@ try {
   await check(`${provider} late attachment mode loss keeps temporary error`, `(async()=>{const p=__qchat.send({id:'file-loss',prompt:'synthetic',attachmentCount:1,temporary:true});await new Promise(r=>setTimeout(r,30));${lose};await p;await new Promise(r=>setTimeout(r,250));const ok=__clicks===1&&__events.some(e=>e.id==='file-loss'&&e.code==='temporary_unavailable');${restore};return ok})()`);
   // Start a fresh page after a simulated uncleared provider attachment.
   await ev(`window.__qchat.cancelAttachmentSelection(0)`);
+  if(provider==='chatgpt'){
+   // After the first message ChatGPT swaps "Turn off temporary chat" for a read-only label,
+   // and the page may move to /c/<id>. Later turns in that same chat must still send.
+   const turn='document.body.insertAdjacentHTML("beforeend",\'<div class="fixture-turn" data-message-author-role="user">synthetic</div>\')';
+   const started=`(()=>{${turn};document.querySelector('#temp-control').hidden=true})()`;
+   const clean="document.querySelectorAll('.fixture-turn,.fixture-offer').forEach(n=>n.remove());document.querySelector('#temp-control').hidden=false;history.replaceState({},'','/?temporary-chat=true')";
+   // Earlier checks leave a normal-chat offering on the page; this chat starts temporary.
+   await ev(`(async()=>{document.querySelectorAll('button[aria-label="Temporary chat"]').forEach(n=>n.remove());${clean};await __qchat.newChat();history.replaceState({},'','/?temporary-chat=true');__events=[];__clicks=0;document.querySelector('#fixture-send').disabled=false})()`);
+   await check('chatgpt read-only label without a confirmed start is not confirmation', `(()=>{${started};const ok=!__qchat.temporaryReady();${clean};return ok})()`);
+   await check('chatgpt first temporary turn sends', `(async()=>{await __qchat.send({id:'turn1',prompt:'synthetic one',temporary:true});const ok=__clicks===1;history.replaceState({},'','/c/temp-conv-1');${started};await new Promise(r=>setTimeout(r,250));__qchat.stop();await new Promise(r=>setTimeout(r,150));return ok})()`);
+   await check('chatgpt started temporary chat stays confirmed on its conversation URL', '__qchat.temporaryReady()===true');
+   await check('chatgpt started temporary chat stays confirmed on the temporary URL', `(()=>{history.replaceState({},'','/?temporary-chat=true');const ok=__qchat.temporaryReady();history.replaceState({},'','/c/temp-conv-1');return ok})()`);
+   await check('chatgpt second temporary turn sends', `(async()=>{await __qchat.send({id:'turn2',prompt:'synthetic two',temporary:true});const ok=__clicks===2&&!__events.some(e=>e.id==='turn2'&&e.code==='temporary_unavailable');__qchat.stop();await new Promise(r=>setTimeout(r,150));return ok})()`);
+   await check('chatgpt another conversation is not confirmation', `(()=>{history.replaceState({},'','/c/other-conv-2');const ok=!__qchat.temporaryReady();history.replaceState({},'','/c/temp-conv-1');return ok})()`);
+   await check('chatgpt plain URL is not confirmation', `(()=>{history.replaceState({},'','/');const ok=!__qchat.temporaryReady();history.replaceState({},'','/c/temp-conv-1');return ok})()`);
+   await check('chatgpt normal-chat offering ends confirmation', `(()=>{document.body.insertAdjacentHTML('beforeend','<button class="fixture-offer" aria-label="Temporary chat">Temporary chat</button>');const ok=!__qchat.temporaryReady();document.querySelector('.fixture-offer').remove();return ok})()`);
+   await check('chatgpt new chat drops the started temporary chat', `(async()=>{document.querySelectorAll('.fixture-turn').forEach(n=>n.remove());await __qchat.newChat();history.replaceState({},'','/c/temp-conv-1');${started};const ok=!__qchat.temporaryReady();${clean};return ok})()`);
+  }
   if(provider==='gemini'){
    await check('gemini hidden host rejects',`(()=>{const h=document.querySelector('chat-window');h.hidden=true;const ok=!__qchat.temporaryReady();h.hidden=false;return ok})()`);
    await check('gemini guest rejects',`(()=>{const a=document.querySelector('[aria-label^="Google Account"]');a.hidden=true;const ok=!__qchat.temporaryReady();a.hidden=false;return ok})()`);

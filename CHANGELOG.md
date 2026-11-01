@@ -9,6 +9,7 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 - Starting a new ChatGPT chat makes sure the page has really left the old conversation, so the next message can't land in an old chat.
 - Replies whose text ChatGPT keeps in an out-of-view copy show as they stream instead of needing a refresh.
 - An image send that times out says what it was waiting for.
+- A second message in a ChatGPT temporary chat no longer fails with "Temporary chat could not be confirmed". ChatGPT hides its temporary toggle once the chat has started, so QChat now remembers that the chat started in temporary mode.
 
 ## [1.5.2] - 2026-11-02
 
