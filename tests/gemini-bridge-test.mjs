@@ -556,6 +556,20 @@ const gland = (b, at, { reset = false, remount = false, settle = 0 } = {}) => b.
     const parent = b.composer.parentElement; b.composer.remove(); parent.append(fresh); b.document.execCommand('selectAll', false);
   }
 }, at);
+test('a Gemini text-only send removes attachments left in the composer and never sends them', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  const stale = makeEl('button', { 'aria-label': 'Remove file stale.png' }); stale.onClick = () => stale.remove(); b.body.append(stale);
+  const sent = b.api.send({ id: 'leftover', prompt: GPROMPT }); await b.tick(3000); await sent;
+  assert.deepEqual(submissions, [{ text: GPROMPT, attachments: 0 }]);
+  await b.api.stop(); await b.tick(100);
+});
+test('a Gemini text-only send refuses leftover attachments that will not clear', async () => {
+  const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
+  b.body.append(makeEl('button', { 'aria-label': 'Remove file stuck.png' }));
+  const sent = b.api.send({ id: 'stuck', prompt: GPROMPT }); await b.tick(5000); await sent;
+  assert.deepEqual(submissions, []);
+  assert.equal(b.events.find(event => event.id === 'stuck' && event.type === 'error')?.code, 'attachment_pending');
+});
 test("Gemini's close attachment button counts as a ready attachment", async () => {
   const b = createBrowser({ loggedIn: true }); const submissions = submissionFixture(b);
   b.later(() => b.body.append(makeEl('button', { 'aria-label': 'close attachment' })), 500);

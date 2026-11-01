@@ -7,7 +7,7 @@ const source = readFileSync(new URL('../src-tauri/bridge/chatgpt-bridge.js', imp
 const drain = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 const response = (body, ok = true) => ({ ok, json: async () => body });
 
-function browser({ ready = false, focused = true, composer = 'legacy', hidden = false, prepareBeforeSend = false } = {}) {
+function browser({ ready = false, focused = true, composer = 'legacy', hidden = false, prepareBeforeSend = false, stuckRoute = false } = {}) {
   let now = 0, nextTimer = 0, sendClicks = 0;
   const timers = new Map(), requests = [], events = [], replies = [];
   const navigations = [];
@@ -16,7 +16,7 @@ function browser({ ready = false, focused = true, composer = 'legacy', hidden = 
   location.assign = navigate;
   const composerSelector = composer === 'semantic' ? 'form .ProseMirror[contenteditable="true"][role="textbox"]'
     : composer === 'unrelated' ? '[contenteditable="true"]' : '#prompt-textarea';
-  const editable = { closest: () => null, getClientRects: () => hidden ? [] : [{}], focus() {} };
+  const editable = { innerText: '', closest: () => null, getClientRects: () => hidden ? [] : [{}], focus() {} };
   const sendButton = { disabled: false, getAttribute: () => null, click() {
     sendClicks++;
     window.fetch('/backend-api/f/conversation', { method: 'POST' });
@@ -26,7 +26,9 @@ function browser({ ready = false, focused = true, composer = 'legacy', hidden = 
     querySelector: selector => ready && selector === composerSelector ? editable
       : prepareBeforeSend && now >= 120 && selector === '[data-testid="send-button"]' ? sendButton : null,
     querySelectorAll: selector => ready && selector === composerSelector ? [editable] : [],
-    execCommand(command) {
+    execCommand(command, _, text) {
+      // Like the real editor, the typed prompt is what the composer then holds.
+      if (command === 'insertText') editable.innerText = text;
       if (prepareBeforeSend && command === 'insertText') window.fetch('/backend-api/f/conversation/prepare', { method: 'POST' });
       return true;
     }
@@ -62,7 +64,8 @@ function browser({ ready = false, focused = true, composer = 'legacy', hidden = 
   };
   window.top = window;
   const context = vm.createContext({
-    history: { pushState: (_, __, path) => navigate(path) }, PopStateEvent: class {},
+    // A stuck route is a site router that ignores the in-page route change.
+    history: { pushState: (_, __, path) => { if (!stuckRoute) navigate(path); } }, PopStateEvent: class {},
     window, document, location, URL, AbortController, console, TextDecoder,
     MouseEvent: class { constructor(type, options) {this.type=type;Object.assign(this,options);} },
     PointerEvent: class { constructor(type, options) {this.type=type;Object.assign(this,options);} },
@@ -78,6 +81,7 @@ function browser({ ready = false, focused = true, composer = 'legacy', hidden = 
     listModels: () => window.__qchat.listModels(),
     chooseModel: id => window.__qchat.chooseModel(id),
     openConversation: id => window.__qchat.openConversation(id),
+    newChat: options => window.__qchat.newChat(options),
     reply(body, ok = true) { replies.push(async () => response(body, ok)); },
     fail() { replies.push(async () => { throw new Error('Offline'); }); },
     hang() { replies.push(() => new Promise(() => {})); },
@@ -226,6 +230,18 @@ test('openConversation rejects invalid ids without navigation', async () => {
 test('openConversation on the same route only refreshes status', async () => {
   const b = browser({ ready: true }); b.navigate('/c/abcdefgh'); b.reply({ user: {} }); await b.status();
   await b.openConversation('abcdefgh'); assert.deepEqual(b.navigations, []); assert.equal(b.last().ready, true);
+});
+test('newChat leaves the old conversation before reporting the page ready', async () => {
+  const b = browser({ ready: true }); b.navigate('/c/oldconversation'); b.reply({ user: {} }); await b.status();
+  b.reply({ user: {} });
+  const pending = b.newChat(); await b.tick(2000); await pending;
+  assert.deepEqual(b.navigations, ['/']);
+  assert.equal(new URL(b.last().url).pathname, '/');
+});
+test('newChat reloads a fresh page instead of leaving the next send in the old conversation', async () => {
+  const b = browser({ ready: true, stuckRoute: true }); b.navigate('/c/oldconversation'); b.reply({ user: {} }); await b.status();
+  const pending = b.newChat(); await b.tick(2000); await pending;
+  assert.deepEqual(b.navigations, ['https://chatgpt.com/']);
 });
 
 test('model list and choice close the synthetic menu without sending', async () => {
