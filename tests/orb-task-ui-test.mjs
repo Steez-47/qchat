@@ -212,15 +212,26 @@ try {
   await sleep(1500);
   await evalJS(`__mock.hold=false`);
 
-  // ---- idle folding: ordinary replies hold the bar open, Work replies do not
+  // ---- idle folding: any reply may fold while waiting, words on screen hold an ordinary reply open
   await open1('/?mock=signedin', { idleCollapse: 1 });
   await evalJS(`__mock.hold=true`);
   await said('ordinary reply');
   await sleep(200);
   await blur();
-  await sleep(2600);
-  check('an ordinary reply in flight never auto-folds', (await state()) === 'open');
+  check('an ordinary reply still waiting may fold from idle', await waitFor(`document.documentElement.dataset.collapse==='closed'`, 4000));
+  check('and the orb shows the wait', (await task()) === 'working' && await evalJS(`${q('#bar')}.title==='Waiting for a reply…'`));
+  await shot('orb-working-chat-dark.png');
   await evalJS(`(()=>{const r=__mock.release;__mock.hold=false;r&&r()})()`);
+  check('an ordinary reply finishing folded ends ready', await waitFor(`document.documentElement.dataset.orbTask==='ready'`, 8000));
+  await clickCircle(); await waitFor(`!document.documentElement.dataset.collapse`, 3000);
+  check('the ordinary reply is complete after opening', (await tokens()).endsWith('omega'), await tokens());
+  await evalJS(`__mock.interval=400;__mock.reply=${JSON.stringify(LONG)}`);
+  await said('reply being read');
+  await waitFor(`${LAST}&&${LAST}.textContent.includes('word')`, 4000);
+  await blur();
+  await sleep(2600);
+  check('an ordinary reply with words on screen never auto-folds', (await state()) === 'open' && await streaming());
+  await evalJS(`${q('#btn-send')}.click()`);
   await waitFor(`!document.querySelector('[data-status=streaming]')`, 8000);
   await open1('/?mock=signedin', { idleCollapse: 1 }, { v: 1, current: { key: 'w', provider: 'chatgpt', title: '', mode: 'work' }, recent: [] });
   check('the Work chat is restored', await evalJS(`${q('.reasoning-label')}.textContent==='Work'`));

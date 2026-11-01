@@ -479,13 +479,13 @@ function createGemini({ pathname = '/app', ready = true } = {}) {
 const PROVIDERS = [
   {
     id: 'chatgpt', work: 'Work', fallback: 'Work',
-    message: "ChatGPT Work isn't available on this account right now.",
+    message: "Couldn't confirm Work mode in ChatGPT. Try again or open ChatGPT to check the switch.",
     attention: 'ChatGPT Work is waiting for your approval. Open the chat in ChatGPT to continue.',
     create: createChatgpt, source: chatgptSource
   },
   {
     id: 'gemini', work: 'Task', fallback: 'Task',
-    message: "Gemini Task isn't available on this account right now.",
+    message: "Couldn't confirm Task mode in Gemini. Try again or open Gemini to check the switch.",
     attention: 'Gemini Task is waiting for your approval. Open the chat in Gemini to continue.',
     create: createGemini, source: geminiSource
   }
@@ -632,6 +632,48 @@ for (const p of PROVIDERS) {
       ['chat', 'Chat', false], ['work', p.work, true]
     ]);
     assert.deepEqual(mode.status.clicks, ['work']);
+  });
+
+  test(`${p.id} mode labels ignore decorative icons`, async () => {
+    const b = p.create();
+    const mode = addModeSwitch(b, { workLabel: p.work });
+    mode.chat.childNodes.unshift(makeEl('mat-icon', {}, ['chat_bubble\n']));
+    mode.work.childNodes.unshift(makeEl('mat-icon', {}, ['task_alt\n']));
+    b.api.listModes();
+    assert.deepEqual(plain(lastOf(b, 'modes')).modes.map(m => m.label), ['Chat', p.work]);
+    const pending = b.api.setMode('work');
+    await b.tick(1000); await pending;
+    assert.deepEqual(mode.status.clicks, ['work']);
+    assert.equal(lastOf(b, 'modes').modes.find(m => m.selected).id, 'work');
+  });
+
+  for (const tag of ['div', 'a']) test(`${p.id} mode switch supports ${tag === 'div' ? 'ARIA buttons' : 'plain links'}`, async () => {
+    const b = p.create();
+    const mode = addModeSwitch(b, { workLabel: p.work });
+    for (const [node, id] of [[mode.chat, 'chat'], [mode.work, 'work']]) {
+      node.tagName = tag.toUpperCase();
+      node.removeAttribute('role');
+      if (tag === 'div') node.setAttribute('role', 'button');
+      else node.setAttribute('href', `/?mode=${id}`);
+    }
+    b.api.listModes();
+    assert.equal(lastOf(b, 'modes').available, true);
+    const pending = b.api.setMode('work');
+    await b.tick(1000); await pending;
+    assert.deepEqual(mode.status.clicks, ['work']);
+    assert.equal(lastOf(b, 'modes').modes.find(m => m.selected).id, 'work');
+  });
+
+  test(`${p.id} selection retries a switch that appears after the first read`, async () => {
+    const b = p.create();
+    b.api.listModes();
+    assert.equal(lastOf(b, 'modes').available, false);
+    const pending = b.api.setMode('work');
+    await b.tick(500);
+    const mode = addModeSwitch(b, { workLabel: p.work });
+    await b.tick(1000); await pending;
+    assert.deepEqual(mode.status.clicks, ['work']);
+    assert.equal(lastOf(b, 'modes').modes.find(m => m.selected).id, 'work');
   });
 
   test(`${p.id} a history or message item titled like the work mode never matches`, () => {

@@ -769,7 +769,7 @@
       if (pending !== job.prompt) return;
       if (job.attachmentCount > 0) {
         const files = attachmentRemovers(job.attachmentNames, true);
-        if (uploads || document.querySelector('input-container [role="progressbar"], input-area-v2 [role="progressbar"], mat-progress-spinner') || controls.length < job.attachmentCount || files.length !== controls.length || files.some(node => !controls.includes(node))) return;
+        if (uploadBusy() || controls.length < job.attachmentCount || files.length !== controls.length || files.some(node => !controls.includes(node))) return;
       } else if (!pending) return;
       const button = find('send');
       if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') button.click();
@@ -921,12 +921,14 @@
   }
 
   // Chat and Task are read from the page's own switch. Only that exact control is clicked.
-  const MODE_MESSAGE = "Gemini Task isn't available on this account right now.";
-  const modeSelector = '[role="tab"], [role="radio"], [role="menuitemradio"], button, a[role]';
+  const MODE_MESSAGE = "Couldn't confirm Task mode in Gemini. Try again or open Gemini to check the switch.";
+  const modeSelector = '[role="tab"], [role="radio"], [role="menuitemradio"], [role="button"], button, a[role], a[href]';
   const modeExcluded = '[data-message-author-role], [data-message-role], user-query, model-response, nav a[href*="/c/"], [data-testid^="history-item"], conversations-list, .conversation, [contenteditable="true"]';
   const modeShown = node => shown(node) && !node.closest?.(modeExcluded);
   const modeName = node => {
-    const text = String(node.innerText ?? node.textContent ?? '').split('\n').map(line => line.trim()).find(Boolean) || '';
+    const copy = node.cloneNode(true);
+    for (const icon of copy.querySelectorAll('svg, mat-icon, [aria-hidden="true"], [hidden]')) icon.remove();
+    const text = String(copy.innerText ?? copy.textContent ?? '').split('\n').map(line => line.trim()).find(Boolean) || '';
     const label = String(node.getAttribute?.('aria-label') || '').split('\n')[0].trim();
     return { text, label };
   };
@@ -1042,6 +1044,11 @@
     !!button.getClientRects?.().length && !button.closest?.('[hidden], [aria-hidden="true"]') &&
     /^(?:approve|allow|confirm|continue|review)\b/i.test(
       String(button.innerText ?? button.textContent ?? button.getAttribute?.('aria-label') ?? '').trim().split('\n')[0].trim()));
+
+  // Only a visible spinner in the composer means an upload. The side panel keeps a hidden spinner of its own for the chat list.
+  function uploadBusy() {
+    return uploads > 0 || [...document.querySelectorAll('input-container [role="progressbar"], input-area-v2 [role="progressbar"], input-container mat-progress-spinner, input-area-v2 mat-progress-spinner, input-container mat-spinner, input-area-v2 mat-spinner')].some(shown);
+  }
 
   function attachmentRemovers(names = [], includeDisabled = false) {
     return [...document.querySelectorAll('button')].filter(node => {
@@ -1198,8 +1205,10 @@
         if (!response.ok) throw new Error('Image unavailable');
         const blob = await response.blob();
         if (!/^image\/(png|jpeg|gif|webp|avif|bmp)$/i.test(blob.type) || blob.size > 32 * 1024 * 1024) throw new Error('Unsupported image');
-        resolved = URL.createObjectURL(blob);
-        entry.url = resolved;
+        // Each request gets its own short-lived copy, so a long chat doesn't pile up images in memory.
+        const local = URL.createObjectURL(blob);
+        setTimeout(() => URL.revokeObjectURL(local), 60000);
+        resolved = local;
       } finally { clearTimeout(timer); }
     }
     return { url: resolved, kind: entry.kind, name: entry.name, ...(entry.mime ? { mime: entry.mime } : {}) };
@@ -1298,7 +1307,7 @@
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           // Recheck the complete attachment batch until Send, then fill the current composer.
           if (attachmentCount > 0) {
-            const pending = uploads > 0 || !!document.querySelector('input-container [role="progressbar"], input-area-v2 [role="progressbar"], mat-progress-spinner');
+            const pending = uploadBusy();
             const present = attachmentRemovers(job.attachmentNames, true).length >= attachmentCount;
             if (pending || !present) uploadQuietAt = Date.now();
             if (pending || !present || Date.now() - uploadQuietAt < 800) { await sleep(100); continue; }
@@ -1474,6 +1483,7 @@
       currentSetupId = options.temporary ? options.setupId || null : null;
       clearTemporaryStage();
       await window.__qchat.stop();
+
       media.clear();
       downloadActivation = null;
       loginCache = detectLoggedIn();

@@ -174,6 +174,7 @@ try {
   ]) await emit(junk);
   await sleep(40);
   check('junk and other chats\' events leave the turn alone', !(await replyText()).includes('WRONG') && problems.length === 0, `${await replyText()} ${problems.join(' | ').slice(0, 300)}`);
+  check('an error naming a turn that has gone shows no banner', !/WRONG ERROR/.test(await evalJS(`document.body.textContent`)));
   await emit({ type: 'delta', id: turn, text: 'Longer text so far.\n\n' });
   await emit({ type: 'delta', id: turn, text: 'Short' });
   await sleep(30);

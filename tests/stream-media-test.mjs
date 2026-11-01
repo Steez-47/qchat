@@ -380,6 +380,11 @@ test('completed signed-in DIL DOM replaces a stale parsed prefix and scopes medi
   const id = b.events.find(event => event.type === 'media').items[0].id;
   await b.api.activateMedia(id); assert.equal(clicks, 1);
 });
+test('a dollar pattern in an attachment label stays literal', async () => {
+  const b = browser({ chunks: [sse(message(['See [costs $& more](sandbox:/mnt/data/costs.csv) here'])), sse('[DONE]')].map(text => encoder.encode(text)) });
+  await b.send(); await b.tick(1500);
+  assert.match(done(b)?.text, /^See \[costs \$& more\]\(qchat-media:[^)]+\) here$/);
+});
 test('DIL text mounting after the terminal packet is allowed to settle fully', async () => {
   const b = browser({ chunks: [sse(message(['prefix'])), sse('[DONE]')].map(text => encoder.encode(text)), chunkDelays: [0, 200] });
   await b.send(); await b.tick(100); b.dil('prefix still rendering');
