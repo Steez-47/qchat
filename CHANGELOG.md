@@ -4,6 +4,8 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-01
+
 ### Added
 - ChatGPT Work and Gemini Task as a mode for each chat, for accounts that have them. If the site doesn't offer the mode, QChat says so and doesn't send the prompt as a normal chat.
 - Minimize while waiting: click the orb or the minimize button during a reply. The folded orb shows a spinning ring, then turns green with a "1" when the reply is ready, or shows a "!" if something needs you.
@@ -11,6 +13,11 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 ### Changed
 - The model and provider menus are now one compact picker above a small pill in the bar.
 - Selected text now shows as a one-line quote above the question, in the composer and in sent messages.
+
+### Fixed
+- Sending an image no longer hangs, and its text now goes with it, on ChatGPT and Gemini.
+- A cancelled send no longer leaves an attachment behind for the next message.
+- Gemini's thinking levels no longer appear as models in the picker.
 
 ## [1.4.3] - 2026-11-01
 
@@ -130,5 +137,6 @@ First beta: Snapshot attachments, per-chat reasoning, file attachments and media
 [0.1.2]: https://github.com/Steez-47/qchat/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Steez-47/qchat/releases/tag/v0.1.1
 
+[1.5.0]: https://github.com/Steez-47/qchat/releases/tag/v1.5.0
 [1.4.2]: https://github.com/Steez-47/qchat/releases/tag/v1.4.2
 [1.4.1]: https://github.com/Steez-47/qchat/releases/tag/v1.4.1
