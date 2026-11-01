@@ -361,6 +361,7 @@
           () => rangeRow({ key: "autoDismiss", label: "Dismiss replies automatically", format: seconds }),
           () => switchRow({ key: "alwaysOnTop", label: "Always on top" }),
           () => switchRow({ key: "hideOnBlur", label: "Hide when focus is lost" }),
+          () => rangeRow({ key: "idleCollapse", label: "Fold into the orb when idle", hint: "After you click away. Click the orb to open it again", format: seconds }),
           () => switchRow({ key: "rememberPosition", label: "Remember window position" })
         ],
         [() => actionRow("Window position", "Puts the bar back at the bottom centre of your screen", actionButton("btn-reset-position", "Reset position", () => invoke("reset_position").catch(() => {})))]

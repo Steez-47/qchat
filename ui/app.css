@@ -960,3 +960,18 @@ select.qinteractive-control option { background: #252b35; color: #eee; }
 .rename-error { flex-basis: 100%; padding: 0 6px; color: var(--critical-text); font-size: 12px; }
 .tab:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
 .tab[aria-disabled="true"] { opacity: 0.5; }
+
+/* ---------------------------------------------------------------------------
+   Idle collapse: out of focus for a while, the stack sinks into the bar and the
+   bar closes into its orb. collapse.js animates in and out of this resting state.
+   Folded parts keep their layout, so nothing reflows and the window never resizes;
+   hidden, they also drop out of hit-testing and the native blur.
+   --------------------------------------------------------------------------- */
+html[data-collapse] .bar { overflow: clip; }
+html[data-collapse="closed"] .bar { width: var(--bar-h); height: var(--bar-h); min-height: 0; border-radius: 50%; cursor: pointer; }
+html[data-collapse="closed"] .bar > :not(.orb, .sr-only),
+html[data-collapse="closed"] .stack > :not(.composer) { visibility: hidden; opacity: 0; }
+html[data-collapse="closed"] .slash-menu { display: none; }
+html[data-collapse="closed"] .orb { cursor: pointer; }
+/* Folded, the orb is all that is left, so it shows even in the "hidden" orb style. */
+html[data-collapse][data-orbstyle="hidden"] .orb { width: 18px; margin: calc((var(--control) - 18px) / 2); background: linear-gradient(145deg, var(--orb-1), var(--orb-3)); }

@@ -137,6 +137,7 @@
     selectionClipboard: bool(true),
     alwaysOnTop: bool(true),
     hideOnBlur: bool(false),
+    idleCollapse: range(5, 0, 60, 1, "s"),
     sendKey: choice("enter", ["enter", "ctrl"]),
     defaultProvider: choice("chatgpt", ["chatgpt", "gemini"]), showBarAtStartup: bool(false),
     defaultReasoning: choice("medium", ["low", "medium", "high"]),
@@ -146,7 +147,7 @@
   };
 
   const DEFAULTS = Object.freeze(Object.fromEntries(Object.entries(SCHEMA).map(([k, v]) => [k, v.def])));
-  const APPEARANCE_KEYS = Object.keys(SCHEMA).filter(k => !["defaultProvider","showBarAtStartup","rememberPosition","selectionClipboard","alwaysOnTop","hideOnBlur","sendKey","defaultReasoning","autoDismiss","keepHistory"].includes(k));
+  const APPEARANCE_KEYS = Object.keys(SCHEMA).filter(k => !["defaultProvider","showBarAtStartup","rememberPosition","selectionClipboard","alwaysOnTop","hideOnBlur","idleCollapse","sendKey","defaultReasoning","autoDismiss","keepHistory"].includes(k));
   const PRESETS = [
     ["default","Default","Clear glass",{}],
     ["reader","Reader","Wide, generous serif",{replyWidth:860,textSize:18,fontFamily:"serif",replyOpacity:100,paragraphSpacing:1.4}],

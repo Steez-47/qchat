@@ -1821,6 +1821,9 @@
     sizesQueued = true;
     nextFrame(() => {
       sizesQueued = false;
+      // The reply's height budget follows the bar's. Folding must not spend it, or the reply
+      // would change height behind the fold and again as it opens. Opening settles it once.
+      if (document.documentElement.dataset.collapse) return;
       updateBubbleMax();
       if (historyOpen) syncHistoryHeight();
       const entry = responseEntry();
@@ -1863,6 +1866,7 @@
   }
 
   function fitNow() {
+    if (document.documentElement.dataset.collapse) return;
     const want = wantedSize();
     const entry = responseEntry();
     const growing = !historyOpen && isStreaming() && entry && !entry.row.hasAttribute("data-capped");
@@ -2406,6 +2410,8 @@
   let promptMeasure;
   function autoResizePrompt() {
     const input = el.promptInput;
+    // Folded, the composer is only as wide as the orb. Expanding measures it again.
+    if (/^clos/.test(document.documentElement.dataset.collapse || "")) { updateComposerMode(); return; }
     if (!promptMeasure) {
       promptMeasure = document.createElement("textarea");
       promptMeasure.className = "bar-input prompt-measure";
@@ -3843,6 +3849,7 @@
     updateIdleChips();
     autoResizePrompt();
     if (!isBusy() && responseEntry()) armAutoDismiss();
+    collapse.wake();
     queueSizes();
   }
 
@@ -3985,8 +3992,9 @@
 
   function openCommandMenu() { commandMenu = true; updateSlashMenu(); el.promptInput.focus(); }
   let orbDown = null, orbDragged = false;
+  const dragWindow = () => window.__TAURI__.window?.getCurrentWindow().startDragging().catch(() => {});
   el.orb.addEventListener("pointerdown", e => { if (e.button !== 0) return; orbDown = [e.clientX, e.clientY]; orbDragged = false; el.orb.setPointerCapture?.(e.pointerId); });
-  el.orb.addEventListener("pointermove", e => { if (orbDown && !orbDragged && Math.hypot(e.clientX-orbDown[0], e.clientY-orbDown[1]) >= 4) { orbDragged = true; window.__TAURI__.window?.getCurrentWindow().startDragging().catch(() => {}); } });
+  el.orb.addEventListener("pointermove", e => { if (orbDown && !orbDragged && Math.hypot(e.clientX-orbDown[0], e.clientY-orbDown[1]) >= 4) { orbDragged = true; dragWindow(); } });
   el.orb.addEventListener("pointerup", () => { orbDown = null; });
   el.orb.addEventListener("pointercancel", () => { orbDown = null; });
   document.addEventListener("pointerdown", e => { if (!el.slashMenu.contains(e.target) && e.target !== el.promptInput) closeSlashMenu(); });
@@ -4036,6 +4044,26 @@
   el.btnSnapshot.addEventListener("click", () => { void captureSnapshot(); });
   el.attachmentInput.addEventListener("cancel", () => { filePickerOpen = false; });
   el.attachmentInput.addEventListener("change", () => { filePickerOpen = false; addFiles(el.attachmentInput.files); el.attachmentInput.value = ""; updateIdleChips(); });
+
+  // Idle collapse: out of focus for a few seconds, the bar folds into its orb (collapse.js).
+  let windowHidden = false;
+  let settingsOpen = false;
+  const collapse = window.QCollapse.create({
+    stack: el.stack, bar: el.bar, orb: el.orb,
+    // Hide-on-blur already takes the window away, and a hidden window has nothing to fold.
+    seconds: () => (QSettings.settings.hideOnBlur || windowHidden ? 0 : QSettings.settings.idleCollapse),
+    // The settings window previews on the live bar, so it never folds while that is open.
+    blocked: () => isBusy() || filePickerOpen || snapshotCapturing || settingsOpen || document.visibilityState === "hidden",
+    motion: () => QSettings.motionOn,
+    timings: () => QSettings.timings,
+    drag: dragWindow,
+    onCollapse: () => closeSlashMenu(),
+    onExpand: (focus) => {
+      autoResizePrompt();
+      if (focus) el.promptInput.focus({ preventScroll: true });
+    },
+    onOpened: () => queueSizes()
+  });
   function clipboardFiles(data) {
     const files = Array.from(data?.files || []);
     return files.length ? files : Array.from(data?.items || [])
@@ -4236,6 +4264,7 @@
   let blurTimer = null;
   window.addEventListener("blur", () => {
     document.documentElement.classList.add("inactive");
+    collapse.blur();
     if (!QSettings.settings.hideOnBlur) return;
     clearTimeout(blurTimer);
     blurTimer = setTimeout(() => {
@@ -4248,6 +4277,7 @@
     document.documentElement.classList.remove("inactive");
     filePickerOpen = false;
     clearTimeout(blurTimer);
+    collapse.focus();
   });
   window.addEventListener("resize", () => queueSizes());
 
@@ -4407,6 +4437,7 @@
 
   listen("qchat://selection", ({ payload }) => {
     if (typeof payload !== "string" || !payload.trim()) return;
+    collapse.expand(false);
     chats.current.selectionTexts.push(payload);
     chats.current.draft = draftValue();
     hideGlobalError();
@@ -4417,7 +4448,9 @@
     queueSizes();
   });
   listen("qchat://selection-error", ({ payload }) => showGlobalError("selection_failed", typeof payload === "string" ? payload : "Could not copy the selection. Try selecting the text again."));
+  listen("qchat://hidden", () => { windowHidden = true; collapse.reset(); });
   listen("qchat://shown", () => {
+    windowHidden = false;
     el.promptInput.focus();
     refreshTheme();
     renderTabs();
@@ -4432,8 +4465,8 @@
   });
 
   listen("qchat://new-chat", () => startNewChat(true));
-  listen("qchat://settings-closed", () => el.promptInput.focus());
-  listen("qchat://settings-focus", () => { settingsFocusAt = Date.now(); clearTimeout(blurTimer); });
+  listen("qchat://settings-closed", () => { settingsOpen = false; collapse.wake(); el.promptInput.focus(); });
+  listen("qchat://settings-focus", () => { settingsOpen = true; settingsFocusAt = Date.now(); clearTimeout(blurTimer); });
   listen("qchat://settings-changed", ({ payload }) => { receiveSettings(payload); refreshTheme(); });
   listen("qchat://clear-chats", () => clearRecentChats());
 
