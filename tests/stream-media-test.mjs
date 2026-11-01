@@ -857,7 +857,8 @@ test('unsafe protocols, hosts and non-raster data are visible fallback files wit
 });
 test('attachmentInput prefers generic file input and never clicks a native picker', async () => {
   const b = browser(); b.input('image/*'); const generic = b.input();
-  const selector = await b.api.attachmentInput();
+  const pending = b.api.attachmentInput(); await b.tick(500);
+  const selector = await pending;
   assert.match(selector, /^input\[type="file"\]\[data-qchat-file-input="qchat-file-input-/);
   assert.ok(generic.getAttribute('data-qchat-file-input')); assert.equal(b.pickerClicks, 0);
   const menu = browser(); menu.openAttachments(); assert.match(await menu.api.attachmentInput(), /qchat-file-input/); assert.equal(menu.pickerClicks, 0);
@@ -1069,6 +1070,29 @@ test('screenshot-only Send waits for the delayed attachment and submits once', a
   await b.tick(2400); assert.equal(b.clicks, 0);
   await b.tick(2500); await sent;
   assert.deepEqual(b.submissions, [{ text: '', attachments: 1 }]); assert.equal(done(b)?.text, 'seen');
+});
+test('a text-only send removes attachments left in the composer and never sends them', async () => {
+  const b = browser({ data: sse(message(['just text']), '[DONE]') });
+  b.pendingAttachment('stale.png'); b.pendingAttachment('older.png'); b.pending(false);
+  const sent = b.send({ prompt: PROMPT }); await b.tick(1500); await sent;
+  assert.equal(b.attachmentCount, 0);
+  assert.deepEqual(b.submissions, [{ text: PROMPT, attachments: 0 }]); assert.equal(done(b)?.text, 'just text');
+});
+test('a text-only send refuses leftover attachments that will not clear', async () => {
+  const b = browser();
+  const stuck = b.pendingAttachment('stale.png'); stuck.click = () => {}; b.pending(false);
+  const sent = b.send({ prompt: PROMPT }); await b.tick(5000); await sent;
+  assert.equal(b.clicks, 0); assert.equal(terminal(b)[0]?.code, 'attachment_pending');
+});
+test('new files never join attachments left behind by an earlier send', async () => {
+  const b = browser();
+  b.pendingAttachment('stale.png'); b.pending(false); b.input();
+  const pending = b.api.attachmentInput(); await b.tick(500);
+  const selector = await pending;
+  assert.match(selector, /data-qchat-file-input/); assert.equal(b.attachmentCount, 0);
+  const stuck = b.pendingAttachment('stuck.png'); stuck.click = () => {}; b.pending(false);
+  const refused = b.api.attachmentInput(); await b.tick(3000);
+  await assert.rejects(refused, /attachment_pending/);
 });
 test('an attachment that never registers fails without submitting text alone', async () => {
   const b = browser();

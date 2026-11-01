@@ -4,6 +4,12 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+### Fixed
+- A text message no longer sends images left behind by an earlier image send that never went out, and no longer goes out without its text. Leftover files are removed first, and Send waits until ChatGPT or Gemini has the text.
+- Starting a new ChatGPT chat makes sure the page has really left the old conversation, so the next message can't land in an old chat.
+- Replies whose text ChatGPT keeps in an out-of-view copy show as they stream instead of needing a refresh.
+- An image send that times out says what it was waiting for.
+
 ## [1.5.2] - 2026-11-02
 
 ### Fixed
