@@ -129,6 +129,7 @@ try {
   check('one page shows at a time, starting at General', await shown()==='["section-general"]', await shown());
   check('sidebar groups pages under headings', await evalJS(`[...document.querySelectorAll('.nav-heading')].map(n=>n.textContent).join()==='Basics,Look & feel,Account'`));
   check('every setting appears exactly once', await evalJS(`Object.keys(QSettings.SCHEMA).every(k=>document.querySelectorAll('.row[data-key="'+k+'"]').length===(['look','streamStyle','streamSpeed'].includes(k)?0:1))`));
+  check('update checking belongs to General after merging the settings pages', await evalJS(`!!document.querySelector('#section-general .row[data-key="checkUpdates"]')`));
   check('choices have readable names', await evalJS(`[...document.querySelectorAll('.row[data-key=tintSource] [data-value], .row[data-key=quoteStyle] [data-value]')].map(b=>b.textContent).join()==='From theme,Custom,Shaded,Plain,Italic'`));
   await evalJS(`document.querySelector('[data-section=glass]').click()`);
   check('sidebar switches page and marks it current', await shown()==='["section-glass"]' && await evalJS(`document.querySelector('[data-section=glass]').getAttribute('aria-current')==='page' && !document.querySelector('[data-section=general]').hasAttribute('aria-current')`));

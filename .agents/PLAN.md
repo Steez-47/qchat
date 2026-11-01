@@ -8,6 +8,14 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 
 ## Current state
 
+## Merge PRs 14, 15 and 16 (2026-11-01)
+
+- Goal: merge the settings overhaul, website and GitHub updater into main, preserving all three features.
+- Parent owns integration and verification. Settings conflict resolved by keeping the grouped pages and placing checkUpdates on General; both plan and changelog entries retained.
+- Review: Codex Luna high read-only updater review found no actionable blockers (Terra budget unavailable).
+- Status: integration verified, ready for main. All 55 offline suites pass across the full run and focused rerun of six settings-dependent suites after correcting the merged checkUpdates key. Windows Rust tests: 39 pass / 1 intentional ignore; cargo build passes with one existing dead-code warning. JavaScript syntax and diff checks pass. Website live release lookup, both API handlers and offline fallbacks pass.
+- Vercel deployment checks are failing; deployment configuration is outside this merge. Native settings appearance and a real updater download/swap/relaunch remain unverified; running app and saved profile preserved.
+
 ## v1.4.1 public release (2026-11-01)
 
 - Goal: publish the current build with synchronized v1.4.1 metadata, installer, portable executable, notices and checksums.
