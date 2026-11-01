@@ -8,6 +8,12 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 
 ## Current state
 
+## v1.4.2 public release (2026-11-01)
+
+- Goal: publish the merged settings overhaul, website and GitHub updater as v1.4.2.
+- Parent owns version metadata, packaging, asset verification and publication. Existing application verification is reused from the PR14/15/16 integration; updater received an independent Luna review.
+- Status: package verified, publication pending. Windows installer and portable executable report 1.4.2; extracted payload, install notes/notices, Microsoft WebView2 signature, asInvoker manifest and four checksum entries verified. Rust: 39 pass / 1 intentional ignore; release settings/updater suites: 2/2 pass; 106 JavaScript syntax checks pass. All 55 integration suites passed before the version bump. Existing dist/QChat.exe preserved.
+
 ## Merge PRs 14, 15 and 16 (2026-11-01)
 
 - Goal: merge the settings overhaul, website and GitHub updater into main, preserving all three features.
