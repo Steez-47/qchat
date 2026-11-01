@@ -4,11 +4,21 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+### Changed
+- Normal chats now fold into the orb when idle while waiting for a reply, with the same spinning arc as Work and Task. Once the words start arriving, the bar stays open so you can read them.
+
 ### Fixed
 - A text message no longer sends images left behind by an earlier image send that never went out, and no longer goes out without its text. Leftover files are removed first, and Send waits until ChatGPT or Gemini has the text.
 - Starting a new ChatGPT chat makes sure the page has really left the old conversation, so the next message can't land in an old chat.
 - Replies whose text ChatGPT keeps in an out-of-view copy show as they stream instead of needing a refresh.
 - An image send that times out says what it was waiting for.
+- Changing provider right after picking a mode or model no longer shows a false error a few seconds later.
+- A late error from a reply you already dismissed or stopped no longer shows a banner.
+- History no longer says "Couldn't load earlier messages" after a load that worked.
+- Opening a chat from another provider can't pick the wrong chat if the chat list changes during the switch.
+- A saved shortcut that's no longer valid can be replaced, and a failed Backspace clear in Settings shows why instead of staying stuck on "Press keys…".
+- A failed download or update no longer leaves a partial file behind.
+- A `$&` in a ChatGPT attachment's label no longer garbles the reply, and Gemini images no longer pile up in memory during a long chat.
 - A second message in a ChatGPT temporary chat no longer fails with "Temporary chat could not be confirmed". ChatGPT hides its temporary toggle once the chat has started, so QChat now remembers that the chat started in temporary mode.
 
 ## [1.5.2] - 2026-11-02

@@ -1206,8 +1206,10 @@
         if (!response.ok) throw new Error('Image unavailable');
         const blob = await response.blob();
         if (!/^image\/(png|jpeg|gif|webp|avif|bmp)$/i.test(blob.type) || blob.size > 32 * 1024 * 1024) throw new Error('Unsupported image');
-        resolved = URL.createObjectURL(blob);
-        entry.url = resolved;
+        // Each request gets its own short-lived copy, so a long chat doesn't pile up images in memory.
+        const local = URL.createObjectURL(blob);
+        setTimeout(() => URL.revokeObjectURL(local), 60000);
+        resolved = local;
       } finally { clearTimeout(timer); }
     }
     return { url: resolved, kind: entry.kind, name: entry.name, ...(entry.mime ? { mime: entry.mime } : {}) };

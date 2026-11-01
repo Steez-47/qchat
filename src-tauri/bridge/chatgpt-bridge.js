@@ -484,7 +484,8 @@
       const [, image, label, url] = match;
       if (attachmentURL(url)) {
         const id = registerMedia(job, { url, kind: image ? 'image' : mediaKind(url), name: label || url.split('/').pop()?.split('?')[0] || 'Attachment' });
-        if (id) rendered = rendered.replace(match[0], `${image}[${label || 'Attachment'}](qchat-media:${id})`);
+        // A function, so a "$&" in the label stays literal text.
+        if (id) rendered = rendered.replace(match[0], () => `${image}[${label || 'Attachment'}](qchat-media:${id})`);
       }
     }
     return rendered;

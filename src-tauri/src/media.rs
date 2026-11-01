@@ -862,11 +862,18 @@ pub async fn media_save(
             .open(destination.join(&name))
         {
             Ok(mut out) => {
-                std::io::copy(
-                    &mut File::open(&item.path).map_err(|_| "Cached file unavailable")?,
-                    &mut out,
-                )
-                .map_err(|_| "Could not save file")?;
+                let copied = match File::open(&item.path) {
+                    Ok(mut source) => std::io::copy(&mut source, &mut out)
+                        .map(|_| ())
+                        .map_err(|_| "Could not save file"),
+                    Err(_) => Err("Cached file unavailable"),
+                };
+                if let Err(message) = copied {
+                    // Never leave an empty or cut-off file in Downloads.
+                    drop(out);
+                    let _ = std::fs::remove_file(destination.join(&name));
+                    return Err(message.into());
+                }
                 return Ok(name);
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,

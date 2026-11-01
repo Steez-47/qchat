@@ -255,7 +255,10 @@ fn sibling(exe: &Path, suffix: &str) -> PathBuf {
 fn swap(exe: &Path, bytes: &[u8]) -> Result<(), String> {
     let new = sibling(exe, ".new");
     let old = sibling(exe, ".old");
-    std::fs::write(&new, bytes).map_err(|e| format!("not_writable: {e}"))?;
+    if let Err(e) = std::fs::write(&new, bytes) {
+        let _ = std::fs::remove_file(&new);
+        return Err(format!("not_writable: {e}"));
+    }
     let _ = std::fs::remove_file(&old);
     if let Err(e) = std::fs::rename(exe, &old) {
         let _ = std::fs::remove_file(&new);
