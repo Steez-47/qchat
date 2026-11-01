@@ -4,6 +4,15 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+### Changed
+- Smoother motion throughout. The picker, command menu, All chats, find and rename bars, the Latest chip, the thinking chip and Settings pages ease in; menus and notices fade out where they stood instead of vanishing, without ever delaying what you do next.
+- Picking a provider, mode or effort slides the selection across, and the picker eases to its new height when its list changes.
+- Copy buttons pop their check mark in and back.
+- Opening the folded orb brings the reply and the bar's contents back right away, so the bar no longer sits empty for a moment.
+
+### Fixed
+- Reply text no longer shows through the picker and command menu.
+
 ## [1.5.0] - 2026-11-01
 
 ### Added
