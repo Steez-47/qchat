@@ -18,6 +18,15 @@ History up to v1.4.0 (milestones, release records, verification logs) is in `.ag
 - Latest release: v1.4.1 (2026-11-01). `main` is the only long-lived branch.
 - `npm test` runs the 54 headless suites. CI runs them on every push and pull request.
 
+## Settings overhaul (2026-11-01)
+
+| task | owns | status |
+|---|---|---|
+| Rebuild settings as one declared layout: 13 pages in 3 sidebar groups, one page at a time, titled groups, written option labels, per-page reset, changed dots, cross-page search, remembered page | ui/settings.js, ui/settings.css, ui/settings.html | done |
+| Update suites for new section names/count; add navigation checks | tests/glass-ui-test.mjs, tests/settings-presets-test.mjs, tests/reasoning-ui-test.mjs, tests/ui-bugfix-test.mjs, tests/settings-e2e.mjs | done: 54/54 headless suites pass |
+
+Done in a cloud session without T3 delegation tools, so no workers were used. Verified headless only (Linux Chromium; Segoe Fluent icons don't render there). Not verified: native settings window on Windows (settings-e2e count updated to 13 but not run).
+
 ## Gemini model label and dragged-orb collapse (2026-11-01)
 
 | task | owns | status |

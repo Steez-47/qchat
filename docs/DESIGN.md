@@ -43,7 +43,7 @@ Segoe UI Variable. Body 15/1.65 in replies, measure capped at 72ch; the bar uses
 
 ## Motion
 
-Pressing and hovering are colour only: transforms promote and demote compositor layers as they start and stop, which reads as the whole window jittering. Two authored moments. A sent message rises out of the bar and becomes a bubble, and the reply grows in its place. And when the window has been out of focus for a few seconds (5 by default, Behavior → "Fold into the orb when idle", 0 turns it off), everything above the bar sinks into it and the bar closes into its orb; a click on the orb, a key, or anything that focuses the window opens it in reverse, and dragging the folded orb moves it without opening. It never folds while a reply streams, the pointer is over it, Settings is open or hide-on-blur is on. Folded parts keep their layout, so the window does not resize and the reply keeps its height. Everything else is quiet: 120 to 200ms, exponential ease-out, transform and opacity. The default feel is calm, with no overshoot. Reduced motion is respected. No sheen passes over text by default. Scrolling is native: nothing moves, scales or fades messages as they scroll.
+Pressing and hovering are colour only: transforms promote and demote compositor layers as they start and stop, which reads as the whole window jittering. Two authored moments. A sent message rises out of the bar and becomes a bubble, and the reply grows in its place. And when the window has been out of focus for a few seconds (5 by default, Window → "Fold into the orb when idle", 0 turns it off), everything above the bar sinks into it and the bar closes into its orb; a click on the orb, a key, or anything that focuses the window opens it in reverse, and dragging the folded orb moves it without opening. It never folds while a reply streams, the pointer is over it, Settings is open or hide-on-blur is on. Folded parts keep their layout, so the window does not resize and the reply keeps its height. Everything else is quiet: 120 to 200ms, exponential ease-out, transform and opacity. The default feel is calm, with no overshoot. Reduced motion is respected. No sheen passes over text by default. Scrolling is native: nothing moves, scales or fades messages as they scroll.
 
 The window keeps a fixed reserved size and its empty part is click-through. Never resize it as things open and close: the webview follows a frame behind, and everything jumps.
 
@@ -59,7 +59,12 @@ Text must read as a steady flow, never as a machine catching up.
 
 ## Settings window
 
-A calm utility window, not a showcase. One sheet, flat grouped rows inside, no nested glass. The live bar on the desktop is the preview, so there is no fake-wallpaper preview box. Frequent controls are visible; fine-tuning sliders sit behind a "Fine-tune" disclosure. No control has focus styling when the window opens.
+A calm utility window, not a showcase. One sheet, flat grouped rows inside, no nested glass. The live bar on the desktop is the preview, so there is no fake-wallpaper preview box. No control has focus styling when the window opens.
+
+- **Layout:** a sidebar of pages under three headings (Basics, Look & feel, Account), one page at a time. Each page opens with a one-line description, then titled groups of rows separated by hairlines. The whole layout is declared once in `PAGES` in `ui/settings.js`, and every setting appears exactly once.
+- **Words:** labels say what the user sees ("Blur behind the bar", not "nativeBlur"); hints say what changes. Every choice has a written label.
+- **Depth:** frequent controls are visible; fine-tuning sliders sit behind a "Fine-tune" disclosure. A custom colour picker appears only once Custom is chosen. A control that waits on another switch is dimmed, not hidden.
+- **Orientation:** a dot in the sidebar marks pages that differ from the defaults, with a "Reset page" button beside the page title. Search (Ctrl+F) spans every page; picking a page clears it.
 
 ## Bans
 

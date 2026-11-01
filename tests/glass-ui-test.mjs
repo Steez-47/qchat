@@ -562,8 +562,8 @@ try {
   // Settings window
   await open('/settings.html');
   await settle();
-  check('settings window loads in mock mode', await evalJS(`document.querySelectorAll('.section').length===12 && !!document.getElementById('sheet')`));
-  check('settings has the required sections', await evalJS(`['Presets','Appearance','Bar glass','Chat panel','Reading','Streaming','Motion','Bar & tabs','Behavior','Chats','Account','About'].every(t=>[...document.querySelectorAll('.section-title')].some(n=>n.textContent===t))`));
+  check('settings window loads in mock mode', await evalJS(`document.querySelectorAll('.section').length===13 && !!document.getElementById('sheet')`));
+  check('settings has the required sections', await evalJS(`['General','Window','Shortcuts','Presets','Colours','Glass & shape','Text','Bar & tabs','Chat','Motion & streaming','Accounts','Chats & privacy','About'].every(t=>[...document.querySelectorAll('.section-title')].some(n=>n.textContent===t))`));
   const allKeys = await evalJS(`Object.keys(QSettings.SCHEMA).filter(k=>!['look','streamStyle','streamSpeed'].includes(k)&&!document.querySelector('.row[data-key="'+k+'"]'))`);
   check('every active setting has a control', allKeys.length === 0, allKeys.join());
   check('obsolete streaming controls are absent',await evalJS(`!document.querySelector('.row[data-key="streamStyle"],.row[data-key="streamSpeed"]')`));
