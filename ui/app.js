@@ -1602,7 +1602,7 @@
   }
 
   function settleReadyWaiters(evt) {
-    if (!evt.ready) return;
+    if (!evt.ready || evt.resetting) return;
     for (const waiter of [...readyWaiters]) {
       if (waiter.provider !== activeProvider || waiter.generation !== chatGeneration || (waiter.temporary && (evt.temporary !== true || evt.setupId !== waiter.setupId))) continue;
       const id = waiter.conversationId;
@@ -1631,7 +1631,7 @@
     for (const waiter of [...pageResetWaiters]) {
       if (waiter.provider !== provider) continue;
       // A page in the middle of clearing itself may yet reload, whatever its URL says.
-      const moved = evt.type === "status" && evt.ready && ((evt.loadId && evt.loadId !== waiter.known) || (!evt.resetting && typeof evt.url === "string" && !onConversationURL(evt.url)));
+      const moved = evt.type === "status" && evt.ready && !evt.resetting && ((evt.loadId && evt.loadId !== waiter.known) || (typeof evt.url === "string" && !onConversationURL(evt.url)));
       if (evt.type === "chat-reset" || moved) waiter.resolve();
     }
   }
@@ -1655,12 +1655,12 @@
     const temporary = Boolean(chat.temporary);
     const provider = activeProvider, generation = chatGeneration;
     const setupId = temporary ? crypto.randomUUID() : null;
-    const ready = waitForReady(null, FRESH_TIMEOUT, temporary, setupId);
+    const ready = waitForReady(null, temporary ? FRESH_TIMEOUT : OPEN_TIMEOUT, temporary, setupId);
     const reset = temporary ? null : waitForPageReset();
     try {
       await invoke("chat_new", { preserveUploads: true, temporary, setupId });
       if (temporary) await ready;
-      else { await ready.catch(() => {}); await reset; }
+      else await Promise.all([ready, reset]);
       if (provider === activeProvider && generation === chatGeneration) page = { key: chat.key, conv: null, pristine: false };
     } catch (err) { ready.cancel(); throw temporary ? { code: "temporary_unavailable" } : err; }
   }

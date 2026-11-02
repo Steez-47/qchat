@@ -22,7 +22,8 @@ app.on('error', error => { launchError = error; });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const clients = [], problems = [];
 let main, site;
-const check = (label, ok) => { console.log(`${ok ? 'PASS' : 'FAIL'} ${label}`); if (!ok) failed++; };
+const providerSites = {};
+const check = (label, ok, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${label}${!ok && detail ? ' :: ' + detail : ''}`); if (!ok) failed++; };
 async function until(fn, label) {
   for (let i = 0; i < 160; i++) {
     if (launchError) throw launchError;
@@ -72,7 +73,7 @@ const fixtureHTML = provider => `<!doctype html><html><head><meta charset="utf-8
   <button data-testid="create-new-chat-button" data-test-id="reset-button" aria-label="New chat" onclick="fixtureReset()">New chat</button>
   <script>
   window.fixtureSubmissions=[];window.fixtureClicks=0;window.fixtureIgnore=0;window.fixtureFiles=[];
-  window.fixtureReset=()=>{document.getElementById('messages').replaceChildren();document.getElementById('chips').replaceChildren();document.getElementById('files').value='';document.getElementById('prompt-textarea').textContent='';fixtureFiles=[];fixtureClicks=0;fixtureSubmissions=[];};
+  window.fixtureReset=()=>{document.getElementById('messages').replaceChildren();document.getElementById('chips').replaceChildren();document.getElementById('files').value='';document.getElementById('prompt-textarea').textContent='';fixtureFiles=[];fixtureClicks=0;fixtureIgnore=0;fixtureSubmissions=[];history.pushState({},'',${JSON.stringify(provider === 'chatgpt' ? '/' : '/app')});};
   document.getElementById('files').onchange=event=>{
     fixtureFiles=Array.from(event.target.files);
     document.getElementById('chips').replaceChildren();
@@ -81,7 +82,7 @@ const fixtureHTML = provider => `<!doctype html><html><head><meta charset="utf-8
   document.getElementById('send').onclick=async()=>{
     if(++fixtureClicks<=fixtureIgnore)return;
     const composer=document.getElementById('prompt-textarea'),text=composer.innerText.trim(),files=fixtureFiles.slice();
-    const record={text,files:await Promise.all(files.map(async file=>({name:file.name,bytes:Array.from(new Uint8Array(await file.arrayBuffer()))}))) };
+    const record={text,path:location.pathname,files:await Promise.all(files.map(async file=>({name:file.name,bytes:Array.from(new Uint8Array(await file.arrayBuffer()))}))) };
     fixtureSubmissions.push(record);
     composer.textContent='';document.getElementById('files').value='';document.getElementById('chips').replaceChildren();
     const user=document.createElement(${JSON.stringify(provider === 'chatgpt' ? 'div' : 'user-query')});
@@ -123,14 +124,17 @@ try {
   for (const provider of ['chatgpt', 'gemini']) {
     if (provider === 'gemini') await main.evaluate('window.__TAURI__.core.invoke("provider_set",{provider:"gemini"})');
     site = await install(provider);
+    providerSites[provider] = site;
     if (provider === 'gemini') {
       await main.evaluate('document.getElementById("btn-reasoning").click()');
       await until(() => main.evaluate('!!Array.from(document.querySelectorAll("#picker button")).find(button=>button.textContent.trim()==="Gemini")'), 'Gemini picker');
       await main.evaluate('Array.from(document.querySelectorAll("#picker button")).find(button=>button.textContent.trim()==="Gemini").click()');
+      await until(() => main.evaluate('!document.getElementById("btn-reasoning").disabled && JSON.parse(localStorage.getItem("qchat.chats")).current.provider==="gemini"'), 'initial Gemini switch');
+      await main.evaluate('if(!document.getElementById("picker").hidden)document.getElementById("btn-reasoning").click()');
     }
     const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
     const expectedBytes = Array.from(Buffer.from(png, 'base64'));
-    for (const scenario of [{ prompt: 'Describe this image 🌏', count: 1 }, { prompt: '', count: 1 }, { prompt: '', count: 2 }, { prompt: '', count: 1, ignore: 1 }]) {
+    for (const scenario of process.argv.includes('--context-only') ? [] : [{ prompt: 'Describe this image 🌏', count: 1 }, { prompt: '', count: 1 }, { prompt: '', count: 2 }, { prompt: '', count: 1, ignore: 1 }]) {
       await main.evaluate('window.dispatchEvent(new KeyboardEvent("keydown",{key:"n",ctrlKey:true,bubbles:true,cancelable:true}))');
       await until(() => main.evaluate('document.getElementById("prompt-input").value===""&&document.getElementById("attachments").hidden'), 'fresh composer');
       // Let actual newChat finish before configuring this submission.
@@ -151,7 +155,46 @@ try {
       check(label + ' displays the reply and restores Send', await main.evaluate('document.getElementById("btn-send").dataset.mode==="send"&&document.getElementById("attachments").hidden'));
     }
   }
-  check('native image send has no runtime errors', problems.length === 0);
+
+  const chooseProvider = async provider => {
+    await until(() => main.evaluate('!document.getElementById("btn-reasoning").disabled'), 'provider control ready');
+    await main.evaluate('document.getElementById("btn-reasoning").click()');
+    await until(() => main.evaluate(`!!document.querySelector('#picker [data-picker-key="provider:${provider}"]')`), 'provider segment');
+    await main.evaluate(`document.querySelector('#picker [data-picker-key="provider:${provider}"]').click()`);
+    await until(() => main.evaluate(`!document.getElementById('btn-reasoning').disabled && JSON.parse(localStorage.getItem('qchat.chats')).current.provider===${JSON.stringify(provider)}`), 'provider switched to ' + provider);
+    await main.evaluate('if(!document.getElementById("picker").hidden)document.getElementById("btn-reasoning").click()');
+  };
+  const sendText = async text => {
+    const before = await main.evaluate('fixtureEvents.length');
+    await main.evaluate(`(()=>{const input=document.getElementById('prompt-input');input.value=${JSON.stringify(text)};input.dispatchEvent(new Event('input'));})()`);
+    await until(() => main.evaluate('!document.getElementById("btn-send").disabled'), 'context composer ready');
+    await main.evaluate('document.getElementById("btn-send").click()');
+    try {
+      await until(() => main.evaluate(`fixtureEvents.slice(${before}).some(event=>event.type==='done'||event.type==='error') || !!document.querySelector('[data-role=assistant][data-status=error]')`), 'context reply: ' + text);
+    } catch (error) {
+      throw Error(error.message + ' :: ' + JSON.stringify(await main.evaluate(`({events:fixtureEvents.slice(${before}).slice(-5),button:document.getElementById('btn-send').outerHTML,reply:document.querySelector('.bubble-zone')?.textContent})`)) + ' :: site ' + JSON.stringify(await site.evaluate(`({text:document.getElementById('prompt-textarea').innerText,html:document.getElementById('prompt-textarea').innerHTML,files:fixtureFiles.map(file=>file.name),clicks:fixtureClicks,chips:document.getElementById('chips').innerHTML})`)));
+    }
+    const localError = await main.evaluate(`document.querySelector('[data-role=assistant][data-status=error]')?.textContent`);
+    if (localError) throw Error('Context send failed: ' + localError);
+    await until(() => main.evaluate('!document.getElementById("btn-reasoning").disabled'), 'context reply rendered');
+    return main.evaluate(`fixtureEvents.slice(${before}).filter(event=>event.type==='error')`);
+  };
+  await chooseProvider('chatgpt');
+  await main.evaluate('window.dispatchEvent(new KeyboardEvent("keydown",{key:"n",ctrlKey:true,bubbles:true,cancelable:true}))');
+  await sendText('Remember this context from ChatGPT: kōwhai 🌏');
+  // Gemini already holds a different conversation. Its first insertion only takes the note;
+  // the bridge must restore the complete continuation before clicking the attachment-enabled Send.
+  site = providerSites.gemini;
+  await site.evaluate(`(()=>{history.pushState({},'', '/app/oldconversation123');const exec=document.execCommand.bind(document);let partial=true;document.execCommand=(cmd,ui,text)=>exec(cmd,ui,cmd==='insertText'&&partial?(partial=false,text.split('\\n')[0]):text);})()`);
+  await chooseProvider('gemini');
+  const errors = await sendText('What was the context? Include my new question.');
+  const submissions = await site.evaluate('fixtureSubmissions');
+  const historyFile = submissions[0]?.files.find(file => file.name === 'chat-history.txt');
+  const historyText = historyFile ? new TextDecoder().decode(Uint8Array.from(historyFile.bytes)) : '';
+  check('context switch resets an existing Gemini chat and submits exactly once', submissions.length === 1 && submissions[0].path === '/app' && errors.length === 0);
+  check('context switch sends the entire new message alongside exact history bytes', submissions[0]?.text.endsWith('What was the context? Include my new question.') && historyText.includes('Remember this context from ChatGPT: kōwhai 🌏') && !historyText.includes('What was the context?'));
+  check('context switch keeps the history file and instructions out of the visible chat', await main.evaluate(`(()=>{const chat=JSON.parse(localStorage.getItem('qchat.chats')).current;return !chat.carry&&chat.transcript.some(turn=>turn.text==='What was the context? Include my new question.')&&!JSON.stringify(chat.transcript).includes('chat-history.txt');})()`));
+  check('native image send has no runtime errors', problems.length === 0, problems.join(' | '));
 } catch (error) { console.error('FAIL harness ::', error.message); failed++; }
 finally {
   if (main?.ws.readyState === WebSocket.OPEN) void main.evaluate('window.__TAURI__.core.invoke("quit_app")').catch(() => {});

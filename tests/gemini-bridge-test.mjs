@@ -520,6 +520,46 @@ function submissionFixture(b) {
   };
   return submissions;
 }
+
+test('a history attachment cannot send with only part of the continuation prompt', async () => {
+  const b = createBrowser({ loggedIn: true }); uploadFixture(b);
+  const submissions = submissionFixture(b);
+  const prompt = 'The attached chat-history.txt is our conversation so far.\n\nMy next message:\n\n' + GPROMPT;
+  const exec = b.document.execCommand.bind(b.document);
+  let inserts = 0;
+  b.document.execCommand = (cmd, ui, text) => exec(cmd, ui,
+    cmd === 'insertText' && inserts++ === 0 ? text.split('\n')[0] : text);
+  const sent = b.api.send({ id: 'history-with-message', prompt, attachmentCount: 1 });
+  await b.tick(5000); await sent;
+  assert.deepEqual(submissions, [{ text: prompt, attachments: 1 }]);
+});
+
+test('a composer that never takes the complete question cannot submit the history alone', async () => {
+  const b = createBrowser({ loggedIn: true }); uploadFixture(b);
+  const submissions = submissionFixture(b);
+  const exec = b.document.execCommand.bind(b.document);
+  b.document.execCommand = (cmd, ui, text) => exec(cmd, ui, cmd === 'insertText' ? text.split('\n')[0] : text);
+  const sent = b.api.send({ id: 'incomplete-history', prompt: 'Continue from the history.\n\nAnswer this new question.', attachmentCount: 1 });
+  await b.tick(121000); await sent;
+  assert.deepEqual(submissions, []);
+  assert.equal(b.events.find(event => event.id === 'incomplete-history' && event.type === 'error')?.code, 'send_failed');
+});
+
+test('editable block spacing does not stall a complete history continuation or its ignored Send retry', async () => {
+  const b = createBrowser({ loggedIn: true }); uploadFixture(b);
+  const exec = b.document.execCommand.bind(b.document);
+  const prompt = 'Continue our conversation.\n\nMy next message:\n\nKia ora 🌏';
+  b.document.execCommand = (cmd, ui, text) => exec(cmd, ui, cmd === 'insertText' ? text.replace(/\n\n/g, '\n\n\n').replace(/ /g, '\u00a0') : text);
+  let clicks = 0;
+  b.sendButton.onClick = () => {
+    if (++clicks === 1) return;
+    b.addTurn({ userText: b.composerText, replyHtml: '<p>Continued</p>' });
+  };
+  const sent = b.api.send({ id: 'block-spacing', prompt, attachmentCount: 1 });
+  await b.tick(5000); await sent;
+  assert.equal(clicks, 2);
+  assert.equal(b.events.find(event => event.type === 'done')?.text, 'Continued');
+});
 test('an ignored Gemini image-only Send retries while the unsent attachment remains', async () => {
   for (const prompt of ['', 'Describe this image']) {
     const b = createBrowser({ loggedIn: true }); uploadFixture(b);
@@ -1190,6 +1230,23 @@ test('stop cancels active stream, clicks stop button, and emits done once', asyn
   const doneEvents = b.events.filter(e => e.type === 'done' && e.id === 'stop-job');
   assert.equal(doneEvents.length, 1);
   assert.equal(doneEvents[0].text, 'Partial reply');
+});
+
+test('newChat reports a settled composer after clearing an existing conversation', async () => {
+  const b = createBrowser({ loggedIn: true });
+  b.addTurn({ userText: 'old question', replyHtml: '<p>old reply</p>', convId: 'oldconversation123' });
+  const button = makeEl('a', { 'aria-label': 'New chat', href: '/app' });
+  button.onClick = () => {
+    b.body.querySelectorAll('user-query, model-response').forEach(node => node.remove());
+    b.location.pathname = '/app'; b.location.href = 'https://gemini.google.com/app';
+  };
+  b.body.append(button);
+  const pending = b.api.newChat(); await b.tick(1500); await pending;
+  const status = b.events.filter(event => event.type === 'status').at(-1);
+  assert.equal(status.ready, true);
+  assert.equal(status.resetting, false);
+  assert.equal(status.url, 'https://gemini.google.com/app');
+  assert.ok(b.events.some(event => event.type === 'chat-reset'));
 });
 
 test('newChat falls back to location.assign when side nav click leaves turns on page', async () => {

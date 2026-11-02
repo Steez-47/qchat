@@ -771,6 +771,9 @@
 
   // A Send that did not take leaves the prompt in the composer and no new turn. Only then may it be
   // clicked again, so one prompt can never be sent twice.
+  // innerText adds blank lines around editable block elements, and spaces can become NBSPs.
+  // Compare all message content without treating those browser layout differences as lost text.
+  const promptMatch = text => String(text).replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').replace(/\n{2,}/g, '\n').trim();
   async function confirmSend(job, composer, temporary) {
     const controls = job.attachmentCount > 0 ? attachmentRemovers(job.attachmentNames, true) : [];
     for (let i = 0; i < 12 && active === job && !job.started && !job.cancelled; i++) {
@@ -784,7 +787,7 @@
       if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
       if (find('composer') !== composer) return;
       const pending = String(composer.tagName === 'TEXTAREA' ? composer.value : composer.innerText ?? composer.textContent ?? '').trim();
-      if (pending !== job.prompt) return;
+      if (promptMatch(pending) !== promptMatch(job.prompt)) return;
       if (job.attachmentCount > 0) {
         const files = attachmentRemovers(job.attachmentNames, true);
         if (uploadBusy() || controls.length < job.attachmentCount || files.length !== controls.length || files.some(node => !controls.includes(node))) return;
@@ -1321,7 +1324,8 @@
           }
         };
         const typed = node => String(node.tagName === 'TEXTAREA' ? node.value : node.innerText ?? node.textContent ?? '').trim();
-        let uploadQuietAt = Date.now(), filledComposer = null, held = false, filledAt = 0;
+        const completePrompt = node => promptMatch(typed(node)) === promptMatch(job.prompt);
+        let uploadQuietAt = Date.now(), filledComposer = null, filledAt = 0;
         for (let i = 0; i < (attachmentCount > 0 ? 1200 : 100) && active === job && !job.started && !job.cancelled; i++) {
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           // Recheck the complete attachment batch until Send, then fill the current composer.
@@ -1333,14 +1337,13 @@
           }
           composer = find('composer');
           if (!composer) { await sleep(100); continue; }
-          if (composer !== filledComposer || (held && !typed(composer))) {
-            fill(composer); filledComposer = composer; filledAt = Date.now(); held = !!typed(composer);
+          if (composer !== filledComposer || (!completePrompt(composer) && Date.now() - filledAt >= 300)) {
+            fill(composer); filledComposer = composer; filledAt = Date.now();
           }
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
-          // Never click Send before the page has the text. An attachment enables Send by itself,
-          // so Send can't show that the page has taken the text; give it a moment to settle too.
-          if (prompt.trim() && (!typed(composer) || (attachmentCount > 0 && Date.now() - filledAt < 300))) {
-            if (!typed(composer) && Date.now() - filledAt >= 300) fill(composer), filledAt = Date.now();
+          // An attachment enables Send by itself. Require the entire prompt, including the
+          // question after a history note, and refill if the editor only accepted part of it.
+          if (!completePrompt(composer) || (attachmentCount > 0 && Date.now() - filledAt < 300)) {
             await sleep(100);
             continue;
           }
@@ -1359,12 +1362,12 @@
           await sleep(100);
         }
         if (active === job && !job.started && !job.cancelled) {
+          if (!composer) { fail(job, 'not_ready', 'Gemini composer changed. Please try again.'); return; }
+          // Enter and an attachment-enabled Send both require the complete message.
+          if (!completePrompt(find('composer') || composer)) { fail(job, 'send_failed', 'Gemini did not take the complete message text. Try again.'); return; }
           if (attachmentCount > 0) { fail(job, 'attachment_failed', 'Attachments did not become ready within two minutes. Check them in Gemini.'); return; }
           job.startTimer = setTimeout(() => noRequestStarted(job), job.work ? 60000 : 20000);
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
-          if (!composer) { fail(job, 'not_ready', 'Gemini composer changed. Please try again.'); return; }
-          // Enter can't send what the page never took, and could send leftovers on their own.
-          if (prompt.trim() && !typed(find('composer') || composer)) { fail(job, 'send_failed', 'Gemini did not take the message text. Try again.'); return; }
           job.submitted = true;
           composer.dispatchEvent?.(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
           sampleDOM(job);
@@ -1527,6 +1530,7 @@
           location.assign('https://gemini.google.com/app');
           return;
         }
+        if (resetting === run) resetting = null;
         await status();
         emit({ type: 'chat-reset' });
       } finally {

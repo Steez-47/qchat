@@ -65,6 +65,48 @@ try {
   // The text of the staged history file, read back from the chunks the app uploaded.
   const stagedText = (since) => evalJS(`(()=>{const calls=__mock.calls.slice(${since});const begin=calls.findLast(c=>c.cmd==='attachment_begin');if(!begin)return null;const bytes=calls.filter(c=>c.cmd==='attachment_chunk').map(c=>atob(c.args.data)).join('');return {name:begin.args.name,mime:begin.args.mime,text:new TextDecoder().decode(Uint8Array.from(bytes,ch=>ch.charCodeAt(0)))};})()`);
 
+  // A ready composer can appear during Gemini's reset, before the old chat is gone.
+  await open();
+  await send('Keep this context while Gemini resets');
+  await switchTo('gemini');
+  await evalJS(`(() => {
+    const invoke = window.__TAURI__.core.invoke;
+    window.__TAURI__.core.invoke = (cmd, args) => {
+      if (cmd !== 'chat_new') return invoke(cmd, args);
+      window.resetRequested = true;
+      __mock.emit('bridge', {type:'status', provider:'gemini', ready:true, loggedIn:true,
+        resetting:true, loadId:'gemini-resetting', url:'https://gemini.google.com/app'});
+      return Promise.resolve();
+    };
+  })()`);
+  const beforeReset = await evalJS(`__mock.count('chat_send')`);
+  await type('Send this together with the history'); await key('Enter');
+  await until('window.resetRequested'); await sleep(150);
+  check('a ready composer during reset cannot send the hand-off', await evalJS(`__mock.count('chat_send')===${beforeReset}`));
+  await evalJS(`__mock.emit('bridge',{type:'chat-reset',provider:'gemini'})`); await sleep(50);
+  check('reset completion still waits for a ready composer', await evalJS(`__mock.count('chat_send')===${beforeReset}`));
+  await evalJS(`__mock.emit('bridge',{type:'status',provider:'gemini',ready:true,loggedIn:true,resetting:false,loadId:'gemini-ready',url:'https://gemini.google.com/app'})`);
+  await until(`__mock.count('chat_send')>${beforeReset}`); await until(idle);
+  check('the settled Gemini page receives the history and new message together', (await lastSend()).prompt.endsWith('Send this together with the history') && (await lastSend()).attachmentIds.length === 1);
+
+  await open();
+  await send('History survives a reset that never finishes');
+  await switchTo('gemini');
+  await evalJS(`(() => {
+    const invoke = window.__TAURI__.core.invoke;
+    window.__TAURI__.core.invoke = (cmd, args) => {
+      if (cmd !== 'chat_new') return invoke(cmd, args);
+      __mock.emit('bridge', {type:'status',provider:'gemini',ready:true,loggedIn:true,
+        resetting:true,loadId:'stalled-reset',url:'https://gemini.google.com/app'});
+      return Promise.resolve();
+    };
+  })()`);
+  const beforeStall = await evalJS(`__mock.count('chat_send')`);
+  await type('Keep my unsent question'); await key('Enter');
+  await until(`document.querySelector('[data-role=assistant][data-status=error]')`);
+  check('a stalled reset returns the question and releases Send', await evalJS(`document.getElementById('prompt-input').value==='Keep my unsent question' && document.getElementById('btn-send').dataset.mode==='send' && __mock.count('chat_send')===${beforeStall}`));
+  check('a stalled reset retains the pending history hand-off', Boolean((await current()).carry));
+
   // Default on, and offered in Settings.
   await open('/settings.html', { settings: null });
   check('Context switching is on by default', await evalJS(`QSettings.settings.contextSwitching===true`));

@@ -237,6 +237,7 @@ test('newChat leaves the old conversation before reporting the page ready', asyn
   const pending = b.newChat(); await b.tick(2000); await pending;
   assert.deepEqual(b.navigations, ['/']);
   assert.equal(new URL(b.last().url).pathname, '/');
+  assert.equal(b.last().resetting, false, 'the ready report confirms reset completion');
 });
 test('newChat reloads a fresh page instead of leaving the next send in the old conversation', async () => {
   const b = browser({ ready: true, stuckRoute: true }); b.navigate('/c/oldconversation'); b.reply({ user: {} }); await b.status();

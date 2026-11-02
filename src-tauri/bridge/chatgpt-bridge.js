@@ -1857,7 +1857,9 @@
         else { history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); }
         for (let i = 0; i < 15 && !fresh(); i++) await sleep(100);
         if (!fresh()) { leaving = true; location.assign('https://chatgpt.com/'); return; }
-        await sleep(300); await status();
+        await sleep(300);
+        if (resetting === run) resetting = null;
+        await status();
         emit({ type: 'chat-reset' });
       } finally {
         // A page on its way out starts nothing more: the app waits for the next load.
