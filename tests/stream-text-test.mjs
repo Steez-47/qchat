@@ -32,7 +32,17 @@ for (const text of [
 for (const tail of ['```js\nx\n','<pre>one\n\ntwo\n','$$\nx\n\ny\n']) {
  assert.equal(boundary('Done.\n\n'+tail),7,JSON.stringify(tail));
 }
-for (const text of ['- a\n\n- b','1. one\n\n2. two']) assert.equal(boundary(text),0,JSON.stringify(text));
+for (const [text, want] of [
+ ['- a\n\n- b',5], ['1. one\n\n2. two',8],
+ ['- first\n- ',0], ['- first\n- second',8],
+ ['- first\n  - nested\n  - growing',0],
+ ['- first\n  - nested\n- second',19],
+ ['> - first\n> - second',0],
+ ['- <section>first\n- second',0],
+ ['- first\n  $$\nx\n- second',0],
+ ['- ```js\n  const a = 1;\n- second',0],
+ ['- first\n- <section>second',8],
+]) assert.equal(boundary(text),want,JSON.stringify(text));
 console.log('PASS completed block boundaries');
 
 const loop = '{#each [{name:"A"},{name:"B"}] as item}\n\n{item.name}\n\n';

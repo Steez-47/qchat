@@ -56,7 +56,7 @@
   // (at once, even with no newline after it), and never at a blank line inside the scope.
   function completeBoundary(text) {
     let fence = null, offset = 0, end = 0, math = null, mathFresh = false, inline = null, container = false;
-    let skipUntil = 0, prevBlank = true, scopeFresh = false, listIndent = 0;
+    let skipUntil = 0, prevBlank = true, scopeFresh = false, listIndent = 0, rootListIndent = null;
     const tags = [];
     const lines = text.split("\n");
     // Release a finished block, unless a list or quote may still continue around it.
@@ -80,6 +80,15 @@
       const sameContext = !fence || (quotes === fence.quotes && indent >= baseIndent);
       const match = skipUntil <= offset && sameContext && /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(fenceLine.slice(baseIndent));
       const literalTop = LITERAL_TAG.test(tags.at(-1) || "");
+      // A sibling with real content proves that the previous item is finished. Keep
+      // the current item (including its nested lists, tags and code) buffered.
+      const sibling = !fence && !math && !inline && !tags.length && skipUntil <= offset &&
+        /^( {0,3})(?:[-+*]|\d+[.)]) +\S/.exec(line);
+      if (sibling) {
+        const indent = sibling[1].length;
+        if (rootListIndent !== null && indent <= rootListIndent) end = Math.max(end, offset);
+        if (!container || rootListIndent !== null && indent <= rootListIndent) rootListIndent = indent;
+      }
       if (!fence && !math && !tags.length && /^ {0,3}(?:[-+*]\s|\d+[.)]\s|>)/.test(line)) container = true;
       if (!math && !inline && !literalTop && match) {
         if (!fence) fence = { marker: match[1][0], size: match[1].length, quotes, baseIndent };
@@ -182,7 +191,7 @@
           inline = null;
           const following = container ? /^(?:[ \t\r]*\n)*([^\n]*)/.exec(text.slice(next))[1] : "";
           const continuation = container && (!following || /^(?:\s|[-+*](?:\s|$)|\d+(?:[.)](?:\s|$)|$)|>)/.test(following));
-          if (!math && !tags.length && (!container || !continuation)) { end = next; container = false; listIndent = 0; }
+          if (!math && !tags.length && (!container || !continuation)) { end = next; container = false; listIndent = 0; rootListIndent = null; }
         }
       }
       prevBlank = !fence && !math && !line.trim();

@@ -1132,30 +1132,27 @@ mark.sel {
 .fold ::selection { background: var(--paper); color: var(--ink); }
 .fold :focus-visible { outline-color: var(--paper); }
 
-/* Each tile folds a little bar into its orb, then shows the orb's state. */
+/* Each tile folds a little bar into its orb, then shows the orb's state. The resting styles are
+   the finished state; the open bar exists only inside the animations, so a tile can never be
+   left stuck open if .play doesn't arrive (stale script, failed script, reduced motion). */
 .fold .orb-stage { --pw: min(210px, 84cqw); container-type: inline-size; }
-.fold .orb-stage::before { left: 50%; top: 50%; margin: -34px 0 0 calc(var(--pw) / -2); width: var(--pw); border-radius: 999px; }
+.fold .orb-stage::before { left: 50%; top: 50%; margin: -34px 0 0 -34px; border-radius: 999px; }
 .fold-ph {
   position: absolute; left: 50%; top: 50%; translate: calc(var(--pw) / -2 + 66px) -50%;
   font: 400 14px var(--sans); font-style: normal; white-space: nowrap; color: rgb(248 250 252 / .55);
-  pointer-events: none;
+  pointer-events: none; opacity: 0;
 }
-.fold .orb-stage .orb { translate: calc(34px - var(--pw) / 2) 0; }
 .orb-tile.play .orb-stage::before { animation: pill-fold .75s var(--ease-io) calc(var(--rd, 0s) + .5s) both; }
 .orb-tile.play .orb-stage .orb { animation: orb-home .75s var(--ease-io) calc(var(--rd, 0s) + .5s) both; }
-.orb-tile.play .fold-ph { animation: fadeout .25s calc(var(--rd, 0s) + .45s) both; }
-@keyframes pill-fold { to { width: 68px; margin-left: -34px; } }
-@keyframes orb-home { to { translate: 0 0; } }
-.no-js .fold .orb-stage::before { width: 68px; margin-left: -34px; }
-.no-js .fold .orb-stage .orb { translate: 0 0; }
-.no-js .fold-ph { display: none; }
+.orb-tile.play .fold-ph { animation: ph-out .25s calc(var(--rd, 0s) + .45s) both; }
+@keyframes pill-fold { from { width: var(--pw); margin-left: calc(var(--pw) / -2); } }
+@keyframes orb-home { from { translate: calc(34px - var(--pw) / 2) 0; } }
+@keyframes ph-out { from { opacity: 1; } to { opacity: 0; } }
 
-.js .fold .orb-tile .orb.is-ready, .js .fold .orb-tile .orb.is-attention { background: linear-gradient(145deg, var(--o1), var(--o2) 60%, var(--o3)); }
-.js .fold .orb-tile .orb.is-ready::before, .js .fold .orb-tile .orb.is-attention::before { content: ""; position: absolute; inset: 0; border-radius: 50%; opacity: 0; }
-.js .fold .orb-tile .orb.is-ready::before { background: linear-gradient(145deg, #4ade80, #16a34a); }
-.js .fold .orb-tile .orb.is-attention::before { background: linear-gradient(145deg, #f8a3a3, #dc2626); }
-.js .fold .orb-tile .orb-badge, .js .fold .orb-tile .upd-badge { opacity: 0; transform: scale(.4); }
-.js .fold .orb-tile .orb.is-working::after { opacity: 0; }
+.fold .orb-tile .orb.is-ready, .fold .orb-tile .orb.is-attention { background: linear-gradient(145deg, var(--o1), var(--o2) 60%, var(--o3)); }
+.fold .orb-tile .orb.is-ready::before, .fold .orb-tile .orb.is-attention::before { content: ""; position: absolute; inset: 0; border-radius: 50%; }
+.fold .orb-tile .orb.is-ready::before { background: linear-gradient(145deg, #4ade80, #16a34a); }
+.fold .orb-tile .orb.is-attention::before { background: linear-gradient(145deg, #f8a3a3, #dc2626); }
 .orb-tile.play .orb::before { animation: fadein .35s var(--ease) calc(var(--rd, 0s) + 1.25s) both; }
 .orb-tile.play .orb-badge, .orb-tile.play .upd-badge { animation: badge-in .45s var(--ease) calc(var(--rd, 0s) + 1.35s) both; }
 .orb-tile.play .orb.is-working::after { animation: orb-spin 1.1s linear infinite, fadein .4s var(--ease) calc(var(--rd, 0s) + 1.25s) both; }
@@ -1212,7 +1209,7 @@ mark.sel {
   .story-screen { transform: none !important; }
   .marquee-track.is-looping { animation: none; }
   .marquee-track [data-clone] { display: none; }
-  .orb.is-working::after, .orb-tile.play .orb.is-working::after, .js .fold .orb-tile .orb.is-working::after { animation: none; opacity: .5; background: conic-gradient(var(--acc), var(--acc)); }
+  .orb.is-working::after, .orb-tile.play .orb.is-working::after { animation: none; opacity: .5; background: conic-gradient(var(--acc), var(--acc)); }
   .desk-screen { transform: none !important; }
   .news-list li:hover, .orb-tile:hover .orb-stage { transform: none; }
 }
