@@ -837,6 +837,7 @@ html[data-motion="off"] .progress-ring { animation-duration: 4s; }
 .turn-sources a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
 .tool-activity { display: flex; align-items: center; gap: 9px; min-width: 220px; max-width: 100%; padding: 4px 0 8px; color: var(--text-2); font-size: 12px; }
+.writing-indicator { padding-top: 8px; color: var(--text-2); font-size: 12px; line-height: 1.4; }
 .tool-activity .progress-ring { width: 16px; height: 16px; }
 .tool-activity-label { white-space: nowrap; }
 .tool-activity-track { position: relative; overflow: hidden; width: 64px; height: 2px; margin-left: auto; border-radius: 2px; background: var(--fill-2); }
@@ -1060,7 +1061,7 @@ html[data-motion="off"] .feature-list[data-leaving] { animation: none; }
 .bubble-response { --fill-alpha: var(--reply-a, var(--glass-a)); }
 
 /* Newly revealed words surface from low contrast. Paint only: see paintFade. */
-::highlight(qchat-fade-0) { color: rgb(var(--ink) / 0.14); }
+::highlight(qchat-fade-0) { color: rgb(var(--ink) / 0.28); }
 ::highlight(qchat-fade-1) { color: rgb(var(--ink) / 0.42); }
 ::highlight(qchat-fade-2) { color: rgb(var(--ink) / 0.74); }
 

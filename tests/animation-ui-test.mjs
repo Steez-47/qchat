@@ -194,7 +194,7 @@ try {
   check('site markup stays rendered once finished',await evalJS(`!(${plain}).includes('Entity') && (${plain}).includes('More text here.')`));
   const whole=(input)=>evalJS(`QStream.completeBoundary(${JSON.stringify(input)})`);
   check('a paragraph is finished by its blank line',await whole('One line\nstill going')===0 && await whole('One.\n\nTwo')===6);
-  check('lists and fenced code wait for a complete block',await whole('- one\n- tw')===0 && await whole('```js\nconst a;\nconst')===0 && await whole('```js\nconst a;\n```\n\n')==='```js\nconst a;\n```\n\n'.length);
+  check('finished list items appear while code waits for its closer',await whole('- one\n- tw')===6 && await whole('```js\nconst a;\nconst')===0 && await whole('```js\nconst a;\n```\n\n')==='```js\nconst a;\n```\n\n'.length);
 
   // Pressing a button must not disturb anything else, at any point in its animation.
   await open('/',{settings:{animations:'on',autoDismiss:0}});

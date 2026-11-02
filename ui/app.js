@@ -374,14 +374,52 @@
     }
   }
 
-  // The response only ever receives finished blocks (see QStream.completeBoundary), so each
-  // snapshot is parsed whole by the normal safe renderer. Unchanged nodes are preserved.
+  // Lex the complete document so references and growing lists keep their context, but
+  // only parse changed blocks. Finished code, maths and prose keep their DOM and selection.
   function renderReply(entry, text, sources) {
     if (window.QInteractive && window.QResponseTags.hasInteractive(text)) {
+      entry.markdownCache = null;
       renderInteractive(entry.contentEl,text,sources);
       return;
     }
-    syncMarkdownNodes(entry.contentEl, parseReply(text, sources));
+    if (!window.marked) { syncMarkdownNodes(entry.contentEl, parseReply(text, sources)); return; }
+    const source = replyMarkdown(text, sources);
+    const prepared = window.QMath?.prepare(source);
+    const tokens = window.marked.lexer(prepared ? prepared.text : source);
+    const links = JSON.stringify(tokens.links);
+    // Marked can split one HTML scope at a blank line. Its pieces must enter one
+    // template together, otherwise the browser closes the first piece early.
+    const groups = [];
+    let group = [], raw = "";
+    for (const token of tokens) {
+      group.push(token); raw += token.raw;
+      if (group.length === 1 && token.type !== "html" || window.QStream.completeBoundary(raw) >= raw.trimEnd().length) {
+        groups.push({ tokens: group, raw }); group = []; raw = "";
+      }
+    }
+    if (group.length) groups.push({ tokens: group, raw });
+    const keys = groups.map(group => group.raw + "\0" + (group.raw.match(/\uE000\d+\uE001/g) || [])
+      .map(ref => prepared?.formulas[Number(ref.slice(1, -1))]?.html || "").join("\0"));
+    const previous = entry.markdownCache;
+    let shared = 0, offset = 0;
+    if (previous?.links === links) {
+      while (shared < keys.length && previous.blocks[shared]?.key === keys[shared]) {
+        offset += previous.blocks[shared++].nodes;
+      }
+    }
+    const blocks = previous?.blocks.slice(0, shared) || [];
+    const fragment = document.createDocumentFragment();
+    for (let i = shared; i < groups.length; i++) {
+      const block = groups[i].tokens;
+      block.links = tokens.links;
+      const template = document.createElement("template");
+      template.innerHTML = expandMath(window.marked.parser(block), prepared?.formulas);
+      highlightCode(template.content);
+      blocks.push({ key: keys[i], nodes: template.content.childNodes.length });
+      fragment.append(template.content);
+    }
+    syncMarkdownNodes(entry.contentEl, fragment, offset);
+    entry.markdownCache = { links, blocks };
   }
 
   // ---------------------------------------------------------------------------
@@ -2203,9 +2241,12 @@
     const generation = make("div", "image-generation");
     generation.hidden = true; generation.setAttribute("role", "status"); generation.setAttribute("aria-live", "polite");
     generation.append(makeProgressRing(), make("span", "image-generation-label", "Creating image…"), make("span", "image-generation-value"));
+    const writing = make("div", "writing-indicator", "Writing…");
+    writing.hidden = true;
+    writing.setAttribute("role", "status");
     const errorWrap = make("div", "turn-error");
     errorWrap.hidden = true;
-    inner.append(activity, contentEl, mediaEl, generation, errorWrap);
+    inner.append(activity, contentEl, mediaEl, generation, writing, errorWrap);
     scroller.append(inner);
     bubble.append(scroller, make("div", "stream-sheen"));
 
@@ -2260,20 +2301,17 @@
       syncHistoryButton();
       const entry = turnNodes.get(turn.id);
       if (!entry) return;
-      // Text keeps arriving, so a reader heading down counts as back once they are close.
-      const heading = scroller.scrollTop > (entry.lastTop ?? 0);
-      entry.lastTop = scroller.scrollTop;
       // A scroll event from following's last write may still be in flight when the reader
       // takes over; it must not count as them returning, or the wheel feels stuck again.
       const settled = performance.now() - (entry.heldAt ?? -Infinity) > 150;
-      if (settled && (scrollGap(scroller) <= 2 || (heading && scrollGap(scroller) <= 48))) userScrolledUp = false;
+      if (settled && scrollGap(scroller) <= 2) userScrolledUp = false;
       else if (scroller.scrollTop < (entry.followTop ?? 0) - 1) userScrolledUp = true;
       if (!userScrolledUp) { entry.followTop = scroller.scrollTop; followStream(entry); }
       syncScrollState(entry);
     }, { passive: true });
 
     row.append(bubble, tools, jump);
-    const entry = { row, bubble, scroller, inner, contentEl, errorWrap, mediaEl, generation, activity, jump, mediaItems: new Map(), targetHeight: 0 };
+    const entry = { row, bubble, scroller, inner, contentEl, errorWrap, mediaEl, generation, writing, activity, jump, mediaItems: new Map(), targetHeight: 0 };
     turnNodes.set(turn.id, entry);
     sizeObserver.observe(inner);
     // The viewport can shrink after following has caught up, reopening a small gap.
@@ -2364,6 +2402,7 @@
 
     const visibleText = entry.reveal ? entry.reveal.visible : turn.text;
     const streaming = turn.status === "streaming";
+    entry.writing.hidden = !streaming || turn.backendDone || !visibleText || !activity.hidden || !generation.hidden;
     if (entry.renderedText !== visibleText) {
       renderReply(entry, visibleText, turn.sources);
       window.QMath?.renderInto(entry.contentEl);
@@ -2371,7 +2410,7 @@
       entry.renderedText = visibleText;
       if (streaming) noteRevealed(entry);
     }
-    if (!streaming) clearFade(entry);
+    if (!streaming || !QSettings.motionOn) clearFade(entry);
     if (turn.status === "error") {
       entry.errorWrap.replaceChildren(buildTurnError(turn));
       entry.errorWrap.hidden = false;
@@ -2396,17 +2435,39 @@
 
   function clearFade(entry) {
     if (!entry?.fade) return;
+    entry.fade.cancelFrame?.();
     entry.fade = null;
     if (fadeHighlights) FADE_STEPS.forEach((_, i) => CSS.highlights.delete(`qchat-fade-${i}`));
   }
 
   function noteRevealed(entry) {
-    if (!QSettings.motionOn || !fadeHighlights || !["fade", "paragraph"].includes(streamStyle())) return;
-    const length = entry.contentEl.textContent.length;
-    const fade = entry.fade ||= { length: 0, recent: [], running: false };
-    if (length > fade.length) fade.recent.push({ count: Math.min(length - fade.length, 800), at: performance.now() });
-    fade.length = length;
-    if (!fade.running) { fade.running = true; paintFade(entry, fade); }
+    const text = entry.contentEl.textContent;
+    const before = entry.fadeText || "";
+    entry.fadeText = text;
+    if (!QSettings.motionOn || !fadeHighlights || !["fade", "paragraph"].includes(streamStyle())) { clearFade(entry); return; }
+    // Corrections settle immediately; only an appended suffix gets an entrance.
+    if (!text.startsWith(before)) { clearFade(entry); return; }
+    const stops = window.QStream.revealStops(text, before.length, Number.MAX_SAFE_INTEGER);
+    if (!stops.length) return;
+    const fade = entry.fade ||= { recent: [], cancelFrame: null };
+    const walker = document.createTreeWalker(entry.contentEl, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode(), at = 0;
+    const point = to => {
+      while (node && at + node.length < to) { at += node.length; node = walker.nextNode(); }
+      return [node, to - at];
+    };
+    const groups = Math.min(24, stops.length), now = performance.now();
+    let start = before.length;
+    for (let i = 0; i < groups; i++) {
+      const end = stops[Math.ceil((i + 1) * stops.length / groups) - 1];
+      const from = point(start), to = point(end);
+      if (!from[0] || !to[0]) break;
+      const range = new Range();
+      range.setStart(...from); range.setEnd(...to);
+      fade.recent.push({ range, at: now + (groups > 1 ? i * 90 / (groups - 1) : 0) });
+      start = end;
+    }
+    if (!fade.cancelFrame) paintFade(entry, fade);
   }
 
   function paintFade(entry, fade) {
@@ -2414,32 +2475,13 @@
     const now = performance.now();
     fade.recent = fade.recent.filter(item => now - item.at < FADE_STEPS.at(-1));
     const sets = FADE_STEPS.map(() => new Highlight());
-    let node = entry.contentEl;
-    while (node.lastChild) node = node.lastChild;
-    const walker = document.createTreeWalker(entry.contentEl, NodeFilter.SHOW_TEXT);
-    walker.currentNode = node;
-    let text = node.nodeType === Node.TEXT_NODE ? node : walker.previousNode();
-    let end = text ? text.length : 0;
-    for (let i = fade.recent.length - 1; i >= 0 && text; i--) {
-      const age = now - fade.recent[i].at;
+    for (const item of fade.recent) {
+      const age = now - item.at;
       const set = sets[FADE_STEPS.findIndex(limit => age < limit)];
-      let left = fade.recent[i].count;
-      while (left > 0 && text) {
-        const take = Math.min(left, end);
-        if (take) {
-          const range = new Range();
-          range.setStart(text, end - take);
-          range.setEnd(text, end);
-          set.add(range);
-        }
-        left -= take;
-        end -= take;
-        if (end === 0) { text = walker.previousNode(); end = text ? text.length : 0; }
-      }
+      if (entry.contentEl.contains(item.range.commonAncestorContainer)) set.add(item.range);
     }
     sets.forEach((set, i) => CSS.highlights.set(`qchat-fade-${i}`, set));
-    if (fade.recent.length) requestAnimationFrame(() => paintFade(entry, fade));
-    else fade.running = false;
+    fade.cancelFrame = fade.recent.length ? nextFrame(() => { fade.cancelFrame = null; paintFade(entry, fade); }) : null;
   }
 
   function finishReveal(turn, entry) {
