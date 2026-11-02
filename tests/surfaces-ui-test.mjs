@@ -9,12 +9,15 @@ try {
   const { cdp, evalJS } = page;
   await cdp('Page.enable');
   await cdp('Page.navigate', { url: base });
-  for (let i = 0; !await evalJS(`!!window.QSurfaces && !!window.QSettings`); i++) {
+  for (let i = 0; !await evalJS(`document.readyState==='complete' && !!window.QSurfaces && !!window.QSettings && __mock.count('show_main')>0`); i++) {
     assert(i < 400, 'UI loaded');
     await sleep(10);
   }
   await evalJS(`(() => {
-    QSettings.settings.idleCollapse = 0;
+    // The async startup theme apply also sets blur. Keep the fixture strengths in
+    // settings so any later theme apply preserves them, too.
+    QSettings.apply(document.documentElement, {...QSettings.settings,
+      idleCollapse:0, nativeBlur:true, blur:32, replyNativeBlur:true, replyBlur:60});
     const parent = document.createElement('div');
     parent.id = 'surface-test';
     parent.style.cssText = 'position:fixed;left:40px;top:40px;opacity:.5';
@@ -22,7 +25,6 @@ try {
     button.className = 'glass';
     button.style.cssText = 'display:block;width:120px;height:40px;opacity:.4;animation:none;transition:none';
     parent.append(button); document.body.append(parent);
-    QSurfaces.setBlur(true, 0, .8, .6);
   })()`);
   const fixture = `__mock.last('surfaces_set')?.args.rects.find(r => r.y===40 && Math.abs(r.w-120)<.1)`;
   for (let i = 0; !await evalJS(`!!(${fixture})`); i++) {
