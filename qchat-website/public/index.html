@@ -33,6 +33,9 @@
     <symbol id="i-pointer" viewBox="0 0 18 26"><path d="M1.5 1.5v19.2l4.8-4.6 3.3 7.6 3-1.3-3.3-7.4h6.9z"/></symbol>
     <symbol id="i-arrow" viewBox="0 0 20 20"><path d="M4 10h12m0 0-5-5m5 5-5 5"/></symbol>
     <symbol id="i-down" viewBox="0 0 20 20"><path d="M10 3v10m0 0-4-4m4 4 4-4M4 16.5h12"/></symbol>
+    <symbol id="i-up" viewBox="0 0 20 20"><path d="M10 15V5m0 0-4 4m4-4 4 4"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 20 20"><path d="m6.5 8 3.5 3.5L13.5 8"/></symbol>
+    <symbol id="i-check" viewBox="0 0 20 20"><path d="m5 10.5 3.2 3.2L15 7"/></symbol>
     <symbol id="i-q" viewBox="0 0 64 64"><path d="M41.8 36.2A14.5 14.5 0 1 1 43.2 23.8" fill="none" stroke="currentColor" stroke-width="6.2" stroke-linecap="round"/><path d="M35.5 35.5 46.2 46.2" stroke="currentColor" stroke-width="6.4" stroke-linecap="round"/><circle cx="47.2" cy="30.2" r="2.4" fill="currentColor"/></symbol>
   </svg>
 
@@ -44,13 +47,15 @@
       </a>
       <nav class="nav-links" aria-label="Sections">
         <a href="#tour">Tour</a>
-        <a href="#details">Details</a>
+        <a href="#features">Features</a>
         <a href="#looks">Looks</a>
         <a href="#install">Install</a>
+        <a href="/help">Help</a>
         <a href="https://github.com/Steez-47/qchat">GitHub</a>
       </nav>
       <a class="btn btn-ink btn-sm" href="/download" data-dl>Download</a>
     </div>
+    <div class="nav-progress" aria-hidden="true"><i id="nav-progress"></i></div>
   </header>
 
   <main>
@@ -69,6 +74,24 @@
             <a class="link-arrow" href="#story">See it work <svg class="ic" aria-hidden="true"><use href="#i-arrow"/></svg></a>
           </div>
           <p class="meta" data-reveal>Free &middot; x64 &middot; <span data-release-line>Latest release</span></p>
+        </div>
+        <dl class="stats" data-stagger>
+          <div data-reveal><dt><span data-count="2">2</span></dt><dd>assistants, ChatGPT and Gemini</dd></div>
+          <div data-reveal><dt><span data-count="0">0</span></dt><dd>API keys. Just your own sign-in</dd></div>
+          <div data-reveal><dt><span data-count="18">18</span></dt><dd>slash commands, one <kbd>/</kbd> away</dd></div>
+          <div data-reveal><dt><span data-count="20">20</span></dt><dd>looks, from Aurora to OLED black</dd></div>
+        </dl>
+      </div>
+      <div class="marquee" aria-hidden="true">
+        <div class="marquee-track">
+          <span class="mq"><i class="mq-orb"></i>Make this email sound friendlier</span>
+          <span class="mq"><i class="mq-orb"></i>What does this error mean?</span>
+          <span class="mq"><i class="mq-orb"></i>Summarize this chart in one line</span>
+          <span class="mq"><i class="mq-orb"></i>Regex for a UK postcode</span>
+          <span class="mq"><i class="mq-orb"></i>Translate the selection to Spanish</span>
+          <span class="mq"><i class="mq-orb"></i>Plan three days in Kyoto</span>
+          <span class="mq"><i class="mq-orb"></i>Why is my build slow?</span>
+          <span class="mq"><i class="mq-orb"></i>Explain this paragraph like I&rsquo;m twelve</span>
         </div>
       </div>
     </section>
@@ -352,8 +375,83 @@
       </div>
     </section>
 
+    <!-- ================================================================ Assistants -->
+    <section class="assist" id="assistants">
+      <div class="wrap assist-grid">
+        <div class="assist-copy">
+          <p class="eyebrow" data-reveal>Two assistants, one bar</p>
+          <h2 class="h-xl" data-split>Your accounts. Your models.</h2>
+          <p class="body-l" data-reveal>QChat drives chatgpt.com and gemini.google.com in hidden windows with the sign-in you already have. No API keys, no extra subscription. Whatever your plan includes, QChat can use.</p>
+          <ul class="ticks" data-stagger>
+            <li data-reveal><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><b>One small picker</b> for provider, mode, reasoning effort and model.</span></li>
+            <li data-reveal><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><b>Work and Task modes</b> run long agent jobs on ChatGPT and Gemini, where your plan has them.</span></li>
+            <li data-reveal><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><b>Each chat keeps its provider</b>, and its tab wears the logo.</span></li>
+            <li data-reveal><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span><b>Full history</b> from your account, images and all, searchable from the bar.</span></li>
+          </ul>
+          <p class="try-hint" data-reveal>Try the picker &rarr;</p>
+        </div>
+        <div class="screen picker-screen" data-screen data-reveal>
+          <div class="canvas" id="picker-demo" data-provider="chatgpt" data-mode="chat">
+            <div class="qc qc-picker">
+              <div class="chip glass pk-note" id="pk-note" aria-live="polite">Ask ChatGPT anything</div>
+              <div class="picker glass" role="group" aria-label="Picker demo">
+                <div class="seg" role="radiogroup" aria-label="Provider" data-seg="provider">
+                  <span class="seg-hl"></span>
+                  <button type="button" role="radio" aria-checked="true" data-v="chatgpt"><i class="pmark pm-gpt"></i>ChatGPT</button>
+                  <button type="button" role="radio" aria-checked="false" data-v="gemini"><i class="pmark pm-gem"></i>Gemini</button>
+                </div>
+                <div class="seg" role="radiogroup" aria-label="Mode" data-seg="mode">
+                  <span class="seg-hl"></span>
+                  <button type="button" role="radio" aria-checked="true" data-v="chat">Chat</button>
+                  <button type="button" role="radio" aria-checked="false" data-v="work"><span class="pk-work">Work</span></button>
+                </div>
+                <div class="prow"><span class="prow-l">Effort</span>
+                  <div class="seg seg-sm" role="radiogroup" aria-label="Effort" data-seg="effort">
+                    <span class="seg-hl"></span>
+                    <button type="button" role="radio" aria-checked="false" data-v="Low">Low</button>
+                    <button type="button" role="radio" aria-checked="true" data-v="Medium">Medium</button>
+                    <button type="button" role="radio" aria-checked="false" data-v="High">High</button>
+                  </div>
+                </div>
+                <div class="prow"><span class="prow-l">Model</span><span class="prow-v">From your plan <svg class="ic"><use href="#i-chev"/></svg></span></div>
+              </div>
+              <div class="tabs">
+                <span class="tab"><svg class="ic"><use href="#i-clock"/></svg></span>
+                <span class="tab"><i class="pmark pm-gpt"></i>Debounce search</span>
+                <span class="tab"><i class="pmark pm-gem"></i>Kyoto trip, 3 days <em>2h</em></span>
+              </div>
+              <div class="bar glass">
+                <span class="orb"></span>
+                <span class="bar-field"><span class="ph" id="pk-ph">Ask ChatGPT</span></span>
+                <span class="picker-pill is-open"><i class="pmark" id="pk-mark"></i><span id="pk-pill">Medium</span><svg class="ic"><use href="#i-chev"/></svg></span>
+                <span class="bar-btn"><svg class="ic"><use href="#i-cam"/></svg></span>
+                <span class="send"><svg class="ic"><use href="#i-send"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================================ Fold -->
+    <section class="fold" id="fold">
+      <div class="wrap">
+        <header class="sec-head fold-head">
+          <p class="eyebrow" data-reveal>Minimize while it thinks</p>
+          <h2 class="h-xl" data-split>Fold it away. The orb keeps watch.</h2>
+          <p class="body-l" data-reveal>Long answer? Click the orb and get on with your day. QChat shrinks to a dot that tells you exactly what&rsquo;s going on, so you only come back when there&rsquo;s something to read.</p>
+        </header>
+        <div class="orbs orbs-wide" data-stagger>
+          <figure class="orb-tile" data-reveal><div class="orb-stage"><span class="orb big is-working"></span></div><figcaption><b>Working</b>A thin arc spins while the reply is on its way.</figcaption></figure>
+          <figure class="orb-tile" data-reveal><div class="orb-stage"><span class="orb big is-ready"><i class="orb-badge">1</i></span></div><figcaption><b>Reply ready</b>Green with a &ldquo;1&rdquo;. Click to read it.</figcaption></figure>
+          <figure class="orb-tile" data-reveal><div class="orb-stage"><span class="orb big is-attention"><i class="orb-badge">!</i></span></div><figcaption><b>Needs you</b>An error, or a task asking for approval.</figcaption></figure>
+          <figure class="orb-tile" data-reveal><div class="orb-stage"><span class="orb big"><i class="upd-badge"><svg><use href="#i-up"/></svg></i></span></div><figcaption><b>Update</b>A new version is out. Hover, press Update.</figcaption></figure>
+        </div>
+      </div>
+    </section>
+
     <!-- ================================================================ Details -->
-    <section class="details" id="details">
+    <section class="details" id="features">
       <div class="wrap">
         <header class="sec-head">
           <p class="eyebrow" data-reveal>And the details</p>
@@ -361,17 +459,24 @@
         </header>
         <ul class="grid-list" data-stagger>
           <li data-reveal><h3>Real glass</h3><p>The desktop really is blurred behind it, and clicks pass straight through the empty space around the bar.</p></li>
-          <li data-reveal><h3>Code and maths, rendered</h3><p>Highlighted code, typeset maths, tables and images. Hover a reply to copy or retry it.</p></li>
+          <li data-reveal><h3>Code and maths, rendered</h3><p>Highlighted code, typeset maths, aligned tables, task lists, images, audio and video.</p></li>
+          <li data-reveal><h3>Edit, retry, copy</h3><p>Hover a reply to copy, retry or open it on the site. Hover your own message to copy or edit it.</p></li>
+          <li data-reveal><h3>Find anything</h3><p><kbd>Ctrl</kbd> <kbd>F</kbd> searches the whole conversation, with <kbd>F3</kbd> for the next match.</p></li>
           <li data-reveal><h3>Temporary chats</h3><p><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>N</kbd> starts a chat that stays out of your history.</p></li>
           <li data-reveal><h3>Kept on your PC</h3><p>Up to 50 chats are saved locally so they open instantly, and unsent drafts survive a restart.</p></li>
           <li data-reveal><h3>Six-second undo</h3><p>Removing a chat, <code>/clear</code> and <code>/discard</code> can all be undone for six seconds.</p></li>
           <li data-reveal><h3>Copy and export</h3><p><code>/copy</code> puts the conversation on your clipboard as Markdown. <code>/export</code> saves it to Downloads.</p></li>
           <li data-reveal><h3>Open at startup</h3><p>Starts quietly in the tray when you log in, so <kbd>Alt</kbd> <kbd>Q</kbd> works from the first minute.</p></li>
           <li data-reveal><h3>Recovers by itself</h3><p>A dropped connection retries when the network returns, with your draft and files kept exactly as they were.</p></li>
+          <li data-reveal><h3>Fits your screen</h3><p>Sizes itself for your display and scaling on first start, from 720p laptops to big monitors.</p></li>
+          <li data-reveal><h3>Updates itself</h3><p>A small arrow on the orb means a new version. One click downloads it, checks the checksum and restarts.</p></li>
         </ul>
 
         <div class="keys">
-          <h3 class="keys-h" data-reveal>Your hands never leave the keys.</h3>
+          <div class="keys-side">
+            <h3 class="keys-h" data-reveal>Your hands never leave the keys.</h3>
+            <a class="link-arrow" href="/help#shortcuts" data-reveal>Every shortcut <svg class="ic" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          </div>
           <dl class="keys-list" data-stagger>
             <div data-reveal><dt><kbd>Alt</kbd> <kbd>Q</kbd></dt><dd>Show or hide QChat</dd></div>
             <div data-reveal><dt><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Q</kbd></dt><dd>Ask about the selected text</dd></div>
@@ -382,6 +487,27 @@
             <div data-reveal><dt><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>C</kbd></dt><dd>Copy the latest reply</dd></div>
             <div data-reveal><dt><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>X</kbd></dt><dd>Copy the last code block</dd></div>
           </dl>
+        </div>
+
+        <div class="slash">
+          <div class="slash-copy">
+            <h3 class="keys-h" data-reveal>Type a slash. Do anything.</h3>
+            <p class="body-l" data-reveal>Eighteen commands sit behind <kbd>/</kbd>: switch assistants, start a temporary chat, export, rename, check for updates. Go on, type in the bar.</p>
+            <a class="link-arrow" href="/help#commands" data-reveal>Every command <svg class="ic" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          </div>
+          <div class="screen slash-screen" data-screen data-reveal>
+            <div class="canvas">
+              <div class="qc qc-slash">
+                <div class="chip glass slash-toast" id="slash-toast" aria-live="polite"></div>
+                <div class="menu glass slash-menu" id="slash-menu" role="listbox" aria-label="Commands"></div>
+                <div class="bar glass">
+                  <span class="orb"></span>
+                  <input class="bar-input" id="slash-input" type="text" value="/" autocomplete="off" spellcheck="false" aria-label="Try a slash command" aria-controls="slash-menu">
+                  <span class="send is-ready"><svg class="ic"><use href="#i-send"/></svg></span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -420,6 +546,25 @@
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ================================================================ What's new -->
+    <section class="news" id="new">
+      <div class="wrap">
+        <header class="sec-head news-head">
+          <p class="eyebrow" data-reveal>Recently shipped</p>
+          <h2 class="h-xl" data-split>Always getting better.</h2>
+          <a class="link-arrow" href="https://github.com/Steez-47/qchat/blob/main/CHANGELOG.md" data-reveal>Full changelog <svg class="ic" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+        </header>
+        <ol class="news-list" data-stagger>
+          <li data-reveal><span class="news-v">1.5</span><h3>Work and Task modes</h3><p>Hand long agent jobs to ChatGPT Work or Gemini Task, right from the bar.</p></li>
+          <li data-reveal><span class="news-v">1.5</span><h3>Minimize while waiting</h3><p>Fold into the orb mid-reply. It turns green when the answer&rsquo;s ready.</p></li>
+          <li data-reveal><span class="news-v">1.5</span><h3>One compact picker</h3><p>Provider, mode, effort and model now live in one small popover.</p></li>
+          <li data-reveal><span class="news-v">1.5.1</span><h3>Much smoother streaming</h3><p>Long technical answers stream without a hitch, using about a third of the CPU.</p></li>
+          <li data-reveal><span class="news-v">1.5.3</span><h3>Nightly builds</h3><p>Opt in to try new features early, with their own update channel.</p></li>
+          <li data-reveal><span class="news-v">1.4.3</span><h3>Fits every screen</h3><p>Measures your display on first start, so 720p laptops get compact sizes.</p></li>
+        </ol>
       </div>
     </section>
 
@@ -466,6 +611,9 @@
           <details data-reveal><summary>Where are my chats stored?</summary><p>Your conversations live in your ChatGPT or Gemini account as usual. QChat also keeps up to 50 recent chats on this PC so they open instantly, and you can turn local history off. Temporary chats stay out of both.</p></details>
           <details data-reveal><summary>Why does Windows warn me when I install it?</summary><p>The installer isn&rsquo;t code-signed yet. Choose <strong>More info</strong>, then <strong>Run anyway</strong>. Each release lists SHA256 checksums if you&rsquo;d like to verify the file first.</p></details>
           <details data-reveal><summary>Is there a Mac or Linux version?</summary><p>Not yet. QChat runs on Windows 11 and Windows 10 22H2, x64.</p></details>
+          <details data-reveal><summary>Does QChat send my data anywhere?</summary><p>Only to ChatGPT or Gemini, the same as using their websites. Recent chats are stored only on this PC, and nothing there is uploaded by QChat. Apart from that, QChat only asks GitHub for its latest release, about every six hours, and you can turn that off.</p></details>
+          <details data-reveal><summary>Can I change Alt+Q?</summary><p>Yes. Settings &rarr; Shortcuts records any combination with Ctrl, Alt or Windows. The selection shortcut (<kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Q</kbd>) can be changed or turned off there too.</p></details>
+          <details data-reveal><summary>Where do I find every shortcut and command?</summary><p>Type <code>/keys</code> in the bar, or read the <a class="ul" href="/help">Help page</a>, which covers every shortcut, command and setting.</p></details>
           <details data-reveal><summary>Is QChat made by OpenAI or Google?</summary><p>No. It&rsquo;s an independent app and isn&rsquo;t affiliated with either.</p></details>
         </div>
       </div>
@@ -480,7 +628,7 @@
             <svg class="ic" aria-hidden="true"><use href="#i-down"/></svg>
             Download QChat
           </a>
-          <span class="meta">Free &middot; Windows 10 22H2 &amp; 11 &middot; x64</span>
+          <a class="link-arrow" href="/help">Read the guide <svg class="ic" aria-hidden="true"><use href="#i-arrow"/></svg></a>
         </div>
       </div>
     </section>
@@ -490,6 +638,7 @@
     <div class="wrap foot-in">
       <a class="brand" href="/"><img src="/icon.svg" width="22" height="22" alt=""><span>QChat</span></a>
       <nav aria-label="Project">
+        <a href="/help">Help</a>
         <a href="https://github.com/Steez-47/qchat">GitHub</a>
         <a href="https://github.com/Steez-47/qchat/releases">Releases</a>
         <a href="https://github.com/Steez-47/qchat/blob/main/CHANGELOG.md">Changelog</a>
