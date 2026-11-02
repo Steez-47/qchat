@@ -771,6 +771,21 @@
     }).filter(item => item.text || item.hasMedia);
   }
 
+  // Signed out, Gemini's New chat asks first ("Clear current chat & create new one?"), even on a
+  // blank page. Until it is answered the dialog hides the composer, so a send waits it out and fails.
+  function discardDialog() {
+    return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], mat-dialog-container')].find(node =>
+      shown(node) && /clear current chat|create new one|current one won.t be saved/i.test(node.innerText || node.textContent || ''));
+  }
+  // New chat confirms it. A send cancels it: its text is in the composer the dialog would clear.
+  function answerDiscard(dialog, confirm) {
+    const pattern = confirm ? /^new chat$/i : /^cancel$/i;
+    const button = [...dialog.querySelectorAll('button')].find(node => pattern.test((node.innerText || node.textContent || '').trim()));
+    if (!button) return false;
+    button.click();
+    return true;
+  }
+
   // Gemini can open a promo dialog (such as its guest log-in nudge) that silently swallows Send.
   function dismissNudges() {
     let dismissed = false;
@@ -1321,6 +1336,8 @@
         for (let i = 0; i < 150 && active === job && !job.cancelled; i++) {
           const block = blocking();
           if (block) { fail(job, ...block); return; }
+          const discard = discardDialog();
+          if (discard) { answerDiscard(discard, false); await sleep(100); continue; }
           composer = find('composer');
           if (composer) break;
           await sleep(100);
@@ -1372,6 +1389,8 @@
             if (pending || !present) uploadQuietAt = Date.now();
             if (pending || !present || Date.now() - uploadQuietAt < 800) { incompleteAt = null; await sleep(100); continue; }
           }
+          const discard = discardDialog();
+          if (discard) { answerDiscard(discard, false); await sleep(100); continue; }
           composer = find('composer');
           if (!composer) { await sleep(100); continue; }
           if (composer !== filledComposer || (!completePrompt(composer) && Date.now() - filledAt >= 300)) {
@@ -1579,16 +1598,20 @@
           const composer = find('composer');
           const text = composer && String(composer.tagName === 'TEXTAREA' ? composer.value : composer.innerText ?? composer.textContent ?? '').trim();
           return location.pathname === '/app' && !assistantNodes().length && !userNodes().length &&
-            composer && !text && !uploadBusy() && !attachmentRemovers([], true).length &&
+            composer && !text && !uploadBusy() && !attachmentRemovers([], true).length && !discardDialog() &&
             ![...document.querySelectorAll('input[type="file"]')].some(input => input.files?.length);
         };
-        if (!pendingUpload) {
-          const button = find('fresh');
+        // A page that is already blank needs no click. Signed out, New chat there only opens a
+        // "Clear current chat?" dialog over the composer, and the next send can't get past it.
+        if (!pendingUpload && !fresh()) {
+          const button = discardDialog() ? null : find('fresh');
           if (button) dispatchClickSequence(button);
-          for (let i = 0; i < 8; i++) {
+          for (let i = 0; i < 15; i++) {
             await sleep(100);
             if (resetting !== run) return;
-            if (fresh()) break;
+            const discard = discardDialog();
+            if (discard) answerDiscard(discard, true);
+            else if (fresh()) break;
           }
         }
         if (pendingUpload || !fresh()) {

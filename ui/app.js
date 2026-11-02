@@ -1469,20 +1469,41 @@
   }
 
   const CARRY_FILE = "chat-history.txt";
-  const CARRY_INLINE_MAX = 100000;
+  // The whole message has to fit the site's composer. Gemini's keeps only its first 32,000
+  // characters, newlines included, so a longer hand-off arrives cut short and never sends.
+  const CARRY_MESSAGE_MAX = { chatgpt: 100000, gemini: 30000 };
+  const CARRY_OMITTED = "[Earlier messages omitted]\n\n";
   // What the new assistant gets with the first message. None of it shows in QChat.
+  // Plain text, so an editor that tidies whitespace still holds exactly what was sent.
   function carriedHistory() {
-    return `This is the chat history, respond accordingly.\n\n${serializeConversation("Assistant")}`;
+    return serializeConversation("Assistant")
+      .replace(/\r\n?/g, "\n")
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+      .replace(/[ \t]+$/gm, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
   }
-  function carriedPrompt(wire, history = "") {
-    const note = history
-      ? "The chat history below is our conversation so far. Treat it as your own earlier replies in this chat and answer my next message as a direct continuation. Don't mention the history or this note."
-      : `The attached ${CARRY_FILE} is our conversation so far. Treat it as your own earlier replies in this chat and answer my next message as a direct continuation. Don't mention the file or this note.`;
-    const context = history ? `\n\n<chat_history>\n${history.length > CARRY_INLINE_MAX ? history.slice(-CARRY_INLINE_MAX) : history}\n</chat_history>` : "";
-    return `${note}${context}${wire ? `\n\nMy next message:\n\n${wire}` : ""}`;
+  // Too long for the message: keep the newest turns whole, starting at a turn or line boundary.
+  function fitHistory(history, room) {
+    if (history.length <= room) return history;
+    if (room < 500) return "";
+    let tail = history.slice(-(room - CARRY_OMITTED.length));
+    const turn = tail.indexOf("\n---\n\n## ");
+    const line = tail.indexOf("\n");
+    tail = turn >= 0 ? tail.slice(turn + 6) : line >= 0 ? tail.slice(line + 1) : tail;
+    return CARRY_OMITTED + tail;
+  }
+  function carriedPrompt(wire, history = "", provider = activeProvider) {
+    const next = wire ? `\n\nMy next message:\n\n${wire}` : "";
+    if (!history) return `The attached ${CARRY_FILE} is our conversation so far. Treat it as your own earlier replies in this chat and answer my next message as a direct continuation. Don't mention the file or this note.${next}`;
+    const note = "The chat history below is our conversation so far. Treat it as your own earlier replies in this chat and answer my next message as a direct continuation. Don't mention the history or this note.";
+    const open = "\n\n<chat_history>\n", close = "\n</chat_history>";
+    const fitted = fitHistory(history, (CARRY_MESSAGE_MAX[provider] || CARRY_MESSAGE_MAX.gemini) - note.length - open.length - close.length - next.length);
+    return fitted ? `${note}${open}${fitted}${close}${next}` : wire;
   }
   async function stageCarry(history) {
-    const item = { file: new File([history], CARRY_FILE, { type: "text/plain" }), offset: 0, state: "staging", cancelled: false, id: null, previewURL: null };
+    const text = `This is the chat history, respond accordingly.\n\n${history}`;
+    const item = { file: new File([text], CARRY_FILE, { type: "text/plain" }), offset: 0, state: "staging", cancelled: false, id: null, previewURL: null };
     await stageAttachment(item);
     return item.state === "ready" ? item : null;
   }
@@ -2948,8 +2969,10 @@
       if (assistantTurn.status !== "streaming") throw { code: "stopped" };
       const args = { id: assistantTurn.id, prompt: wirePrompt(prompt, selectionTexts), attachmentIds: files.map((f) => f.id), provider: activeProvider, temporary: Boolean(chat.temporary), mode };
       if (history) {
-        // As a file where the site takes one, otherwise inside the message itself.
-        const carried = files.length < 10 && providerStates[activeProvider]?.loggedIn !== false ? await stageCarry(history) : null;
+        // ChatGPT signed in takes it as a file. Gemini gets it inside the message: its uploads are
+        // signed-in only and slow to confirm, while text in its composer is checked before Send.
+        const byFile = activeProvider === "chatgpt" && files.length < 10 && providerStates.chatgpt?.loggedIn !== false;
+        const carried = byFile ? await stageCarry(history) : null;
         if (generation !== chatGeneration || assistantTurn.status !== "streaming") {
           if (carried) void discardAttachment(carried);
           if (generation !== chatGeneration) return;
