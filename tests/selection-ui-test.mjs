@@ -30,6 +30,11 @@ try {
     window.__TAURI__ = { event: { listen: async (name, fn) => { (test.handlers[name] ||= []).push(fn); } }, core: { invoke: async (cmd, args = {}) => {
       test.calls.push({ cmd, args });
       if (cmd === 'chat_status') { test.emit({ type: 'status', ready: true, loggedIn: false, url: 'https://chatgpt.com/' }); return null; }
+      if (cmd === 'chat_new') {
+        test.emit({ type: 'chat-reset', provider: 'chatgpt' });
+        test.emit({ type: 'status', provider: 'chatgpt', ready: true, loggedIn: false, url: 'https://chatgpt.com/' });
+        return null;
+      }
       if (cmd === 'get_theme') return { dark: true };
       if (cmd === 'snapshot_capture') {
         if (test.delaySnapshot) await new Promise((resolve, reject) => {
