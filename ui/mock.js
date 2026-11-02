@@ -288,6 +288,7 @@
             clearMockStream();
             mock.pageConv = null;
             emitStatus(20);
+            Promise.resolve().then(() => mock.emit("bridge", {type:"chat-reset", provider: mock.provider}));
             return null;
           case "chat_open":
             if (mock.failOpen) throw new Error(mock.failOpen);

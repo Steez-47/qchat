@@ -43,6 +43,11 @@
   setInterval(flush, 100);
   const debug = (...args) => { if (window.__QCHAT_DEBUG__) console.debug('[qchat]', ...args); };
   let active, loginCache, loginAt = -Infinity, loginProbe, loginUnknown = true, loginStale = false;
+  // A new page load has no memory of a running reply, so each status says which load sent it.
+  const loadId = Math.random().toString(36).slice(2);
+  // Set while newChat clears the page. A send that arrives meanwhile waits its turn: it would
+  // otherwise look like the old chat still being there, and reload the page out from under itself.
+  let resetting = null;
   const media = new Map();
   let mediaSerial = 0, inputSerial = 0, uploads = 0, uploadFailureAt = -Infinity, uploadDoneAt = -Infinity, attachmentSelectionAt = -Infinity, cancelledAttachments, downloadActivation;
   function error(id, code, message) { emit({ type: 'error', ...(id == null ? {} : { id }), code, message }); }
@@ -902,6 +907,12 @@
     if (job) request.then(response => { try { observe(response.clone(), job); } catch (e) { detach(job, e.message); } }, e => fail(job, 'stream_failed', e.message));
     return request;
   };
+  // A modal the page is holding open can swallow Send without any request starting.
+  function noRequestStarted(job) {
+    const modal = [...document.querySelectorAll('[role="dialog"][aria-modal="true"], [role="alertdialog"]')].some(node => node.getClientRects?.().length !== 0);
+    if (modal) fail(job, 'needs_attention', 'A pop-up on the ChatGPT site is in the way. Close it there, then send again.');
+    else fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`);
+  }
   function blocking() {
     const excluded = '[data-message-author-role], [data-message-role], [data-turn], article, nav';
     const real = node => !node.closest(excluded);
@@ -1439,7 +1450,7 @@
     }
     const probe = loginProbe;
     if (probe) { await probe; if (loginProbe === probe) loginProbe = null; }
-    emit({ type: 'status', setupId: documentSetupId, temporary: temporaryReady(), ready: !!find('composer'), loggedIn: !!loginCache, authPending: loginUnknown, url: location.href });
+    emit({ type: 'status', loadId, resetting: !!resetting, setupId: documentSetupId, temporary: temporaryReady(), ready: !!find('composer'), loggedIn: !!loginCache, authPending: loginUnknown, url: location.href });
   }
   // Select only explicitly labelled thinking controls, never model entries.
   let reasoningSelection = false;
@@ -1569,6 +1580,7 @@
       if (await ensureMode(null, mode)) emit(modeReport());
     },
     async send({ id, prompt = '', attachmentCount = 0, reasoningEffort, temporary = false, mode, conversationId }) {
+      while (resetting) await resetting;
       if (reasoningEffort != null && !['low', 'medium', 'high'].includes(reasoningEffort)) { error(id, 'invalid_reasoning_effort', 'Choose low, medium or high reasoning.'); return; }
       if (mode != null && !['chat', 'work'].includes(mode)) { error(id, 'invalid_mode', 'Choose chat or work mode.'); return; }
       if (temporary && !temporaryReady()) { error(id, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
@@ -1662,7 +1674,7 @@
           const button = find('send');
           waiting = 'send';
           if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
-            job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
+            job.startTimer = setTimeout(() => noRequestStarted(job), job.work ? 60000 : 20000);
             job.submitted = true;
             // Capture attachment identity before the click can remove the chips.
             const confirmation = attachmentCount > 0 ? confirmAttachmentSend(job, composer, temporary) : null;
@@ -1684,7 +1696,7 @@
           if (!composer) { fail(job, 'not_ready', 'ChatGPT composer changed. Please try again.'); return; }
           // Enter can't send what the page never took, and could send leftovers on their own.
           if (prompt.trim() && !typed(find('composer') || composer)) { fail(job, 'send_failed', 'ChatGPT did not take the message text. Try again.'); return; }
-          job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
+          job.startTimer = setTimeout(() => noRequestStarted(job), job.work ? 60000 : 20000);
           if (temporary) claimTemporaryThread();
           job.submitted = true; composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
         }
@@ -1762,7 +1774,7 @@
     },
     async listModels(chooseId, mode) {
       let switcher, opened = false, relist = false;
-      const unavailable = () => { if (chooseId === undefined) emit({type:'models',models:[],error:'unavailable'}); };
+      const unavailable = () => { emit({type:'models',models:[],error:'unavailable'}); };
       const click = node => { for(const type of ['pointerdown','mousedown','pointerup','mouseup','click']) node.dispatchEvent(new (type.startsWith('pointer') ? PointerEvent : MouseEvent)(type,{bubbles:true,cancelable:true,button:0})); };
       try {
         if(active) { unavailable(); return; }
@@ -1822,25 +1834,38 @@
     },
     async chooseModel(id) { return window.__qchat.listModels(id); },
     async newChat(options = {}) {
-      clearTemporaryStage(); forgetTemporaryThread();
-      if (options.temporary) {
-        await window.__qchat.stop(); media.clear();
-        const target = new URL('https://chatgpt.com/?temporary-chat=true' + (options.setupId ? '#qchat-setup=' + encodeURIComponent(options.setupId) : ''));
-        if (location.origin === target.origin && location.pathname === target.pathname && location.search === target.search) { location.hash = target.hash; location.reload(); }
-        else location.assign(target.href);
-        return;
+      let finish;
+      let leaving = false;
+      const run = resetting = new Promise(resolve => { finish = resolve; });
+      try {
+        clearTemporaryStage(); forgetTemporaryThread();
+        if (options.temporary) {
+          await window.__qchat.stop(); media.clear();
+          leaving = true;
+          const target = new URL('https://chatgpt.com/?temporary-chat=true' + (options.setupId ? '#qchat-setup=' + encodeURIComponent(options.setupId) : ''));
+          if (location.origin === target.origin && location.pathname === target.pathname && location.search === target.search) { location.hash = target.hash; location.reload(); }
+          else location.assign(target.href);
+          return;
+        }
+        await window.__qchat.stop();
+        media.clear(); cancelledAttachments = null; downloadActivation = null;
+        // The next send goes wherever this page is, so it must really be a fresh chat:
+        // off the old conversation's URL (/c/ signed in, /uc/ as a guest), with none of its turns on screen.
+        const fresh = () => !/\/u?c\//.test(location.pathname) && !assistantNodes().length && !document.querySelector(userSelector);
+        const button = find('fresh');
+        if (button) button.click();
+        else { history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); }
+        for (let i = 0; i < 15 && !fresh(); i++) await sleep(100);
+        if (!fresh()) { leaving = true; location.assign('https://chatgpt.com/'); return; }
+        await sleep(300); await status();
+        emit({ type: 'chat-reset' });
+      } finally {
+        // A page on its way out starts nothing more: the app waits for the next load.
+        if (!leaving) {
+          if (resetting === run) resetting = null;
+          finish();
+        }
       }
-      await window.__qchat.stop();
-      media.clear(); cancelledAttachments = null; downloadActivation = null;
-      // The next send goes wherever this page is, so it must really be a fresh chat:
-      // off the old conversation's URL, with none of its turns on screen.
-      const fresh = () => !/\/c\//.test(location.pathname) && !assistantNodes().length && !document.querySelector(userSelector);
-      const button = find('fresh');
-      if (button) button.click();
-      else { history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); }
-      for (let i = 0; i < 15 && !fresh(); i++) await sleep(100);
-      if (!fresh()) { location.assign('https://chatgpt.com/'); return; }
-      await sleep(300); await status();
     },
     status
   };

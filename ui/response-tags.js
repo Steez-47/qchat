@@ -118,7 +118,10 @@
     const tail = source.slice(at);
     if (!/^\{@body\b/.test(tail)) return /^\{@(?:b(?:o(?:d(?:y)?)?)?)?$/.test(tail) ? {end:source.length,partial:true} : null;
     const end = expressionEnd(source,at);
-    return end < 0 ? {end:source.length,partial:true} : {end:end+1};
+    if (end >= 0) return {end:end+1};
+    // Unclosed: hold back only what can still become a declaration, so prose mentioning {@body
+    // doesn't lose everything after it.
+    return /^\{@body\s*(?:$|c(?:o(?:n(?:st?)?)?)?$|l(?:et?)?$|v(?:ar?)?$|(?:const|let|var)\b)/.test(tail) ? {end:source.length,partial:true} : null;
   }
   function hasInteractive(text) {
     let found = false;
