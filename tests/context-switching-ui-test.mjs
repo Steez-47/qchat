@@ -176,6 +176,21 @@ try {
   await send('Back again');
   check('the restored conversation gets a plain message', (await lastSend()).prompt === 'Back again' && (await lastSend()).attachmentIds.length === 0);
 
+  // A failed hand-off still adds a question to the local chat. Returning must carry that
+  // changed conversation, rather than treating it as an untouched switch that can be undone.
+  await open('/?mock=signedin', { chats: seeded });
+  await switchTo('gemini');
+  await evalJS(`__mock.sendError='send_failed'`);
+  await send('Keep this attempted Gemini question too');
+  await evalJS(`__mock.sendError=null`);
+  await open('/?mock=signedin', { keep: true });
+  await switchTo('chatgpt');
+  chat = await current();
+  check('returning after a failed hand-off does not reuse the old ChatGPT thread', chat.conversationId === null && chat.carry?.provider === 'gemini');
+  const afterFailure = await evalJS(`__mock.calls.length`);
+  await send('Continue with all of that');
+  check('returning after failure carries the changed chat and the next question', (await stagedText(afterFailure))?.text.includes('Keep this attempted Gemini question too') && (await lastSend()).prompt.endsWith('Continue with all of that') && (await lastSend()).attachmentIds.length === 1);
+
   // A pending hand-off survives a restart.
   await open('/?mock=signedin', { chats: seeded });
   await switchTo('gemini');

@@ -1142,6 +1142,22 @@ test('a send right after a model pick waits for the pick', async () => {
   b.api.stop?.(); await b.tick(25000); await sent;
 });
 
+test('newChat cancels a Gemini history send still waiting for a model operation', async () => {
+  const b = createBrowser({ ready: true, loggedIn: true });
+  asyncModelMenu(b);
+  const submissions = submissionFixture(b);
+  const pick = b.api.chooseModel('3.6 Flash');
+  const sent = b.api.send({ id: 'old-history', prompt: 'Old context and question' });
+  await b.tick(10);
+  const reset = b.api.newChat();
+  await b.tick(3000); await pick; await reset; await sent;
+  assert.deepEqual(submissions, []);
+  assert.equal(b.events.filter(event => event.type === 'done' && event.id === 'old-history').length, 1);
+  const next = b.api.send({ id: 'new-question', prompt: 'Only this new question' });
+  await b.tick(3000); await next;
+  assert.deepEqual(submissions, [{ text: 'Only this new question', attachments: 0 }]);
+});
+
 test('listConversations returns empty list without error for guests and reads side nav links when signed in', async () => {
   const b = createBrowser({ ready: true, loggedIn: false });
   await b.api.listConversations(0);

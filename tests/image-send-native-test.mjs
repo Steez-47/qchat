@@ -84,7 +84,7 @@ const fixtureHTML = provider => `<!doctype html><html><head><meta charset="utf-8
     const composer=document.getElementById('prompt-textarea'),text=composer.innerText.trim(),files=fixtureFiles.slice();
     const record={text,path:location.pathname,files:await Promise.all(files.map(async file=>({name:file.name,bytes:Array.from(new Uint8Array(await file.arrayBuffer()))}))) };
     fixtureSubmissions.push(record);
-    composer.textContent='';document.getElementById('files').value='';document.getElementById('chips').replaceChildren();
+    composer.textContent='';document.getElementById('files').value='';document.getElementById('chips').replaceChildren();fixtureFiles=[];
     const user=document.createElement(${JSON.stringify(provider === 'chatgpt' ? 'div' : 'user-query')});
     user.setAttribute('data-message-author-role','user');user.setAttribute('data-message-id',crypto.randomUUID());user.textContent=text;
     for(const file of files){const image=document.createElement('img');image.src=URL.createObjectURL(file);user.append(image);}
@@ -194,6 +194,21 @@ try {
   check('context switch resets an existing Gemini chat and submits exactly once', submissions.length === 1 && submissions[0].path === '/app' && errors.length === 0);
   check('context switch sends the entire new message alongside exact history bytes', submissions[0]?.text.endsWith('What was the context? Include my new question.') && historyText.includes('Remember this context from ChatGPT: kōwhai 🌏') && !historyText.includes('What was the context?'));
   check('context switch keeps the history file and instructions out of the visible chat', await main.evaluate(`(()=>{const chat=JSON.parse(localStorage.getItem('qchat.chats')).current;return !chat.carry&&chat.transcript.some(turn=>turn.text==='What was the context? Include my new question.')&&!JSON.stringify(chat.transcript).includes('chat-history.txt');})()`));
+  // Return to a ChatGPT page that still holds its previous thread. A partial editor insertion
+  // must not send just the history note, or reuse that old thread for the carried conversation.
+  site = providerSites.chatgpt;
+  await site.evaluate(`(()=>{history.pushState({},'', '/c/oldchatgpt123');const exec=document.execCommand.bind(document);let partial=true;document.execCommand=(cmd,ui,text)=>exec(cmd,ui,cmd==='insertText'&&partial?(partial=false,text.split('\\n')[0]):text);})()`);
+  await chooseProvider('chatgpt');
+  const returnErrors = await sendText('Continue on ChatGPT with everything we said on Gemini.');
+  const returned = await site.evaluate('fixtureSubmissions');
+  const returnedFile = returned[0]?.files.find(file => file.name === 'chat-history.txt');
+  const returnedHistory = returnedFile ? new TextDecoder().decode(Uint8Array.from(returnedFile.bytes)) : '';
+  check('returning to ChatGPT starts a fresh conversation instead of reusing its last thread', returned.length === 1 && returned[0].path === '/' && returnErrors.length === 0);
+  check('returning to ChatGPT sends the complete new question with both providers\' history', returned[0]?.text.endsWith('Continue on ChatGPT with everything we said on Gemini.') && returnedHistory.includes('Remember this context from ChatGPT: kōwhai 🌏') && returnedHistory.includes('What was the context? Include my new question.'));
+  check('the return hand-off completes and later ChatGPT messages send plainly', await main.evaluate(`!JSON.parse(localStorage.getItem('qchat.chats')).current.carry`));
+  await sendText('One more message on ChatGPT.');
+  const later = await site.evaluate('fixtureSubmissions');
+  check('a completed round trip carries history once', later.length === 2 && later[1].text === 'One more message on ChatGPT.' && later[1].files.length === 0);
   check('native image send has no runtime errors', problems.length === 0, problems.join(' | '));
 } catch (error) { console.error('FAIL harness ::', error.message); failed++; }
 finally {
