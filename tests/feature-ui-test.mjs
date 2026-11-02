@@ -104,8 +104,40 @@ try {
   await evalJS(`__mock.reply='Short and done.'`);
   await send('Probe a short reply');
   await waitFor(`(()=>{const rows=[...document.querySelectorAll('.turn-row[data-role=assistant]')].filter(r=>r.dataset.status==='done');return rows.length===1&&!rows[0].hasAttribute('data-capped');})()`);
-  check('reply tools float above the bubble top for a short reply', await evalJS(`(()=>{const t=document.querySelector('.turn-row[data-role=assistant] .bubble-tools');const tr=t.getBoundingClientRect(),br=t.closest('.turn-row').querySelector('.bubble').getBoundingClientRect();return tr.bottom<br.top&&tr.top>=0&&tr.right<=br.right+1;})()`));
-  await evalJS(`__mock.reply=null`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width:760, height:800, deviceScaleFactor:1, mobile:false, screenWidth:1920, screenHeight:1080 });
+  const reachReplyTools = async (label) => {
+    await sleep(700);
+    const points = await evalJS(`(()=>{const row=document.querySelector('.turn-row[data-role=assistant]'),b=row.querySelector('.bubble').getBoundingClientRect();return [...row.querySelectorAll('.bubble-tools button')].map(n=>{const r=n.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2,start:b.top+12}})})()`);
+    let reachable = true;
+    for (const p of points) {
+      await cdp('Input.dispatchMouseEvent', { type:'mouseMoved', x:p.x, y:p.start });
+      await sleep(180);
+      for (let y=p.start; y>=p.y; y--) {
+        await cdp('Input.dispatchMouseEvent', { type:'mouseMoved', x:p.x, y });
+        await sleep(16);
+        reachable &&= await evalJS(`getComputedStyle(document.querySelector('.turn-row[data-role=assistant] .bubble-tools')).pointerEvents==='auto'`);
+      }
+      reachable &&= await evalJS(`!!document.elementFromPoint(${p.x},${p.y})?.closest('.bubble-tools button')`);
+    }
+    check(label+' buttons remain reachable across the bubble edge', reachable);
+    await evalJS(`Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async t=>{window.hoverCopied=t}}})`);
+    const p=points[0];
+    await cdp('Input.dispatchMouseEvent', {type:'mouseMoved',x:p.x,y:p.start});
+    await sleep(180);
+    for(let y=p.start;y>=p.y;y--) await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:p.x,y});
+    await cdp('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});
+    await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});
+    check(label+' Copy works after crossing the bubble edge', await waitFor(`window.hoverCopied==='Short and done.'`));
+    await evalJS(`window.hoverCopied=null`);
+  };
+  await reachReplyTools('Topmost reply toolbar');
+  // Keep a preceding row in place to exercise the toolbar without reserved top padding.
+  await evalJS(`window.hoverPrompt=document.createElement('article');hoverPrompt.className='turn-row';hoverPrompt.style.height='44px';document.getElementById('bubble-zone').prepend(hoverPrompt)`);
+  await sleep(180);
+  await reachReplyTools('Reply toolbar below another row');
+  await evalJS(`hoverPrompt.remove();delete window.hoverPrompt`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width:516, height:800, deviceScaleFactor:1, mobile:false, screenWidth:1920, screenHeight:1080 });
+  await evalJS(`__mock.reply=null;document.getElementById('prompt-input').focus()`);
   check('code highlighting loaded', await evalJS(`typeof QHighlight.highlightInto==='function'`));
   await type('/temp'); await key('Enter');
   check('temporary chat navigation', await evalJS(`__mock.last('chat_new').args.temporary===true`));
