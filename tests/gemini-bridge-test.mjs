@@ -1276,6 +1276,33 @@ test('newChat reports a settled composer after clearing an existing conversation
   assert.ok(b.events.some(event => event.type === 'chat-reset'));
 });
 
+test('newChat reloads a failed history hand-off left in an otherwise empty Gemini chat', async () => {
+  const b = createBrowser({ loggedIn: true });
+  uploadFixture(b);
+  const prompt = 'The attached chat-history.txt contains the old model release discussion.';
+  const sent = b.api.send({ id: 'failed-history', prompt, attachmentCount: 1 });
+  await b.tick(22000); await sent;
+  assert.equal(b.events.find(event => event.id === 'failed-history' && event.type === 'error')?.code, 'send_failed');
+  assert.equal(b.composer.innerText, prompt);
+  // Gemini's New chat control can do nothing when no conversation was created.
+  const button = makeEl('a', { 'aria-label': 'New chat', href: '/app' });
+  b.body.append(button);
+  const reset = b.api.newChat(); await b.tick(1500); await reset;
+  assert.ok(b.navigations.includes('https://gemini.google.com/app'), 'reload the document containing the failed hand-off');
+  assert.ok(!b.events.some(event => event.type === 'chat-reset'), 'old history must never be reported as a fresh composer');
+});
+
+test('newChat does not finish while an old upload can repopulate its composer', async () => {
+  const b = createBrowser({ loggedIn: true });
+  uploadFixture(b, 1, { controls: 0 });
+  const sent = b.api.send({ id: 'unregistered-history', prompt: 'Old model releases', attachmentCount: 1 });
+  await b.tick(121000); await sent;
+  assert.equal(b.events.find(event => event.id === 'unregistered-history' && event.type === 'error')?.code, 'attachment_pending');
+  const reset = b.api.newChat(); await b.tick(1500); await reset;
+  assert.ok(b.navigations.includes('https://gemini.google.com/app'), 'discard the page with an unconfirmed attachment');
+  assert.ok(!b.events.some(event => event.type === 'chat-reset'));
+});
+
 test('newChat falls back to location.assign when side nav click leaves turns on page', async () => {
   const b = createBrowser({ ready: true, pathname: '/app/abcdef1234567890' });
   b.addTurn({ userText: 'hi', replyHtml: '<p>hello</p>', convId: 'abcdef1234567890' });

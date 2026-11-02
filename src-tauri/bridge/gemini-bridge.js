@@ -1547,19 +1547,32 @@
           emit({type:'error', code:'temporary_unavailable', message:'Temporary chats are ChatGPT only.', setupId:options.setupId || null});
           return;
         }
-        cancelledAttachments = null;
-        const hadTurns = assistantNodes().length > 0 || userNodes().length > 0 || location.pathname !== '/app';
-        const button = find('fresh');
-        if (button) dispatchClickSequence(button);
-        for (let i = 0; i < 8; i++) {
-          await sleep(100);
-          if (location.pathname === '/app' && assistantNodes().length === 0 && userNodes().length === 0) break;
+        // An unsent hand-off may still own the composer or an upload, even on /app with no
+        // messages. Gemini's New chat control can be a no-op there. A cancelled upload needs
+        // a new document so its late callbacks cannot restore old files or prompt text.
+        const pendingUpload = uploads > 0 || !!cancelledAttachments;
+        const fresh = () => {
+          const composer = find('composer');
+          const text = composer && String(composer.tagName === 'TEXTAREA' ? composer.value : composer.innerText ?? composer.textContent ?? '').trim();
+          return location.pathname === '/app' && !assistantNodes().length && !userNodes().length &&
+            composer && !text && !uploadBusy() && !attachmentRemovers([], true).length &&
+            ![...document.querySelectorAll('input[type="file"]')].some(input => input.files?.length);
+        };
+        if (!pendingUpload) {
+          const button = find('fresh');
+          if (button) dispatchClickSequence(button);
+          for (let i = 0; i < 8; i++) {
+            await sleep(100);
+            if (resetting !== run) return;
+            if (fresh()) break;
+          }
         }
-        if (hadTurns && (location.pathname !== '/app' || assistantNodes().length > 0 || userNodes().length > 0)) {
+        if (pendingUpload || !fresh()) {
           leaving = true;
           location.assign('https://gemini.google.com/app');
           return;
         }
+        cancelledAttachments = null;
         if (resetting === run) resetting = null;
         await status();
         emit({ type: 'chat-reset' });

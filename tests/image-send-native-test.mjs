@@ -209,6 +209,27 @@ try {
   await sendText('One more message on ChatGPT.');
   const later = await site.evaluate('fixtureSubmissions');
   check('a completed round trip carries history once', later.length === 2 && later[1].text === 'One more message on ChatGPT.' && later[1].files.length === 0);
+
+  // Reproduce a failed hand-off on /app, where Gemini's New chat control can be a no-op.
+  // The old page must be discarded before a new question can reach its composer.
+  await main.evaluate('window.dispatchEvent(new KeyboardEvent("keydown",{key:"n",ctrlKey:true,bubbles:true,cancelable:true}))');
+  await sendText('Remember this old discussion about model releases.');
+  await chooseProvider('gemini');
+  site = providerSites.gemini;
+  await site.evaluate(`(()=>{
+    const exec=document.execCommand.bind(document),timeout=window.setTimeout;
+    document.execCommand=(cmd,ui,text)=>exec(cmd,ui,cmd==='insertText'?text.split('\\n')[0]:text);
+    window.setTimeout=(fn,ms,...args)=>timeout(fn,ms===100?1:ms,...args);
+  })()`);
+  await main.evaluate(`(()=>{const input=document.getElementById('prompt-input');input.value='Continue that discussion';input.dispatchEvent(new Event('input'));document.getElementById('btn-send').click();})()`);
+  await until(() => main.evaluate('!!document.querySelector("[data-role=assistant][data-status=error]")&&!document.getElementById("btn-reasoning").disabled'), 'failed history hand-off');
+  check('a partial history hand-off errors without submitting', await site.evaluate('fixtureSubmissions.length===0 && document.getElementById("prompt-textarea").innerText.includes("chat-history.txt")'));
+  await site.evaluate('window.fixtureReset=()=>{};window.staleHistoryDocument=true');
+  await main.evaluate('window.dispatchEvent(new KeyboardEvent("keydown",{key:"n",ctrlKey:true,bubbles:true,cancelable:true}))');
+  await sendText('What is the capital of France?');
+  const fresh = await site.evaluate('({stale:!!window.staleHistoryDocument,submissions:fixtureSubmissions})');
+  check('New chat discards the failed hand-off document even when its reset control does nothing', !fresh.stale);
+  check('the fresh chat submits the capital question once without old history', fresh.submissions.length === 1 && fresh.submissions[0].text === 'What is the capital of France?' && fresh.submissions[0].files.length === 0);
   check('native image send has no runtime errors', problems.length === 0, problems.join(' | '));
 } catch (error) { console.error('FAIL harness ::', error.message); failed++; }
 finally {
