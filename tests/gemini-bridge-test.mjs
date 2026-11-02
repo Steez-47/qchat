@@ -392,7 +392,11 @@ function createBrowser({ hostname = 'gemini.google.com', pathname = '/app', read
     console,
     getComputedStyle: node => ({ overflowY: 'visible',
       display: /display:\s*none/.test(node.getAttribute('style') || '') ? 'none' : 'block',
-      visibility: /visibility:\s*hidden/.test(node.getAttribute('style') || '') ? 'hidden' : 'visible' }),
+      visibility: /(?:^|;)\s*visibility:\s*hidden/.test(node.getAttribute('style') || '') ? 'hidden' : 'visible',
+      opacity: /(?:^|;)\s*opacity:\s*([^;]+)/.exec(node.getAttribute('style') || '')?.[1]?.trim() || '1',
+      contentVisibility: /content-visibility:\s*hidden/.test(node.getAttribute('style') || '') ? 'hidden' : 'visible',
+      clipPath: /clip-path:\s*([^;]+)/.exec(node.getAttribute('style') || '')?.[1]?.trim() || 'none',
+      clip: /(?:^|;)\s*clip:\s*([^;]+)/.exec(node.getAttribute('style') || '')?.[1]?.trim() || 'auto' }),
     Date: class extends Date { static now() { return now; } },
     setTimeout: (fn, ms) => schedule(fn, ms, 0),
     clearTimeout: id => timers.delete(id),
@@ -811,6 +815,18 @@ test('streamed Gemini prose and code exclude CSS staging and accessibility copie
   assert.equal(b.api._htmlToMarkdown(parseHTML('<div><span style="display:none">Hidden only</span></div>')), '');
   const blocks = parseHTML('<div><ul><li>Visible</li><li style="display:none">Hidden item</li></ul><table><tr><th>Name</th></tr><tr><td>Visible</td></tr><tr style="display:none"><td>Hidden row</td></tr></table></div>');
   assert.equal(b.api._htmlToMarkdown(blocks), '- Visible\n\n| Name |\n| --- |\n| Visible |');
+});
+
+test('transparent and clipped Gemini copies never enter streamed or completed replies', async () => {
+  const b = createBrowser();
+  const html = '<p>Again. Again.<span style="opacity:0">Again. Again.</span><span style="clip-path:inset(50%)">**Again. Again.**</span><span style="clip:rect(0px, 0px, 0px, 0px)">Again. Again.</span><span style="content-visibility:hidden">Again. Again.</span></p><p><span style="opacity:0.4">Fading in.</span></p><pre><code>const x = 1;<span style="opacity:0">const x = 1;</span></code></pre>';
+  const expected = 'Again. Again.\n\nFading in.\n\n```\nconst x = 1;\n```';
+  let turn;
+  b.sendButton.onClick = () => { b.setStop(true); turn = b.addTurn({ userText: 'hello', replyHtml: html, streaming: true }); };
+  await b.api.send({ id: 'hidden-copies', prompt: 'hello' }); await b.tick(300);
+  assert.equal(b.events.filter(event => event.type === 'delta').at(-1)?.text, expected);
+  turn.querySelector('.markdown').classList.remove('animate'); b.setStop(false); await b.tick(1600);
+  assert.equal(b.events.find(event => event.type === 'done' && event.id === 'hidden-copies')?.text, expected);
 });
 
 test('send scopes to new model-response turn, streams throttled deltas, emits activity, and finishes when settled', async () => {

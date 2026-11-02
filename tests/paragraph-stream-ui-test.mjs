@@ -129,7 +129,7 @@ try {
     frame.style.cssText = 'position:fixed;left:-5000px;width:640px;height:800px';
     document.body.append(frame);
     const doc = frame.contentDocument;
-    doc.body.innerHTML = '<style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.staging{display:none}.concealed{visibility:hidden}</style><div id="messages"></div><form><textarea id="prompt-textarea"></textarea><button type="button" data-testid="send-button">Send</button></form>';
+    doc.body.innerHTML = '<style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.staging{display:none}.concealed{visibility:hidden}.transparent{opacity:0}.clipped{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.content-hidden{content-visibility:hidden}</style><div id="messages"></div><form><textarea id="prompt-textarea"></textarea><button type="button" data-testid="send-button">Send</button></form>';
     window.__streamDoc = doc;
     window.__streamEvents = [];
     window.__streamTimers = [];
@@ -145,7 +145,7 @@ try {
       doc.getElementById('messages').append(user);
       const stop = doc.createElement('button'); stop.dataset.testid='stop-button'; stop.onclick=()=>stop.remove(); doc.body.append(stop);
       const reply = doc.createElement('div'); reply.setAttribute('data-dil-source-message-id','stream-fixture'); reply.setAttribute('data-markdown-copy','');
-      reply.innerHTML='<div data-dil-message-id="stream-fixture"><p>I found <strong>several genuinely credible firsthand</strong><span class="sr-only">several genuinely credible firsthand</span> accounts.</p><p>The feedback varies.<span class="sr-only">The feedback varies.</span><span class="staging">The feedback varies.</span><span class="concealed">The feedback varies.</span></p><p>Still composing</p></div>';
+      reply.innerHTML='<div data-dil-message-id="stream-fixture"><p>I found <strong>several genuinely credible firsthand</strong><span class="sr-only">several genuinely credible firsthand</span><span class="transparent">several genuinely credible firsthand</span> accounts.</p><p>The feedback varies.<span class="sr-only">The feedback varies.</span><span class="staging">The feedback varies.</span><span class="concealed">The feedback varies.</span><span class="clipped">**The feedback varies.**</span><span class="content-hidden">The feedback varies.</span></p><p>Still composing</p></div>';
       doc.getElementById('messages').append(reply);
     };
   })()`);
@@ -160,9 +160,18 @@ try {
   await evalJS(`__streamDoc.querySelector('[data-dil-message-id] p:last-child').insertAdjacentHTML('beforebegin','<p>Formula <span class="katex"><span class="katex-mathml"><math><semantics><mi>x2</mi><annotation encoding="application/x-tex">x^2</annotation></semantics></math></span><span aria-hidden="true">x2</span></span></p><pre><code class="language-js">const x = 1;<span class="sr-only">const x = 1;</span><span class="staging">old code</span></code></pre><table><tr><th>Name</th><th>Value</th></tr><tr><td>A</td><td>42</td></tr></table><blockquote><p>Quoted answer</p></blockquote>')`);
   await until(`document.querySelector('.turn-content table td') && document.querySelector('.turn-content .katex')`, 'rich bridge output renders during streaming');
   check('streaming code and maths use one representation and keep rich structure',await evalJS(`(()=>{const c=document.querySelector('[data-role=assistant] .turn-content');return c.querySelector('pre code')?.textContent.trim()==='const x = 1;' && c.querySelectorAll('.katex').length===1 && c.querySelector('tbody tr td')?.textContent==='A' && c.querySelector('blockquote')?.textContent.trim()==='Quoted answer' && !c.textContent.includes('old code')})()`));
+  await evalJS(`__streamDoc.querySelector('[data-dil-message-id] p:last-child').insertAdjacentHTML('beforebegin','<p><span id="fading-word" style="opacity:0">Fades into view.</span><span style="clip:rect(0px,0px,0px,0px);position:absolute">Fades into view.</span></p>')`);
+  await sleep(300);
+  check('transparent pending text and fully clipped copies stay out of snapshots',await evalJS(`!(${plain}).includes('Fades into view.') && !__streamEvents.some(event=>event.text?.includes('Fades into view.'))`));
+  await evalJS(`__streamDoc.getElementById('fading-word').style.opacity='0.4'`);
+  await until(`(${plain}).includes('Fades into view.')`, 'partly faded text becomes visible');
+  check('text fading into view appears once without waiting for full opacity',await evalJS(`(${plain}).split('Fades into view.').length===2`));
+  await evalJS(`__streamDoc.querySelector('[data-dil-message-id]').style.display='none';__streamDoc.querySelector('[data-dil-message-id] p:last-child').insertAdjacentHTML('beforebegin','<p>Hidden copy root.<span class="staging">Hidden copy root.</span><span class="transparent">Hidden copy root.</span><span class="clipped">Hidden copy root.</span></p>')`);
+  await until(`(${plain}).includes('Hidden copy root.')`, 'hidden provider copy remains readable');
+  check('a hidden provider copy root still excludes its nested staging copies',await evalJS(`(${plain}).split('Hidden copy root.').length===2 && !(${plain}).includes('old code') && (${plain}).split('several genuinely credible firsthand').length===2`));
   if (shotsDir) { await settle(); await mkdir(shotsDir,{recursive:true}); const shot=await cdp('Page.captureScreenshot',{format:'png'}); await writeFile(path.join(shotsDir,'chatgpt-stream-no-duplicates.png'),Buffer.from(shot.data,'base64')); }
-  await evalJS(`__streamSite.__qchat.stop()`); await finishReply();
-  check('ChatGPT completion keeps the full reply without bringing hidden copies back',await evalJS(`(${plain}).includes('Still composing') && (${plain}).split('several genuinely credible firsthand').length===2 && !(${plain}).includes('The feedback varies.')`));
+  await evalJS(`__streamDoc.querySelector('[data-testid="stop-button"]').remove()`); await finishReply();
+  check('ChatGPT completion keeps the full reply without bringing hidden copies back',await evalJS(`(${plain}).includes('Still composing') && (${plain}).split('several genuinely credible firsthand').length===2 && !(${plain}).includes('The feedback varies.') && (${plain}).split('Hidden copy root.').length===2 && (${plain}).split('Fades into view.').length===2 && __streamEvents.some(event=>event.type==='done' && !event.text.includes('old code'))`));
   await evalJS(`__streamTimers.forEach(clearTimeout)`);
 
   for (const motion of ['on','off']) {
