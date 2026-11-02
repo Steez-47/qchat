@@ -2095,21 +2095,22 @@
   const responseEntry = () => {
     for (const turn of turns) {
       const entry = turnNodes.get(turn.id);
-      if (entry?.bubble && !entry.row.hidden) return entry;
+      if (entry?.bubble && !entry.bubble.hidden && !entry.row.hidden) return entry;
     }
     return null;
   };
 
   function updateBubbleMax() {
     const kept = [...el.zone.querySelectorAll('.turn-row[data-role="user"]:not(.leaving)')].reduce((sum, row) => sum + row.offsetHeight + 8, 0);
-    const chrome = el.stack.offsetHeight - (historyOpen ? el.historyPanel.offsetHeight : (el.zone.hidden ? 0 : el.zone.offsetHeight)) + kept;
+    const statuses = [...el.zone.querySelectorAll('.reply-status:not([hidden])')].reduce((sum, status) => sum + status.offsetHeight + 8, 0);
+    const chrome = el.stack.offsetHeight - (historyOpen ? el.historyPanel.offsetHeight : (el.zone.hidden ? 0 : el.zone.offsetHeight)) + kept + statuses;
     const pct = QSettings.settings.maxHeightPct / 100;
     bubbleMax = Math.max(120, Math.round(pct * window.screen.availHeight) - chrome - 2 * GUTTER);
   }
 
   // Layout reads only; the bubble's width and height ease towards what the text needs.
   function syncBubbleSize(entry) {
-    if (!entry?.bubble || entry.row.hidden || historyOpen) return;
+    if (!entry?.bubble || entry.bubble.hidden || entry.row.hidden || historyOpen) return;
     const capped = entry.inner.offsetHeight > bubbleMax;
     if (capped !== entry.row.hasAttribute("data-capped")) entry.row.toggleAttribute("data-capped", capped);
     const column = Math.min(el.stack.offsetWidth, QSettings.settings.replyWidth || Infinity);
@@ -2307,10 +2308,13 @@
     row.hidden = true;
 
     const bubble = make("div", "bubble bubble-response glass");
+    bubble.hidden = true;
     const scroller = make("div", "bubble-scroll scroll");
     const inner = make("div", "bubble-inner turn-body");
     const contentEl = make("div", "turn-content");
     const mediaEl = make("div", "turn-media");
+    const statusBox = make("div", "reply-status glass glass-tiny");
+    statusBox.hidden = true;
     const activity = make("div", "tool-activity");
     activity.hidden = true;
     activity.setAttribute("role", "status");
@@ -2319,12 +2323,14 @@
     const generation = make("div", "image-generation");
     generation.hidden = true; generation.setAttribute("role", "status"); generation.setAttribute("aria-live", "polite");
     generation.append(makeProgressRing(), make("span", "image-generation-label", "Creating image…"), make("span", "image-generation-value"));
-    const writing = make("div", "writing-indicator", "Writing…");
+    const writing = make("div", "writing-indicator");
+    writing.append(makeProgressRing(), make("span", "", "Writing…"));
     writing.hidden = true;
     writing.setAttribute("role", "status");
     const errorWrap = make("div", "turn-error");
     errorWrap.hidden = true;
-    inner.append(activity, contentEl, mediaEl, generation, writing, errorWrap);
+    statusBox.append(activity, generation, writing);
+    inner.append(contentEl, mediaEl, errorWrap);
     scroller.append(inner);
     bubble.append(scroller, make("div", "stream-sheen"));
 
@@ -2388,8 +2394,8 @@
       syncScrollState(entry);
     }, { passive: true });
 
-    row.append(bubble, tools, jump);
-    const entry = { row, bubble, scroller, inner, contentEl, errorWrap, mediaEl, generation, writing, activity, jump, mediaItems: new Map(), targetHeight: 0 };
+    row.append(bubble, tools, jump, statusBox);
+    const entry = { row, bubble, scroller, inner, contentEl, errorWrap, mediaEl, generation, writing, activity, statusBox, tools, jump, mediaItems: new Map(), targetHeight: 0 };
     turnNodes.set(turn.id, entry);
     sizeObserver.observe(inner);
     // The viewport can shrink after following has caught up, reopening a small gap.
@@ -2470,7 +2476,7 @@
     activity.dataset.kind = turn.activity?.kind || "tool";
     activity.querySelector(".tool-activity-label").textContent = turn.activity?.label || "Using a tool…";
     const generation = entry.generation;
-    generation.hidden = turn.status !== "streaming" || turn.imageProgress?.state !== "generating";
+    generation.hidden = turn.status !== "streaming" || turn.backendDone || turn.imageProgress?.state !== "generating";
     const percentage = turn.imageProgress?.percentage;
     const known = Number.isFinite(percentage);
     generation.toggleAttribute("data-percentage", known);
@@ -2496,7 +2502,20 @@
       entry.errorWrap.hidden = true;
       entry.errorWrap.replaceChildren();
     }
-    entry.row.toggleAttribute("data-empty", !turn.text && !entry.mediaEl.childElementCount && activity.hidden);
+    // Tool phases can come before or between answer blocks; they never open the reply surface.
+    const hasContent = Boolean(visibleText.trim() || entry.mediaEl.childElementCount);
+    entry.bubble.hidden = !hasContent && turn.status !== "error";
+    entry.tools.hidden = entry.bubble.hidden;
+    entry.statusBox.hidden = activity.hidden && generation.hidden && entry.writing.hidden;
+    entry.row.hidden = entry.bubble.hidden && entry.statusBox.hidden;
+    entry.row.toggleAttribute("data-response", !entry.bubble.hidden);
+    entry.row.toggleAttribute("data-empty", !hasContent);
+    if (entry.bubble.hidden) entry.row.removeAttribute("data-capped");
+    entry.jump.style.bottom = `${10 + (entry.statusBox.hidden ? 0 : entry.statusBox.offsetHeight + 8)}px`;
+    for (const other of turns) {
+      const thinking = turnNodes.get(other.id)?.row.querySelector(".thinking");
+      if (thinking) thinking.hidden = !entry.statusBox.hidden;
+    }
     followStream(entry);
     renderHistory();
     queueSizes();
@@ -2647,8 +2666,10 @@
   // First real output: the prompt bows out and the response takes its place.
   function revealResponse(turn, entrance = "swapping") {
     const entry = turnNodes.get(turn.id);
-    if (!entry?.bubble || !entry.row.hidden) return;
+    if (!entry?.bubble || entry.revealed) return;
     renderTurnNow(turn.id);
+    if (entry.bubble.hidden) return;
+    entry.revealed = true;
     entry.row.classList.add("no-size-ease");
     entry.row.hidden = false;
     updateBubbleMax();
@@ -2943,11 +2964,7 @@
     userRow.addEventListener("animationend", (e) => { if (e.animationName === "rise-in") userRow.classList.remove("rising"); });
     el.zone.append(userRow, createResponseRow(assistantTurn));
     el.zone.hidden = false;
-    if (assistantTurn.imageProgress) {
-      // Image generation has a long silence up front: show its progress once the prompt has risen.
-      renderTurnNow(assistantTurn.id);
-      setTimeout(() => { if (assistantTurn.status === "streaming") revealResponse(assistantTurn); }, QSettings.timings.t4);
-    }
+    if (assistantTurn.imageProgress) renderTurnNow(assistantTurn.id);
 
     const label = prompt || (selectionTexts.length ? "Selected text" : files[0]?.file.name) || "Attachment";
     chat.title = chat.title || autoChatTitle(label);
@@ -5457,7 +5474,6 @@
           appendMedia(turn, evt.items);
           if (turn.backendDone) recordPartial(turn);
           revealResponse(turn);
-          turnNodes.get(turn.id)?.row.toggleAttribute("data-empty", false);
           queueSizes();
         }
         break;
@@ -5468,7 +5484,6 @@
           const labels = { search: "Searching the web…", browse: "Reading sources…", code: "Running code…", tool: "Using a tool…" };
           const kind = Object.hasOwn(labels, evt.kind) ? evt.kind : "tool";
           turn.activity = { kind, state: evt.state === "running" ? "running" : "complete", label: labels[kind] };
-          if (turn.activity.state === "running") revealResponse(turn);
           scheduleTurnRender(turn.id, true);
           queueSizes();
         }
@@ -5476,9 +5491,8 @@
       }
       case "image_progress": {
         const turn = turns.find((t) => t.id === evt.id && t.role === "assistant");
-        if (turn && turn.status === "streaming") {
+        if (turn?.status === "streaming" && !turn.backendDone) {
           turn.imageProgress = { state: evt.state, percentage: Number.isFinite(evt.percentage) ? evt.percentage : null };
-          revealResponse(turn);
           scheduleTurnRender(turn.id, true);
         }
         break;
