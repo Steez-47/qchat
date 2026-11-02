@@ -87,7 +87,7 @@ try {
   check('reset completion still waits for a ready composer', await evalJS(`__mock.count('chat_send')===${beforeReset}`));
   await evalJS(`__mock.emit('bridge',{type:'status',provider:'gemini',ready:true,loggedIn:true,resetting:false,loadId:'gemini-ready',url:'https://gemini.google.com/app'})`);
   await until(`__mock.count('chat_send')>${beforeReset}`); await until(idle);
-  check('the settled Gemini page receives the history and new message together', (await lastSend()).prompt.endsWith('Send this together with the history') && (await lastSend()).attachmentIds.length === 1);
+  check('the settled Gemini page receives the history and new message together', (await lastSend()).prompt.includes('Keep this context while Gemini resets') && (await lastSend()).prompt.endsWith('Send this together with the history'));
 
   await open();
   await send('History survives a reset that never finishes');
@@ -112,7 +112,7 @@ try {
   check('Context switching is on by default', await evalJS(`QSettings.settings.contextSwitching===true`));
   check('Settings offers the Context switching toggle', await evalJS(`!!document.querySelector('[data-key="contextSwitching"]') && document.body.textContent.includes('Context switching')`));
 
-  // Signed in: the history goes along as a hidden text file.
+  // Gemini: the history goes inside the first message, even signed in.
   await open();
   await send('Remember the word pineapple');
   const before = await evalJS(`({key:chats_key(),tabs:document.querySelectorAll('#tabs .tab').length})`.replace('chats_key()', `JSON.parse(localStorage.getItem('qchat.chats')).current.key`));
@@ -129,15 +129,15 @@ try {
   const args = await lastSend();
   const staged = await stagedText(calls);
   check('the first Gemini message starts a fresh conversation', await evalJS(`__mock.calls.slice(${calls}).some(c=>c.cmd==='chat_new')`));
-  check('the history goes as a text file', staged?.name === 'chat-history.txt' && staged?.mime === 'text/plain' && args.attachmentIds.length === 1, JSON.stringify(staged?.name));
-  check('the file starts with the history note', staged?.text.startsWith('This is the chat history, respond accordingly.'), staged?.text.slice(0, 80));
-  check('the file holds the earlier exchange', staged?.text.includes('Remember the word pineapple') && staged?.text.includes('## Assistant') && !staged?.text.includes('What was the word?'));
-  check('the message tells the model to continue and ends with what was typed', args.prompt.includes('chat-history.txt') && args.prompt.endsWith('What was the word?'), args.prompt);
+  const inline = args.prompt.match(/<chat_history>\n([\s\S]*)\n<\/chat_history>/)?.[1] || '';
+  check('Gemini gets no file, even signed in', staged === null && args.attachmentIds.length === 0, JSON.stringify(staged?.name));
+  check('the message holds the earlier exchange', inline.includes('Remember the word pineapple') && inline.includes('## Assistant') && !inline.includes('What was the word?'), inline.slice(0, 120));
+  check('the message tells the model to continue and ends with what was typed', args.prompt.startsWith('The chat history below') && args.prompt.endsWith('What was the word?'), args.prompt.slice(0, 120));
   check('the user only sees what they typed', bubble === 'What was the word?', bubble);
   chat = await current();
   check('the message is not marked as having attachments', chat.lastHadAttachments === false);
   check('the whole conversation stays in the transcript', chat.transcript.filter(item => item.text).length === 4 && chat.transcript.find(item => item.text === 'What was the word?'));
-  check('the transcript keeps the typed prompt, not the note', !JSON.stringify(chat.transcript).includes('chat-history.txt'));
+  check('the transcript keeps the typed prompt, not the note', !JSON.stringify(chat.transcript).includes('chat_history') && !JSON.stringify(chat.transcript).includes('Treat it as'));
   check('the hand-off is done once the reply arrives', !chat.carry && chat.carried === true);
 
   await send('And one more');
@@ -199,7 +199,7 @@ try {
   const sinceReload = await evalJS(`__mock.calls.length`);
   await send('After restart');
   const restarted = await stagedText(sinceReload);
-  check('a hand-off pending across a restart still brings the history', restarted?.text.includes('Old question') && (await lastSend()).provider === 'gemini');
+  check('a hand-off pending across a restart still brings the history', restarted === null && (await lastSend()).prompt.includes('Old question') && (await lastSend()).provider === 'gemini');
 
   // Signed out: the site may not take files, so the history goes inside the message.
   await open('/?mock=1');
@@ -221,8 +221,32 @@ try {
   await until(`document.querySelectorAll('#attachments .attachment-chip').length===1`);
   await waitFor(`!document.querySelector('#attachments [data-state=staging]')`); await sleep(150);
   const fileBubble = await send('See my notes');
-  check('the history rides along with the user\'s own file', (await lastSend()).attachmentIds.length === 2);
+  check('the history rides along with the user\'s own file', (await lastSend()).attachmentIds.length === 1 && (await lastSend()).prompt.includes('With files later'));
   check('only the user\'s own file shows on their message', fileBubble?.includes('notes.txt') && !fileBubble.includes('chat-history'), fileBubble);
+
+  // Signed in, ChatGPT takes the history as a hidden text file.
+  await open();
+  await switchTo('gemini');
+  await send('Remember the word mango');
+  await switchTo('chatgpt');
+  const toChatGPT = await evalJS(`__mock.calls.length`);
+  await send('Which fruit was it?');
+  const file = await stagedText(toChatGPT);
+  check('ChatGPT gets the history as a text file', file?.name === 'chat-history.txt' && file?.mime === 'text/plain' && (await lastSend()).attachmentIds.length === 1, JSON.stringify(file?.name));
+  check('the file starts with the history note and holds the exchange', file?.text.startsWith('This is the chat history, respond accordingly.') && file?.text.includes('Remember the word mango') && !file?.text.includes('Which fruit was it?'), file?.text.slice(0, 80));
+  check('the ChatGPT message points at the file and ends with what was typed', (await lastSend()).prompt.includes('chat-history.txt') && (await lastSend()).prompt.endsWith('Which fruit was it?'));
+
+  // A long chat is trimmed to fit Gemini's 32,000-character composer, newest turns kept whole.
+  const longTurns = [];
+  for (let i = 0; i < 40; i++) longTurns.push({ id: 'lu' + i, role: 'user', text: 'Question ' + i + '   \n\n\n\nwith trailing spaces' }, { id: 'la' + i, role: 'assistant', text: 'Answer ' + i + ' ' + 'lorem ipsum '.repeat(120) });
+  await open('/?mock=signedin', { chats: { v: 1, current: { key: 'long', provider: 'chatgpt', conversationId: 'conv-long', title: 'Long', lastActive: 1000, createdAt: 900, lastPrompt: 'Question 39', lastResponse: longTurns.at(-1).text, transcript: longTurns }, recent: [] } });
+  await switchTo('gemini');
+  await send('Latest question');
+  const long = (await lastSend()).prompt;
+  const longHistory = long.match(/<chat_history>\n([\s\S]*)\n<\/chat_history>/)?.[1] || '';
+  check('a long hand-off fits Gemini\'s composer', long.length <= 30000 && long.endsWith('Latest question'), String(long.length));
+  check('a long hand-off keeps the newest turns and says earlier ones were left out', longHistory.startsWith('[Earlier messages omitted]\n\n## ') && longHistory.includes('Answer 39') && !longHistory.includes('Answer 0 '), longHistory.slice(0, 60));
+  check('the hand-off text has no trailing spaces or runs of blank lines', !/[ \t]\n/.test(long) && !/\n{3,}/.test(long));
 
   // Off: the old behaviour, a fresh chat and the old one kept as a tab.
   await open('/?mock=signedin', { settings: { ...BASE, contextSwitching: false } });

@@ -1350,6 +1350,63 @@ test('newChat falls back to location.assign when side nav click leaves turns on 
   assert.ok(b.navigations.includes('https://gemini.google.com/app'));
 });
 
+// Signed out, Gemini's New chat asks before clearing, even on a blank page, and the dialog hides
+// the composer. Live, that stalled every context hand-off with "Gemini is still loading".
+const discardDialogFixture = (b, onConfirm) => {
+  const cancel = makeEl('button', {}, [makeText('Cancel')]);
+  const confirm = makeEl('button', {}, [makeText('New chat')]);
+  const dialog = makeEl('mat-dialog-container', { role: 'dialog' }, [makeText('Clear current chat & create new one?'), makeText("When you start a new chat, your current one won't be saved."), cancel, confirm]);
+  cancel.onClick = () => { dialog.cancelled = true; dialog.remove(); };
+  confirm.onClick = () => { dialog.confirmed = true; dialog.remove(); onConfirm?.(); };
+  return dialog;
+};
+
+test('newChat leaves an already blank guest page alone instead of raising Clear current chat', async () => {
+  const b = createBrowser({ ready: true });
+  const dialogs = [];
+  const newBtn = makeEl('a', { 'aria-label': 'New chat', href: '/app' }, [makeText('New chat')]);
+  newBtn.onClick = () => { const dialog = discardDialogFixture(b); dialogs.push(dialog); b.body.append(dialog); };
+  b.body.append(newBtn);
+  const reset = b.api.newChat(); await b.tick(1500); await reset;
+  assert.equal(dialogs.length, 0, 'New chat must not be clicked on a blank page');
+  assert.ok(b.events.some(event => event.type === 'chat-reset'));
+  assert.ok(!b.navigations.length);
+});
+
+test('newChat confirms Clear current chat when clearing a guest conversation', async () => {
+  const b = createBrowser({ ready: true, pathname: '/app/abcdef1234567890' });
+  b.addTurn({ userText: 'hi', replyHtml: '<p>hello</p>', convId: 'abcdef1234567890' });
+  let dialog;
+  const newBtn = makeEl('a', { 'aria-label': 'New chat', href: '/app' }, [makeText('New chat')]);
+  newBtn.onClick = () => {
+    if (dialog?.parentElement) return;
+    dialog = discardDialogFixture(b, () => {
+      b.body.querySelectorAll('user-query, model-response').forEach(node => node.remove());
+      b.location.pathname = '/app'; b.location.href = 'https://gemini.google.com/app';
+    });
+    b.body.append(dialog);
+  };
+  b.body.append(newBtn);
+  const reset = b.api.newChat(); await b.tick(1500); await reset;
+  assert.ok(dialog?.confirmed, 'the dialog is answered with New chat');
+  assert.ok(b.events.some(event => event.type === 'chat-reset'));
+  assert.ok(!b.navigations.length, 'no reload needed once the dialog is confirmed');
+});
+
+test('a stray Clear current chat dialog during a send is cancelled and the hand-off still goes', async () => {
+  const b = createBrowser({ ready: true });
+  const dialog = discardDialogFixture(b);
+  b.body.append(dialog);
+  const prompt = 'The chat history below is our conversation so far.\n\n<chat_history>\n## You\n\nhi\n</chat_history>\n\nMy next message:\n\nAnd now?';
+  let sentText = null;
+  b.sendButton.onClick = () => { sentText = b.composer.innerText; b.addTurn({ userText: 'And now?', replyHtml: '<p>Continued</p>' }); };
+  const sent = b.api.send({ id: 'stray-dialog', prompt }); await b.tick(3000); await sent;
+  assert.ok(dialog.cancelled, 'Cancel keeps the composer text');
+  assert.ok(!dialog.confirmed);
+  assert.equal(String(sentText).replace(/\n{2,}/g, '\n'), prompt.replace(/\n{2,}/g, '\n'));
+  assert.ok(!b.events.some(event => event.id === 'stray-dialog' && event.type === 'error'), JSON.stringify(b.events.filter(event => event.type === 'error')));
+});
+
 test('rendered sources-list links emit sources event and watchdog times out stalled stream', async () => {
   const b = createBrowser({ ready: true });
   b.sendButton.onClick = () => {

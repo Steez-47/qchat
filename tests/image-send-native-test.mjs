@@ -182,20 +182,19 @@ try {
   await chooseProvider('chatgpt');
   await main.evaluate('window.dispatchEvent(new KeyboardEvent("keydown",{key:"n",ctrlKey:true,bubbles:true,cancelable:true}))');
   await sendText('Remember this context from ChatGPT: kōwhai 🌏');
-  // Gemini already holds a different conversation. Multiline insertion only takes the note;
-  // the bridge must restore the complete continuation before clicking the attachment-enabled Send.
+  // Gemini already holds a different conversation. Multiline insertion only takes the first line;
+  // the bridge must restore the complete hand-off, history included, before clicking Send.
   site = providerSites.gemini;
   await site.evaluate(`(()=>{history.pushState({},'', '/app/oldconversation123');const exec=document.execCommand.bind(document);document.execCommand=(cmd,ui,text)=>exec(cmd,ui,cmd==='insertText'?text.split('\\n')[0]:text);})()`);
   await chooseProvider('gemini');
   const continuation = 'What was the context? Include my new question.\n\n  Keep this indentation, kōwhai 🌏 and <b>& literal text</b>.';
   const errors = await sendText(continuation);
   const submissions = await site.evaluate('fixtureSubmissions');
-  const historyFile = submissions[0]?.files.find(file => file.name === 'chat-history.txt');
-  const historyText = historyFile ? new TextDecoder().decode(Uint8Array.from(historyFile.bytes)) : '';
+  const historyText = submissions[0]?.text.replace(/ /g, ' ').match(/<chat_history>\n([\s\S]*)\n<\/chat_history>/)?.[1] || '';
   check('context switch resets an existing Gemini chat and submits exactly once', submissions.length === 1 && submissions[0].path === '/app' && errors.length === 0);
   // Chromium preserves leading spaces in contenteditable as nonbreaking spaces.
-  check('context switch sends the entire new message alongside exact history bytes', submissions[0]?.text.replace(/\u00a0/g, ' ').endsWith(continuation) && historyText.includes('Remember this context from ChatGPT: kōwhai 🌏') && !historyText.includes('What was the context?'), JSON.stringify(submissions[0]?.text));
-  check('context switch keeps the history file and instructions out of the visible chat', await main.evaluate(`(()=>{const chat=JSON.parse(localStorage.getItem('qchat.chats')).current;return !chat.carry&&chat.transcript.some(turn=>turn.text===${JSON.stringify(continuation)})&&!JSON.stringify(chat.transcript).includes('chat-history.txt');})()`));
+  check('context switch sends the history and the entire new message in one Gemini message', submissions[0]?.text.replace(/\u00a0/g, ' ').endsWith(continuation) && submissions[0]?.files.length === 0 && historyText.includes('Remember this context from ChatGPT: kōwhai 🌏') && !historyText.includes('What was the context?'), JSON.stringify(submissions[0]?.text));
+  check('context switch keeps the history file and instructions out of the visible chat', await main.evaluate(`(()=>{const chat=JSON.parse(localStorage.getItem('qchat.chats')).current;return !chat.carry&&chat.transcript.some(turn=>turn.text===${JSON.stringify(continuation)})&&!JSON.stringify(chat.transcript).includes('chat_history');})()`));
   // Return to a ChatGPT page that still holds its previous thread. A partial editor insertion
   // must not send just the history note, or reuse that old thread for the carried conversation.
   site = providerSites.chatgpt;
@@ -225,7 +224,7 @@ try {
   })()`);
   await main.evaluate(`(()=>{const input=document.getElementById('prompt-input');input.value='Continue that discussion';input.dispatchEvent(new Event('input'));document.getElementById('btn-send').click();})()`);
   await until(() => main.evaluate('!!document.querySelector("[data-role=assistant][data-status=error]")&&!document.getElementById("btn-reasoning").disabled'), 'failed history hand-off');
-  check('a partial history hand-off errors without submitting', await site.evaluate('fixtureSubmissions.length===0 && document.getElementById("prompt-textarea").innerText.includes("chat-history.txt")'));
+  check('a partial history hand-off errors without submitting', await site.evaluate('fixtureSubmissions.length===0 && document.getElementById("prompt-textarea").innerText.includes("The chat history below")'));
   await site.evaluate('window.fixtureReset=()=>{};window.staleHistoryDocument=true');
   await main.evaluate('window.dispatchEvent(new KeyboardEvent("keydown",{key:"n",ctrlKey:true,bubbles:true,cancelable:true}))');
   await sendText('What is the capital of France?');
