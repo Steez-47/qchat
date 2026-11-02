@@ -504,6 +504,7 @@
       groups: [
         { title: "New chats", rows: [
           S("defaultProvider", "Assistant", "Which service a new session uses"),
+          S("contextSwitching", "Context switching", "Switching assistant mid-chat brings the chat along, so the new one picks up where you left off"),
           S("defaultReasoning", "Reasoning effort", "Where new chats start. Change it per chat in the composer"),
           S("sendKey", "Send with", "The other key combination adds a new line")
         ] },

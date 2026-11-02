@@ -53,7 +53,9 @@ try {
   const pick = (name) => evalJS(`(async()=>{const want=${JSON.stringify(name.replace(/^Switch to /, ''))};const nodes=[...document.querySelectorAll('#picker .picker-seg-btn, #picker .picker-effort-seg button, #picker .picker-row')];const text=n=>n.querySelector('.picker-title')?.textContent??n.textContent.trim();const n=nodes.find(x=>text(x)===want)||nodes.find(x=>text(x).includes(want));n.click();if(n.classList.contains('picker-seg-btn')&&/ChatGPT|Gemini/.test(want)){await new Promise(r=>setTimeout(r,120));if(!document.getElementById('picker').hidden)document.getElementById('btn-reasoning').click();}})()`);
   const pickerText = () => evalJS(`document.getElementById('picker').textContent`);
   const provider = () => evalJS(`__mock.provider`);
-  await open('/?mock=signedin');
+  // Context switching off: a switch archives the chat as a tab and starts fresh (context-switching-ui-test covers on).
+  const freshSwitch = {settings:{contextSwitching:false}};
+  await open('/?mock=signedin', freshSwitch);
   await send('first on chatgpt');
   await waitFor(`!document.querySelector('[data-status=streaming]') && document.querySelector('[data-role=assistant]')`);
   await sleep(300);
@@ -64,7 +66,7 @@ try {
   await waitFor(`__mock.count('chat_new')>${newBefore}`, 2000);
   check('returning to a provider never sends into the chat its page still holds', await evalJS(`__mock.count('chat_new')>${newBefore}`));
   await sleep(400);
-  await open('/?mock=signedin');
+  await open('/?mock=signedin', freshSwitch);
   await press('btn-reasoning');
   check('provider picker opens', await evalJS(`!document.getElementById('picker').hidden && document.querySelector('.feature-list').hidden`));
   const shots = path.join(root,'dist','qa-picker'); await mkdir(shots,{recursive:true});

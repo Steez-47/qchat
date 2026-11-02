@@ -29,7 +29,8 @@ try {
     }
     return false;
   };
-  const SETTINGS = { v: 4, animations: 'off', autoDismiss: 0, streamStyle: 'instant' };
+  // Switching provider here starts a fresh chat: these checks are about each site's own state.
+  const SETTINGS = { v: 4, animations: 'off', autoDismiss: 0, streamStyle: 'instant', contextSwitching: false };
   const open = async (url = '/?mock=signedin') => {
     await cdp('Page.navigate', { url: `${base}/__blank` });
     await waitFor(`document.readyState==='complete'`);

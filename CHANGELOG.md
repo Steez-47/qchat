@@ -4,6 +4,9 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+### Added
+- Context switching, on by default in Settings > General. Switching between ChatGPT and Gemini mid-chat keeps the chat on screen and in History, and the new assistant picks up where you left off. Its first message quietly brings the earlier conversation along as a text file (or inside the message when signed out), and none of that shows in QChat. Switching back before sending returns to the old conversation as it was. Temporary chats are never carried over. Turn it off to start a fresh chat on each switch as before.
+
 ## [1.5.3] - 2026-11-02
 
 ### Changed
