@@ -95,7 +95,7 @@ try {
     const before=await newCount();const handled=await chord();await sleep(40);
     check(label+' editing keeps its value and focus',!handled&&await newCount()===before&&await evalJS('shortcutEditor.value==="Keep this edit"&&document.activeElement===shortcutEditor'));
   }
-  await boot('chatgpt',[seeded('tab-a'),seeded('tab-b'),seeded('tab-c')]);await wait('document.querySelectorAll("#tabs .tab").length===3');
+  await boot('chatgpt',[seeded('tab-a'),seeded('tab-b'),seeded('tab-c')]);await wait('document.querySelectorAll("#tabs .tab").length===2');
   await evalJS('document.querySelector("#tabs .tab").focus()');const tabBefore=await newCount();await chord();await wait('__mock.count("chat_new")>'+tabBefore);
   check('shortcut on a non-last recent tab starts Temporary and focuses the composer',await evalJS('__mock.last("chat_new").args.temporary===true&&document.activeElement===document.getElementById("prompt-input")'));
   await boot();await evalJS('__mock.hold=true');await send('Stop this held turn');await wait('__mock.count("chat_send")===1');const streamBefore=await newCount();

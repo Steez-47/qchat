@@ -53,7 +53,7 @@ function ownsEndpoint() {
   const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
   return result.status === 0 && result.stdout.trim() === 'owned';
 }
-const lastTurn = `(()=>{const row=[...document.querySelectorAll('#bubble-zone [data-role=assistant]')].at(-1);return row?{id:row.dataset.id,txt:row.querySelector('.turn-content')?.innerText||'',html:row.querySelector('.turn-content')?.innerHTML||'',err:!!(row.querySelector('.turn-error')&&!row.querySelector('.turn-error').hidden),errorText:row.querySelector('.turn-error')?.innerText||'',errorCode:window.__e2eErrorCode,streaming:row.dataset.status==='streaming'}:null})()`;
+const lastTurn = `(()=>{const row=[...document.querySelectorAll('#bubble-zone [data-role=assistant]')].at(-1);return row?{id:row.dataset.id,txt:row.querySelector('.turn-content')?.textContent||'',html:row.querySelector('.turn-content')?.innerHTML||'',err:!!(row.querySelector('.turn-error')&&!row.querySelector('.turn-error').hidden),errorText:row.querySelector('.turn-error')?.innerText||'',errorCode:window.__e2eErrorCode,streaming:row.dataset.status==='streaming'}:null})()`;
 async function until(expression, timeout = 10000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await ui.evaluate(`!!(${expression})`)) return; await sleep(100); }
@@ -105,7 +105,8 @@ try {
       const row=[...document.querySelectorAll('#bubble-zone [data-role=assistant]')].find(row=>row.dataset.id===event.id);
       const button=document.getElementById('btn-send');
       if(row?.dataset.status==='streaming'&&button.dataset.mode==='stop'){
-        probe.id=event.id;probe.clicked=true;button.click();
+        // After this event has reached the app's own listener: a real click can't land inside it.
+        probe.id=event.id;probe.clicked=true;setTimeout(()=>button.click(),0);
       }
     });
   })()`);

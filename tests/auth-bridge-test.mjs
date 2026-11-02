@@ -243,6 +243,29 @@ test('newChat reloads a fresh page instead of leaving the next send in the old c
   const pending = b.newChat(); await b.tick(2000); await pending;
   assert.deepEqual(b.navigations, ['https://chatgpt.com/']);
 });
+test('newChat treats a guest conversation URL as the old conversation', async () => {
+  const b = browser({ ready: true, stuckRoute: true }); b.navigate('/uc/oldconversation'); b.reply({ user: {} }); await b.status();
+  const pending = b.newChat(); await b.tick(2000); await pending;
+  assert.deepEqual(b.navigations, ['https://chatgpt.com/']);
+});
+test('a send during newChat waits for the page to settle', async () => {
+  const b = browser({ ready: true }); b.navigate('/c/oldconversation'); b.reply({ user: {} }); await b.status();
+  b.reply({ user: {} });
+  const resetting = b.newChat();
+  b.send();
+  await drain();
+  assert.equal(b.sendClicks(), 0, 'The send must not start while the old chat is being cleared');
+  await b.tick(4000); await resetting; await drain();
+  assert.deepEqual(b.navigations, ['/'], 'The waiting send must not force a reload');
+  await b.tick(1000);
+  assert.ok(b.events.some(event => event.type === 'progress' && event.id === 'synthetic-job'), 'The send must go out after the page settles');
+});
+test('status names the page load, so a lost reply can be noticed', async () => {
+  const b = browser({ ready: true }); b.reply({ user: {} }); await b.status();
+  const status = b.events.filter(event => event.type === 'status').at(-1);
+  assert.equal(typeof status.loadId, 'string');
+  assert.ok(status.loadId.length > 0);
+});
 
 test('model list and choice close the synthetic menu without sending', async () => {
   const b = browser(); let opened = false, chosen = false;

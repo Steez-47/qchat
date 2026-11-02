@@ -236,30 +236,35 @@ html[data-motion="off"] .bar-input { transition: none; }
 .send-btn[data-mode="stop"] .icon { font-size: 12px; }
 
 /* ---------------------------------------------------------------------------
-   Recent-chat tabs: attached to the bar's top edge, with room for every title
+   Recent-chat tabs: one slim line along the flat part of the bar's top edge
    --------------------------------------------------------------------------- */
 /* A grid, not a flex row: when titles do not all fit, free space is shared out evenly and
-   each tab stops at its own width, so a short title stays whole and only long ones shorten. */
+   each tab stops at its own width, so a short title stays whole and only long ones shorten.
+   The padding keeps the strip off the bar's curved ends; the right side also holds All chats. */
 .tabs {
+  --tabs-edge: max(var(--r-bar), 10px);
+  --tab-h: 24px;
+  --tab-gap: 4px;
   position: relative;
   z-index: 2;
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(auto, max-content);
   justify-content: start;
-  gap: 8px;
+  gap: var(--tab-gap);
   min-width: 0;
-  padding-inline: calc(var(--r-bar) * 0.72 + 6px) 8px;
+  padding-inline: var(--tabs-edge) calc(var(--tabs-edge) + var(--tab-h) + var(--tab-gap));
   margin-bottom: calc(-1 * var(--stack-gap, 8px));
 }
 .tab {
   display: inline-flex;
   align-items: center;
-  height: 38px;
-  min-height: 38px;
+  gap: 4px;
+  height: var(--tab-h);
+  min-height: var(--tab-h);
   min-width: 0;
   max-width: 100%;
-  padding: 5px 10px 6px;
+  padding: 0 7px;
   border: 0;
   border-radius: var(--r-tab) var(--r-tab) 0 0;
   color: var(--text-1);
@@ -270,23 +275,22 @@ html[data-motion="off"] .bar-input { transition: none; }
     transform var(--t2) var(--ease-move),
     opacity var(--t1) linear;
 }
-.tab-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; text-align: left; }
-.tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
-.tab-label { padding-left: 16px; color: var(--text-3); font-size: 10px; line-height: 11px; }
-.tab .icon { position: absolute; left: 10px; bottom: 6px; color: var(--text-3); }
+.tab-copy { display: flex; align-items: baseline; gap: 5px; min-width: 0; text-align: left; }
+.tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tab-label { flex: none; color: var(--text-3); font-size: 10px; }
+.tab .icon { flex: none; color: var(--text-3); }
 .tab:hover:not(:disabled):not([aria-disabled="true"]).glass::after { border-color: var(--stroke-2); }
 .tab:hover:not(:disabled):not([aria-disabled="true"]) .icon { color: var(--text-1); }
 .tab:active:not(:disabled) { opacity: 0.8; }
 .tab:disabled { opacity: 0.5; }
 .tab:focus-visible { outline-offset: -2px; }
 html[data-tabclock="false"] .tab .icon { display: none; }
-html[data-tabclock="false"] .tab-label { padding-left: 0; }
 html[data-motion="on"][data-tabpop="true"] .tab.pop {
   animation: tab-pop var(--t4) var(--ease-move) both;
   animation-delay: calc(var(--i, 0) * 55ms / var(--speed));
 }
 @keyframes tab-pop {
-  from { transform: translateY(26px); }
+  from { transform: translateY(100%); }
   to { transform: translateY(0); }
 }
 

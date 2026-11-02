@@ -71,6 +71,11 @@
   setInterval(flush, 100);
 
   let active, loginCache = false, loginAt = -Infinity;
+  // A new page load has no memory of a running reply, so each status says which load sent it.
+  const loadId = Math.random().toString(36).slice(2);
+  // Set while newChat clears the page. A send that arrives meanwhile waits its turn: it would
+  // otherwise look like the old chat still being there, and reload the page out from under itself.
+  let resetting = null;
   const media = new Map();
   let mediaSerial = 0, inputSerial = 0, uploads = 0, uploadFailureAt = -Infinity, attachmentSelectionAt = -Infinity, cancelledAttachments, downloadActivation;
 
@@ -114,7 +119,7 @@
   async function status() {
     loginCache = detectLoggedIn();
     loginAt = Date.now();
-    emit({ type: 'status', setupId: currentSetupId, temporary: temporaryReady(), ready: !!find('composer'), loggedIn: !!loginCache, authPending: false, url: location.href, model: modelShort() });
+    emit({ type: 'status', loadId, resetting: !!resetting, setupId: currentSetupId, temporary: temporaryReady(), ready: !!find('composer'), loggedIn: !!loginCache, authPending: false, url: location.href, model: modelShort() });
   }
 
   function completeActivity(job) {
@@ -625,6 +630,13 @@
 
     if (!job.started) return;
 
+    // The site gave up with no reply on the page and no banner to read: don't wait out the watchdog.
+    if (stopBtn) job.sawStop = true;
+    if (job.sawStop && !stopBtn && !node) {
+      job.quietSince ??= Date.now();
+      if (Date.now() - job.quietSince >= 10000) { fail(job, 'stream_failed', 'Gemini stopped without a reply.'); return; }
+    } else job.quietSince = null;
+
     const convId = currentConversationId();
     if (convId) job.conversationId = convId;
 
@@ -684,6 +696,12 @@
     }
   }
 
+  // A modal the page is holding open can swallow Send without any request starting.
+  function noRequestStarted(job) {
+    const modal = [...document.querySelectorAll('[role="dialog"][aria-modal="true"], [role="alertdialog"]')].some(node => node.getClientRects?.().length !== 0);
+    if (modal) fail(job, 'needs_attention', 'A pop-up on the Gemini site is in the way. Close it there, then send again.');
+    else fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`);
+  }
   function blocking() {
     const quotaEls = [
       ...document.querySelectorAll('freemium-file-upload-quota-exceeded-disclaimer, remy-access-restricted-banner, [role="alert"], [role="dialog"], mat-snack-bar-container, .mat-mdc-snack-bar-container')
@@ -1229,6 +1247,7 @@
       if (await ensureMode(null, mode)) emit(modeReport());
     },
     async send({ id, prompt = '', attachmentCount = 0, temporary = false, mode, conversationId }) {
+      while (resetting) await resetting;
       // A message sent right after a pick must go out on that model, with the menu closed.
       while (modelOps) await modelQueue;
       if (mode != null && !['chat', 'work'].includes(mode)) { error(id, 'invalid_mode', 'Choose chat or work mode.'); return; }
@@ -1327,7 +1346,7 @@
           }
           const button = find('send');
           if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
-            job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
+            job.startTimer = setTimeout(() => noRequestStarted(job), job.work ? 60000 : 20000);
             job.submitted = true;
             const confirmation = confirmSend(job, composer, temporary);
             button.click();
@@ -1341,7 +1360,7 @@
         }
         if (active === job && !job.started && !job.cancelled) {
           if (attachmentCount > 0) { fail(job, 'attachment_failed', 'Attachments did not become ready within two minutes. Check them in Gemini.'); return; }
-          job.startTimer = setTimeout(() => fail(job, 'send_failed', `No conversation request started within ${job.work ? 60 : 20} seconds.`), job.work ? 60000 : 20000);
+          job.startTimer = setTimeout(() => noRequestStarted(job), job.work ? 60000 : 20000);
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           if (!composer) { fail(job, 'not_ready', 'Gemini composer changed. Please try again.'); return; }
           // Enter can't send what the page never took, and could send leftovers on their own.
@@ -1480,30 +1499,43 @@
       return enqueueModelOp(() => choice === modelChoice ? runModelMenu(id, choice) : undefined);
     },
     async newChat(options = {}) {
-      currentSetupId = options.temporary ? options.setupId || null : null;
-      clearTemporaryStage();
-      await window.__qchat.stop();
+      let finish;
+      let leaving = false;
+      const run = resetting = new Promise(resolve => { finish = resolve; });
+      try {
+        currentSetupId = options.temporary ? options.setupId || null : null;
+        clearTemporaryStage();
+        await window.__qchat.stop();
 
-      media.clear();
-      downloadActivation = null;
-      loginCache = detectLoggedIn();
-      if (options?.temporary) {
-        emit({type:'error', code:'temporary_unavailable', message:'Temporary chats are ChatGPT only.', setupId:options.setupId || null});
-        return;
+        media.clear();
+        downloadActivation = null;
+        loginCache = detectLoggedIn();
+        if (options?.temporary) {
+          emit({type:'error', code:'temporary_unavailable', message:'Temporary chats are ChatGPT only.', setupId:options.setupId || null});
+          return;
+        }
+        cancelledAttachments = null;
+        const hadTurns = assistantNodes().length > 0 || userNodes().length > 0 || location.pathname !== '/app';
+        const button = find('fresh');
+        if (button) dispatchClickSequence(button);
+        for (let i = 0; i < 8; i++) {
+          await sleep(100);
+          if (location.pathname === '/app' && assistantNodes().length === 0 && userNodes().length === 0) break;
+        }
+        if (hadTurns && (location.pathname !== '/app' || assistantNodes().length > 0 || userNodes().length > 0)) {
+          leaving = true;
+          location.assign('https://gemini.google.com/app');
+          return;
+        }
+        await status();
+        emit({ type: 'chat-reset' });
+      } finally {
+        // A page on its way out starts nothing more: the app waits for the next load.
+        if (!leaving) {
+          if (resetting === run) resetting = null;
+          finish();
+        }
       }
-      cancelledAttachments = null;
-      const hadTurns = assistantNodes().length > 0 || userNodes().length > 0 || location.pathname !== '/app';
-      const button = find('fresh');
-      if (button) dispatchClickSequence(button);
-      for (let i = 0; i < 8; i++) {
-        await sleep(100);
-        if (location.pathname === '/app' && assistantNodes().length === 0 && userNodes().length === 0) break;
-      }
-      if (hadTurns && (location.pathname !== '/app' || assistantNodes().length > 0 || userNodes().length > 0)) {
-        location.assign('https://gemini.google.com/app');
-        return;
-      }
-      await status();
     },
     status
   };

@@ -58,20 +58,27 @@ try {
   const family = '👨‍👩‍👧‍👦';
 
   // --- Tabs share space fairly -------------------------------------------------------------
-  await open('/?mock=signedin', { settings: { ...settings, barWidth: 340 }, chats: { v: 1, current: empty(), recent: [
+  await open('/?mock=signedin', { settings: { ...settings, barWidth: 420 }, chats: { v: 1, current: empty(), recent: [
     chat('short', 'Hi'), chat('long-a', 'Explain what this regular expression does'), chat('long-b', 'Summarize this article about the climate') ] } });
   await until(`document.querySelectorAll('#tabs .tab').length===3`, 'tabs');
   const tabs = await evalJS(`[...document.querySelectorAll('#tabs .tab')].map(t=>{const s=t.querySelector('.tab-title');return {key:t.dataset.key,cut:s.scrollWidth>s.clientWidth+1,width:t.getBoundingClientRect().width}})`);
   const overflowing = tabs.some(t => t.cut);
   check('a short tab title stays whole while longer titles shorten', overflowing && !tabs.find(t => t.key === 'short').cut, JSON.stringify(tabs));
   check('the tab row stays inside the composer width', await evalJS(`(()=>{const bar=document.getElementById('bar').getBoundingClientRect();return [...document.querySelectorAll('#tabs > *')].every(t=>{const r=t.getBoundingClientRect();return r.left>=bar.left-1&&r.right<=bar.right+1})})()`));
+  // The bar's ends curve away from the top edge, so anything past them would hang in the air.
+  const flatEdge = `(()=>{const bar=document.getElementById('bar').getBoundingClientRect(),radius=parseFloat(getComputedStyle(document.getElementById('bar')).borderTopLeftRadius),kids=[...document.querySelectorAll('#tabs > *')],all=document.querySelector('#tabs .tab-all').getBoundingClientRect();return kids.every(t=>{const r=t.getBoundingClientRect();return r.left>=bar.left+radius-1&&r.right<=bar.right-radius+1&&Math.abs(r.bottom-bar.top)<1})&&Math.abs(all.right-(bar.right-radius))<1})()`;
+  check('the tab row sits on the flat part of the bar, with All chats at its end', await evalJS(flatEdge));
+  await open('/?mock=signedin', { settings: { ...settings, barWidth: 460 }, chats: { v: 1, current: empty(), recent: [chat('a', 'Hi'), chat('b', 'Yo')] } });
+  await until(`document.querySelectorAll('#tabs .tab').length===2`, 'short tabs');
+  check('All chats stays at the end of the bar when the tabs are short', await evalJS(flatEdge));
+  check('tabs stay slim', await evalJS(`[...document.querySelectorAll('#tabs > *')].every(t=>t.getBoundingClientRect().height===24)`));
 
   // A high tab setting must not squeeze away the titles or spill the metadata.
-  for (const [width, visible] of [[340, 3], [460, 4], [720, 8]]) {
+  for (const [width, visible] of [[340, 2], [380, 2], [420, 3], [460, 3], [720, 5]]) {
     await cdp('Emulation.setDeviceMetricsOverride', { width: width + 56, height: 800, deviceScaleFactor: 1, mobile: false, screenWidth: 1920, screenHeight: 1080 });
     await open('/?mock=signedin', { settings: { ...settings, barWidth: width, tabCount: 8 }, chats: { v: 1, current: empty(), recent: Array.from({ length: 8 }, (_, i) => chat(`many-${i}`, `Planning weekend hiking trip ${i}`)) } });
-    const layout = await evalJS(`(()=>{const bar=document.getElementById('bar').getBoundingClientRect();return [...document.querySelectorAll('#tabs .tab')].map(t=>{const r=t.getBoundingClientRect(),title=t.querySelector('.tab-title'),time=t.querySelector('.tab-label');return {inside:r.left>=bar.left-1&&r.right<=bar.right+1,titleWidth:title.clientWidth,stacked:title.getBoundingClientRect().bottom<=time.getBoundingClientRect().top,metaFits:time.scrollWidth<=time.clientWidth+1}})})()`);
-    check(`recent titles and timestamps stay readable at ${width}px with eight chats`, layout.length === visible && layout.every(t => t.inside && t.titleWidth >= 40 && t.stacked && t.metaFits), JSON.stringify(layout));
+    const layout = await evalJS(`(()=>{const bar=document.getElementById('bar').getBoundingClientRect();return [...document.querySelectorAll('#tabs .tab')].map(t=>{const r=t.getBoundingClientRect(),title=t.querySelector('.tab-title'),time=t.querySelector('.tab-label');return {inside:r.left>=bar.left-1&&r.right<=bar.right+1,titleWidth:title.clientWidth,oneLine:title.getBoundingClientRect().right<=time.getBoundingClientRect().left&&time.getBoundingClientRect().right<=r.right,metaFits:time.scrollWidth<=time.clientWidth+1}})})()`);
+    check(`recent titles and timestamps stay readable at ${width}px with eight chats`, layout.length === visible && layout.every(t => t.inside && t.titleWidth >= 50 && t.oneLine && t.metaFits), JSON.stringify(layout));
     check(`all eight chats stay saved at ${width}px`, (await stored()).recent.length === 8);
   }
   await evalJS(`document.querySelector('#tabs .tab-all').click()`);

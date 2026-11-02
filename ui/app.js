@@ -189,9 +189,21 @@
     return window.QResponseTags.toMarkdown(markdownText, { citation });
   }
 
+  // Copied text is what the reply reads as when it first appears, never the interpreter's source.
+  function interactiveReadout(text) {
+    if (!window.QInteractive || !window.QResponseTags.hasInteractive(text)) return null;
+    const result = window.QInteractive.createSession().render(text);
+    if (!result.text) return null;
+    const labels = new Map(result.controls.map(control => [control.id, control.label || control.attrs?.label || ""]));
+    return result.text.replace(/([^]+)/g, (_, id) => labels.get(id) || "");
+  }
+
   function copyReplyMarkdown(markdownText, sources) {
-    return window.QResponseTags.protect(replyMarkdown(completedSnapshot(markdownText).text, sources), prose =>
+    const text = completedSnapshot(markdownText).text;
+    const readout = interactiveReadout(text);
+    const copied = window.QResponseTags.protect(replyMarkdown(readout ?? text, sources), prose =>
       prose.replace(/!\[([^\]\n]*)\]\(qchat-web:[\w-]+\)/g, (_, label) => label ? `[Image: ${label}]` : "[Image]"));
+    return readout === null ? copied : window.QResponseTags.decodeEntities(copied);
   }
 
   function renderMarkdownSafe(markdownText, sources = []) {
@@ -349,9 +361,15 @@
     for (const node of content.querySelectorAll('[data-qcontrol]')) {
       const attrs = controls.get(node.dataset.qcontrol)?.attrs || {};
       if (node.tagName !== 'BUTTON') {
+        // A control with no bound value belongs to the user after its first render, so a later
+        // state change mustn't put it back to its starting value.
+        const toggle = /^(checkbox|radio)$/.test(node.type);
+        const bound = (toggle ? attrs.checked ?? attrs.value : attrs.value) !== undefined;
+        if (node._qcontrolReady && !bound) continue;
+        node._qcontrolReady = true;
         const value = node.getAttribute('value') || '';
         if (node.value !== value) node.value = value;
-        if (/^(checkbox|radio)$/.test(node.type)) node.checked = Boolean(attrs.checked ?? attrs.value);
+        if (toggle) node.checked = Boolean(attrs.checked ?? attrs.value);
       }
     }
   }
@@ -378,6 +396,7 @@
     reasoning_unavailable: "ChatGPT couldn't select that reasoning level. Choose Medium or open ChatGPT to check its thinking controls.",
     invalid_reasoning_effort: "Choose Low, Medium or High reasoning.",
     stream_failed: "The response was interrupted.",
+    page_reset: "ChatGPT reloaded before it finished. Try sending again.",
     timeout: "ChatGPT took too long to respond.",
     open_timeout: "That chat is taking too long to open. Try sending again.",
     temporary_unavailable: "Temporary chat could not be confirmed. Your draft is safe; try again or check the provider.",
@@ -1296,14 +1315,26 @@
     renderPicker();
   }
 
+  const PROVIDER_SWITCH_MS = 20000;
   async function setProvider(provider) {
     if (provider === activeProvider) return true;
     if (isBusy() || switchingProvider) return false;
     closeRenameChat(false);
     switchingProvider = true;
     updateComposerMode();
+    let deadline;
     try {
-      await invoke("provider_set", {provider});
+      const call = invoke("provider_set", {provider});
+      const answered = await Promise.race([
+        call.then(() => true),
+        new Promise(resolve => { deadline = setTimeout(() => resolve(false), PROVIDER_SWITCH_MS); })
+      ]);
+      if (!answered) {
+        // A stalled switch mustn't lock the composer. If it does land later, the backend follows
+        // the provider the UI stayed on, or every send would be refused as a mismatch.
+        call.then(() => { if (activeProvider !== provider && !switchingProvider) invoke("provider_set", {provider: activeProvider}).catch(() => {}); }, () => {});
+        throw new Error("provider_switch_timeout");
+      }
       // Each site keeps its own page, so returning must remember which chat that page still holds.
       pageByProvider[activeProvider] = page;
       activeProvider = provider;
@@ -1319,7 +1350,7 @@
       updateStatusHeader(providerStates[provider] || {ready:false, loggedIn:false});
       return true;
     } catch (_) { showGlobalError(null, "Couldn't switch providers. Try again in a moment."); return false; }
-    finally { switchingProvider = false; updateComposerMode(); }
+    finally { clearTimeout(deadline); switchingProvider = false; updateComposerMode(); }
   }
   async function resetChatPreservingComposer({ mode = effectiveMode() } = {}) {
     const input = el.promptInput;
@@ -1453,6 +1484,9 @@
   let page = { key: null, conv: null, pristine: true };
   const pageByProvider = {};
   let pageSync = Promise.resolve();
+  const pageLoads = {};
+  const pageResetWaiters = new Set();
+  const PAGE_RESET_TIMEOUT = 10000;
   const readyWaiters = new Set();
 
   function waitForReady(conversationId, timeoutMs, temporary = false, setupId = null) {
@@ -1473,7 +1507,7 @@
   }
 
   function onConversationURL(url) {
-    try { return /\/c\/[^/]|^\/app\/[^/]/.test(new URL(url).pathname); } catch { return false; }
+    try { return /\/u?c\/[^/]|^\/app\/[^/]/.test(new URL(url).pathname); } catch { return false; }
   }
 
   function settleReadyWaiters(evt) {
@@ -1487,6 +1521,27 @@
       if (!id || typeof evt.url !== "string" || evt.url.includes(`${activeProvider === "gemini" ? "/app/" : "/c/"}${id}`)) waiter.resolve();
       // A guest page falls back to a fresh chat instead of /c/<id>; give it a moment to get there.
       else if (!evt.loggedIn && !waiter.grace) waiter.grace = setTimeout(() => waiter.resolve(), 500);
+    }
+  }
+
+  // Clearing the page can take a reload, so the app holds the next send until the page says it
+  // has finished, or a new load reports in. A send any sooner would go down with the old page.
+  function waitForPageReset(provider = activeProvider) {
+    const known = pageLoads[provider];
+    let timer;
+    const promise = new Promise(resolve => {
+      const waiter = { provider, known, resolve: () => { clearTimeout(timer); pageResetWaiters.delete(waiter); resolve(); } };
+      pageResetWaiters.add(waiter);
+      timer = setTimeout(waiter.resolve, PAGE_RESET_TIMEOUT);
+    });
+    return promise;
+  }
+  function settlePageReset(provider, evt) {
+    for (const waiter of [...pageResetWaiters]) {
+      if (waiter.provider !== provider) continue;
+      // A page in the middle of clearing itself may yet reload, whatever its URL says.
+      const moved = evt.type === "status" && evt.ready && ((evt.loadId && evt.loadId !== waiter.known) || (!evt.resetting && typeof evt.url === "string" && !onConversationURL(evt.url)));
+      if (evt.type === "chat-reset" || moved) waiter.resolve();
     }
   }
 
@@ -1510,10 +1565,11 @@
     const provider = activeProvider, generation = chatGeneration;
     const setupId = temporary ? crypto.randomUUID() : null;
     const ready = waitForReady(null, FRESH_TIMEOUT, temporary, setupId);
+    const reset = temporary ? null : waitForPageReset();
     try {
       await invoke("chat_new", { preserveUploads: true, temporary, setupId });
       if (temporary) await ready;
-      else await ready.catch(() => {});
+      else { await ready.catch(() => {}); await reset; }
       if (provider === activeProvider && generation === chatGeneration) page = { key: chat.key, conv: null, pristine: false };
     } catch (err) { ready.cancel(); throw temporary ? { code: "temporary_unavailable" } : err; }
   }
@@ -2793,6 +2849,7 @@
       if (mode === "work") { args.reasoningEffort = null; args.conversationId = chat.conversationId || null; }
       else if (activeProvider === "chatgpt") args.reasoningEffort = reasoningEffort;
       await invoke("chat_send", args);
+      assistantTurn.pageLoad = pageLoads[activeProvider];
       if (consumeSelections && assistantTurn.status !== "error" && !(assistantTurn.status === "done" && !assistantTurn.text && !assistantTurn.media?.length)) {
         chat.selectionTexts.splice(0, selectionTexts.length);
         assistantTurn.selectionConsumed = true;
@@ -2920,7 +2977,8 @@
     if (notifyBackend) {
       const chat = chats.current;
       page = { key: chat.key, conv: null, pristine: false };
-      pageSync = invoke("chat_new").catch(() => { page = { key: null, conv: null, pristine: false }; });
+      const reset = waitForPageReset();
+      pageSync = invoke("chat_new").then(() => reset, () => { page = { key: null, conv: null, pristine: false }; });
     }
     el.promptInput.focus();
   }
@@ -3014,8 +3072,9 @@
 
     const existing = new Map([...el.tabs.children].map((node) => [node.dataset.key, node]));
     let fresh = 0;
-    // Leave room for the bar's curved edge and All chats, then keep each title readable.
-    const maxTabs = Math.max(1, Math.floor((QSettings.settings.barWidth - 60) / 82));
+    // Tabs live on the bar's flat edge, beside All chats: match .tabs in glass.css, then keep each title readable.
+    const barEnd = Math.max(parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--r-bar")) || 0, 10);
+    const maxTabs = Math.max(1, Math.floor((QSettings.settings.barWidth - 2 * barEnd - 24) / 114));
     const count = Math.min(QSettings.settings.tabCount || 3, maxTabs);
     const nodes = chats.recent.slice(0, count).map((chat) => {
       let tab = existing.get(chat.key);
@@ -5174,12 +5233,14 @@
   });
   window.addEventListener("resize", () => queueSizes());
 
-  listen("bridge", ({ payload: evt }) => {
+  const onBridgeEvent = ({ payload: evt }) => {
     if (!evt || typeof evt !== "object") return;
     const provider = evt.provider || "chatgpt";
     const previouslyAvailable = modeAvailable(provider);
     const previousStatus = providerStates[provider];
+    settlePageReset(provider, evt);
     if (evt.type === "status") {
+      if (evt.loadId) pageLoads[provider] = evt.loadId;
       // A status sent before the mode switcher has drawn has no model: keep the one we know.
       const known = providerStates[provider]?.model;
       const model = evt.model || known;
@@ -5193,6 +5254,12 @@
       case "status":
         if (![...readyWaiters].some(w => w.temporary && w.provider === activeProvider && w.generation === chatGeneration && (evt.temporary !== true || evt.setupId !== w.setupId))) updateStatusHeader({ ready: Boolean(evt.ready), loggedIn: Boolean(evt.loggedIn) });
         settleReadyWaiters(evt);
+        // A reply lives in its page's memory, so a new load means it can never finish.
+        if (evt.loadId) for (const turn of turns) {
+          if (turn.status !== "streaming" || turn.backendDone || !turn.pageLoad || turn.pageLoad === evt.loadId) continue;
+          stopBackend();
+          onBridgeEvent({ payload: { type: "error", id: turn.id, provider, code: "page_reset" } });
+        }
         if (pickerOpen && modeAvailable(provider) !== previouslyAvailable) renderPicker();
         if (!evt.ready && modelRequest?.provider === provider) cancelModelRequest();
         // Gemini can draw the model switcher after its composer. Retry an early read when it arrives.
@@ -5281,6 +5348,11 @@
       }
       case "done": {
         const turn = turns.find((t) => t.id === evt.id);
+        // Finishing with nothing at all to show is a failed reply, not a blank finished one.
+        if (turn?.status === "streaming" && !turn.backendDone && !evt.text && !turn.text && !turn.media?.length && !turn.cachedMedia) {
+          onBridgeEvent({ payload: { type: "error", id: turn.id, provider, code: "stream_failed" } });
+          break;
+        }
         if (turn?.status === "streaming" && !turn.backendDone) {
           // An empty final snapshot means the page lost track, not that the reply was erased.
           if (typeof evt.text === "string" && (evt.text || !turn.text)) turn.text = evt.text;
@@ -5357,7 +5429,8 @@
         break;
       }
     }
-  });
+  };
+  listen("bridge", onBridgeEvent);
 
   function addSelection(text) {
     if (typeof text !== "string" || !text.trim()) return;
