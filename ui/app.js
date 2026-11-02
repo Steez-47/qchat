@@ -3014,8 +3014,9 @@
 
     const existing = new Map([...el.tabs.children].map((node) => [node.dataset.key, node]));
     let fresh = 0;
-    // Leave room for the bar's curved edge and All chats, then keep each title readable.
-    const maxTabs = Math.max(1, Math.floor((QSettings.settings.barWidth - 60) / 82));
+    // Tabs live on the bar's flat edge, beside All chats: match .tabs in glass.css, then keep each title readable.
+    const barEnd = Math.max(parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--r-bar")) || 0, 10);
+    const maxTabs = Math.max(1, Math.floor((QSettings.settings.barWidth - 2 * barEnd - 24) / 114));
     const count = Math.min(QSettings.settings.tabCount || 3, maxTabs);
     const nodes = chats.recent.slice(0, count).map((chat) => {
       let tab = existing.get(chat.key);

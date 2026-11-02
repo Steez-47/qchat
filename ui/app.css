@@ -1080,12 +1080,15 @@ html[data-motion="off"] .turn-content ::after { animation: none; }
 
 /* Bar and tab variations */
 .tabs { margin-inline: var(--bar-inset); }
+/* Pinned to the end of the bar's flat edge, so it stays put however wide the tabs are. */
 .tab-all {
-  flex: none;
+  position: absolute;
+  right: var(--tabs-edge);
+  bottom: 0;
   display: inline-grid;
   place-items: center;
-  width: 30px;
-  height: 38px;
+  width: var(--tab-h);
+  height: var(--tab-h);
   padding: 0;
   border: 0;
   border-radius: var(--r-tab) var(--r-tab) 0 0;
@@ -1094,7 +1097,7 @@ html[data-motion="off"] .turn-content ::after { animation: none; }
   transition: color var(--t1) linear;
 }
 .tab-all.glass::after { border-bottom: 0; }
-.tab-all .icon { font-size: 12px; }
+.tab-all .icon { font-size: 11px; }
 .tab-all:hover { color: var(--accent-text); }
 html[data-tabstyle="floating"] .tabs { margin-bottom: 0; }
 html[data-tabstyle="floating"] :is(.tab, .tab-all) { border-radius: var(--r-chip); }
