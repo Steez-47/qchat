@@ -1273,7 +1273,8 @@
   // it came from, so going straight back reopens that conversation instead of starting over.
   function cleanCarry(raw) {
     if (!raw || typeof raw !== "object" || !["chatgpt", "gemini"].includes(raw.provider)) return null;
-    return { provider: raw.provider, conversationId: typeof raw.conversationId === "string" && raw.conversationId ? raw.conversationId : null, carried: raw.carried === true };
+    return { provider: raw.provider, conversationId: typeof raw.conversationId === "string" && raw.conversationId ? raw.conversationId : null, carried: raw.carried === true,
+      ...(typeof raw.lastTurnId === "string" || raw.lastTurnId === null ? { lastTurnId: raw.lastTurnId } : {}) };
   }
 
   function loadChats() {
@@ -1445,13 +1446,16 @@
   // Context switching: the chat stays on screen and moves to the new assistant. Its next message
   // starts a fresh conversation there and quietly brings the history along (carriedHistory).
   function carryChat(chat, provider) {
-    if (chat.carry?.provider === provider) {
+    const lastTurnId = chat.transcript?.at(-1)?.id || null;
+    if (chat.carry?.provider === provider && chat.carry.lastTurnId === lastTurnId) {
       // Back before anything was sent: the old conversation still holds everything.
       Object.assign(chat, { provider, conversationId: chat.carry.conversationId, carried: chat.carry.carried });
       if (!chat.carried) delete chat.carried;
       delete chat.carry;
     } else {
-      chat.carry = { provider: chat.provider, conversationId: chat.conversationId, carried: Boolean(chat.carried) };
+      // Even a failed send changes the local history. Only an untouched switch may return
+      // to the origin thread without handing that changed history over again.
+      chat.carry = { provider: chat.provider, conversationId: chat.conversationId, carried: Boolean(chat.carried), lastTurnId };
       Object.assign(chat, { provider, conversationId: null, carried: true });
       // Its page may still hold this chat's old conversation from an earlier visit.
       page = { key: null, conv: null, pristine: false };

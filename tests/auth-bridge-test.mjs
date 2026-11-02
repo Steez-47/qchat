@@ -91,7 +91,8 @@ function browser({ ready = false, focused = true, composer = 'legacy', hidden = 
       return body => resolve(response(body));
     },
     status: () => window.__qchat.status(),
-    send: () => window.__qchat.send({ id: 'synthetic-job', prompt: 'synthetic prompt' }),
+    send: (args = {}) => window.__qchat.send({ id: 'synthetic-job', prompt: 'synthetic prompt', ...args }),
+    stop: () => window.__qchat.stop(),
     sendClicks: () => sendClicks,
     last: () => events.filter(event => event.type === 'status').at(-1),
     navigate(path) { location.pathname = path; location.href = `https://chatgpt.com${path}`; },
@@ -219,6 +220,44 @@ test('openConversation navigates to a validated route and emits ready status', a
   const opening = b.openConversation('abcdefgh-123'); await drain(); await b.tick(2000); await opening;
   assert.deepEqual(b.navigations, ['/c/abcdefgh-123']);
   assert.equal(b.last().ready, true); assert.equal(b.last().url, 'https://chatgpt.com/c/abcdefgh-123');
+});
+
+test('a partial ChatGPT history continuation is refilled before Send', async () => {
+  const b = browser({ ready: true, prepareBeforeSend: true });
+  b.reply({ user: {} }); await b.status();
+  const exec = b.document.execCommand;
+  const prompt = 'Continue from our chat history.\n\nMy next message:\n\nKeep my entire question 🌏';
+  let inserts = 0, submitted;
+  b.document.execCommand = (cmd, ui, text) => {
+    const result = exec(cmd, ui, cmd === 'insertText' && inserts++ === 0 ? text.split('\n')[0] : text);
+    submitted = b.document.querySelector('#prompt-textarea').innerText;
+    return result;
+  };
+  const sent = b.send({ prompt }); await b.tick(3000); await sent;
+  assert.equal(b.sendClicks(), 1);
+  assert.equal(submitted, prompt);
+  assert.ok(b.events.some(event => event.type === 'done'));
+});
+
+test('ChatGPT never submits a history note when the editor drops the new question', async () => {
+  const b = browser({ ready: true, prepareBeforeSend: true });
+  b.reply({ user: {} }); await b.status();
+  const exec = b.document.execCommand;
+  b.document.execCommand = (cmd, ui, text) => exec(cmd, ui, cmd === 'insertText' ? text.split('\n')[0] : text);
+  const sent = b.send({ prompt: 'Continue from history.\n\nAnswer this question.' });
+  await b.tick(12000); await sent;
+  assert.equal(b.sendClicks(), 0);
+  assert.equal(b.events.find(event => event.type === 'error')?.code, 'send_failed');
+});
+
+test('stopping a ChatGPT send waiting for reset prevents it leaking into the next chat', async () => {
+  const b = browser({ ready: true, prepareBeforeSend: true });
+  b.reply({ user: {} }); await b.status();
+  const reset = b.newChat();
+  const sent = b.send();
+  await b.stop(); await b.tick(3000); await reset; await sent;
+  assert.equal(b.sendClicks(), 0);
+  assert.equal(b.events.filter(event => event.type === 'done' && event.id === 'synthetic-job').length, 1);
 });
 test('openConversation rejects invalid ids without navigation', async () => {
   const b = browser({ ready: true });

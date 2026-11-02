@@ -48,6 +48,7 @@
   // Set while newChat clears the page. A send that arrives meanwhile waits its turn: it would
   // otherwise look like the old chat still being there, and reload the page out from under itself.
   let resetting = null;
+  let pendingSend = null;
   const media = new Map();
   let mediaSerial = 0, inputSerial = 0, uploads = 0, uploadFailureAt = -Infinity, uploadDoneAt = -Infinity, attachmentSelectionAt = -Infinity, cancelledAttachments, downloadActivation;
   function error(id, code, message) { emit({ type: 'error', ...(id == null ? {} : { id }), code, message }); }
@@ -1113,6 +1114,8 @@
         names.some(name => label.toLowerCase() === `remove ${name}`.toLowerCase());
     });
   }
+  // Editable blocks can add blank lines and NBSPs without losing any message content.
+  const promptMatch = text => String(text).replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').replace(/\n{2,}/g, '\n').trim();
   async function confirmAttachmentSend(job, composer, temporary) {
     const controls = attachmentRemovers(job.attachmentNames);
     for (let i = 0; i < 2; i++) {
@@ -1124,7 +1127,7 @@
       const files = attachmentRemovers(job.attachmentNames);
       // Retry only the same unsent draft. Cleared/replaced chips or text mean
       // the page may already have accepted it, so another click is unsafe.
-      if (pending !== job.prompt || uploads || composerArea()?.querySelector('[role="progressbar"], [aria-busy="true"], [data-testid*="uploading"], [data-state="uploading"]') || controls.length < job.attachmentCount ||
+      if (promptMatch(pending) !== promptMatch(job.prompt) || uploads || composerArea()?.querySelector('[role="progressbar"], [aria-busy="true"], [data-testid*="uploading"], [data-state="uploading"]') || controls.length < job.attachmentCount ||
           files.length !== controls.length || files.some(node => !controls.includes(node))) return;
       const button = find('send');
       if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') button.click();
@@ -1614,7 +1617,15 @@
       if (await ensureMode(null, mode)) emit(modeReport());
     },
     async send({ id, prompt = '', attachmentCount = 0, reasoningEffort, temporary = false, mode, conversationId }) {
-      while (resetting) await resetting;
+      if (active || pendingSend) { error(id, 'busy', 'A request is already in progress.'); return; }
+      // Stop/New chat must own sends waiting for a reset too, before an active job exists.
+      const pending = pendingSend = { id, attachmentCount };
+      const cancelled = new Promise(resolve => { pending.cancel = resolve; });
+      while (resetting) {
+        await Promise.race([resetting, cancelled]);
+        if (pendingSend !== pending) return;
+      }
+      pendingSend = null;
       if (reasoningEffort != null && !['low', 'medium', 'high'].includes(reasoningEffort)) { error(id, 'invalid_reasoning_effort', 'Choose low, medium or high reasoning.'); return; }
       if (mode != null && !['chat', 'work'].includes(mode)) { error(id, 'invalid_mode', 'Choose chat or work mode.'); return; }
       if (temporary && !temporaryReady()) { error(id, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
@@ -1668,7 +1679,8 @@
           }
         };
         const typed = node => String(node.tagName === 'TEXTAREA' ? node.value : node.innerText ?? node.textContent ?? '').trim();
-        let uploadQuietAt = Date.now(), filledComposer = null, held = false, filledAt = 0, waiting = '';
+        const completePrompt = node => promptMatch(typed(node)) === promptMatch(job.prompt);
+        let uploadQuietAt = Date.now(), filledComposer = null, filledAt = 0, waiting = '';
         for (let i = 0; i < (attachmentCount > 0 ? 1200 : 100) && active === job && !job.started && !job.cancelled; i++) {
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           // File selection can register late and replace the composer. Require every attachment
@@ -1693,14 +1705,13 @@
           }
           composer = find('composer');
           if (!composer) { await sleep(100); continue; }
-          if (composer !== filledComposer || (held && !typed(composer))) {
-            fill(composer); filledComposer = composer; filledAt = Date.now(); held = !!typed(composer);
+          if (composer !== filledComposer || (!completePrompt(composer) && Date.now() - filledAt >= 300)) {
+            fill(composer); filledComposer = composer; filledAt = Date.now();
           }
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
-          // Never click Send before the page has the text. An attachment enables Send by itself,
-          // so Send can't show that the page has taken the text; give it a moment to settle too.
-          if (prompt.trim() && (!typed(composer) || (attachmentCount > 0 && Date.now() - filledAt < 300))) {
-            if (!typed(composer) && Date.now() - filledAt >= 300) fill(composer), filledAt = Date.now();
+          // A history file enables Send even when only its note was inserted. Require the whole
+          // continuation, including the new question, before either Send or Enter can submit it.
+          if (!completePrompt(composer) || (attachmentCount > 0 && prompt.trim() && Date.now() - filledAt < 300)) {
             waiting = 'text';
             await sleep(100);
             continue;
@@ -1729,7 +1740,7 @@
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           if (!composer) { fail(job, 'not_ready', 'ChatGPT composer changed. Please try again.'); return; }
           // Enter can't send what the page never took, and could send leftovers on their own.
-          if (prompt.trim() && !typed(find('composer') || composer)) { fail(job, 'send_failed', 'ChatGPT did not take the message text. Try again.'); return; }
+          if (!completePrompt(find('composer') || composer)) { fail(job, 'send_failed', 'ChatGPT did not take the complete message text. Try again.'); return; }
           job.startTimer = setTimeout(() => noRequestStarted(job), job.work ? 60000 : 20000);
           if (temporary) claimTemporaryThread();
           job.submitted = true; composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
@@ -1737,6 +1748,13 @@
       } catch (e) { fail(job, 'send_failed', e.message); }
     },
     stop() {
+      const pending = pendingSend;
+      pendingSend = null;
+      if (pending) {
+        pending.cancel();
+        if (pending.attachmentCount > 0) cancelAttachmentSelection(pending.attachmentCount);
+        emit({ type: 'done', id: pending.id, text: '', conversationId: null, rich: false });
+      }
       clearTemporaryStage();
       const job = active; if (!job) return Promise.resolve();
       job.cancelled = true;

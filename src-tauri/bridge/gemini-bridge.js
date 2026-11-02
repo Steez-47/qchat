@@ -76,6 +76,7 @@
   // Set while newChat clears the page. A send that arrives meanwhile waits its turn: it would
   // otherwise look like the old chat still being there, and reload the page out from under itself.
   let resetting = null;
+  let pendingSend = null;
   const media = new Map();
   let mediaSerial = 0, inputSerial = 0, uploads = 0, uploadFailureAt = -Infinity, attachmentSelectionAt = -Infinity, cancelledAttachments, downloadActivation;
 
@@ -1260,9 +1261,21 @@
       if (await ensureMode(null, mode)) emit(modeReport());
     },
     async send({ id, prompt = '', attachmentCount = 0, temporary = false, mode, conversationId }) {
-      while (resetting) await resetting;
+      if (active || pendingSend) { error(id, 'busy', 'A request is already in progress.'); return; }
+      // A queued hand-off still belongs to this send. Stop/New chat must cancel it before it
+      // can resume after a reset or model operation and land in a different conversation.
+      const pending = pendingSend = { id, attachmentCount };
+      const cancelled = new Promise(resolve => { pending.cancel = resolve; });
+      while (resetting) {
+        await Promise.race([resetting, cancelled]);
+        if (pendingSend !== pending) return;
+      }
       // A message sent right after a pick must go out on that model, with the menu closed.
-      while (modelOps) await modelQueue;
+      while (modelOps) {
+        await Promise.race([modelQueue, cancelled]);
+        if (pendingSend !== pending) return;
+      }
+      pendingSend = null;
       if (mode != null && !['chat', 'work'].includes(mode)) { error(id, 'invalid_mode', 'Choose chat or work mode.'); return; }
       if (temporary && !temporaryReady()) { error(id, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
       if (active) { error(id, 'busy', 'A request is already in progress.'); return; }
@@ -1385,6 +1398,13 @@
       } catch (e) { fail(job, 'send_failed', e.message); }
     },
     stop() {
+      const pending = pendingSend;
+      pendingSend = null;
+      if (pending) {
+        pending.cancel();
+        if (pending.attachmentCount > 0) cancelAttachmentSelection(pending.attachmentCount);
+        emit({ type: 'done', id: pending.id, text: '', conversationId: null, rich: false });
+      }
       clearTemporaryStage();
       const job = active;
       if (!job) return Promise.resolve();
