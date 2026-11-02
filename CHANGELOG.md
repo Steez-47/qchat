@@ -4,8 +4,19 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-03
+
 ### Added
 - Context switching, on by default in Settings > General. Switching between ChatGPT and Gemini mid-chat keeps the chat on screen and in History, and the new assistant picks up where you left off. Its first message quietly brings the earlier conversation along: as a text file on ChatGPT when signed in, and inside the message on Gemini, trimmed to the newest turns when it would pass Gemini's 32,000-character limit. None of that shows in QChat. Switching back before sending returns to the old conversation as it was. Temporary chats are never carried over. Turn it off to start a fresh chat on each switch as before.
+
+### Changed
+- Image, selection and file attachments are grouped under one add menu. Recent chat tabs have a slimmer design.
+- Reply streaming and reading feedback are smoother, and window blur now fades with closing animations.
+
+### Fixed
+- Provider hand-offs wait for a fresh conversation and complete message text; stopping cancels queued sends. Gemini can recover from a failed hand-off when starting a new chat.
+- Streamed replies avoid duplicated or hidden text while preserving rich formatting.
+- Reply hover tools remain reachable at the edge of the bubble, and folded tiles stay folded when an animation does not run.
 
 ## [1.5.3] - 2026-11-02
 

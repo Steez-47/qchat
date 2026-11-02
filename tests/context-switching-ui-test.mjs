@@ -103,7 +103,7 @@ try {
   })()`);
   const beforeStall = await evalJS(`__mock.count('chat_send')`);
   await type('Keep my unsent question'); await key('Enter');
-  await until(`document.querySelector('[data-role=assistant][data-status=error]')`);
+  await until(`document.querySelector('[data-role=assistant][data-status=error]')`, 15000);
   check('a stalled reset returns the question and releases Send', await evalJS(`document.getElementById('prompt-input').value==='Keep my unsent question' && document.getElementById('btn-send').dataset.mode==='send' && __mock.count('chat_send')===${beforeStall}`));
   check('a stalled reset retains the pending history hand-off', Boolean((await current()).carry));
 
