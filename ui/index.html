@@ -54,6 +54,11 @@
       <div class="composer">
         <div class="slash-menu glass glass-tiny" id="slash-menu" role="listbox" aria-label="Commands" hidden></div>
         <div class="picker glass scroll" id="picker" role="dialog" aria-label="Model and provider" hidden></div>
+        <div class="attachment-menu glass glass-tiny" id="attachment-menu" role="menu" aria-label="Add to message" hidden>
+          <button type="button" class="attachment-menu-item" id="btn-snapshot" role="menuitem" tabindex="-1" title="Snapshot current window"><span class="icon" aria-hidden="true">&#xEB9F;</span><span>Add image</span></button>
+          <button type="button" class="attachment-menu-item" id="btn-selection" role="menuitem" tabindex="-1" title="Add selected text from the previous window"><span class="icon" aria-hidden="true">&#xEF20;</span><span>Add selection</span></button>
+          <button type="button" class="attachment-menu-item" id="btn-file" role="menuitem" tabindex="-1"><span class="icon" aria-hidden="true">&#xE8A5;</span><span>Add file</span></button>
+        </div>
         <div class="update-chip glass glass-tiny" id="update-chip" role="group" aria-label="Update available" hidden>
           <button type="button" class="btn btn-compact btn-accent" id="btn-update"><svg class="update-glyph" viewBox="0 0 8 8" aria-hidden="true"><path d="M4 6.6V1.6M1.7 3.8 4 1.5l2.3 2.3"/></svg><span id="update-label">Update</span></button>
           <button type="button" class="icon-btn" id="btn-update-skip" title="Skip this version" aria-label="Skip this version"><span class="icon" aria-hidden="true">&#xE8BB;</span></button>
@@ -68,8 +73,7 @@
           <span class="sr-only" id="status-label" role="status">Connecting…</span>
           <textarea class="bar-input" id="prompt-input" rows="1" placeholder="Ask anything · / commands" aria-label="Message" spellcheck="true" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="slash-menu"></textarea>
           <button type="button" class="bar-btn reasoning-btn" id="btn-reasoning" aria-label="ChatGPT, Medium. Change model" aria-haspopup="dialog" aria-expanded="false" title="Model and provider"><svg class="reasoning-mark" viewBox="0 0 16 16" aria-hidden="true"></svg><span class="reasoning-label">Medium</span><svg class="reasoning-chevron" viewBox="0 0 8 8" aria-hidden="true"><path d="M2 3.2 4 5l2-1.8"/></svg></button>
-          <button type="button" class="bar-btn" id="btn-attach" aria-label="Attach files" title="Attach files"><span class="icon" aria-hidden="true">&#xE723;</span></button>
-          <button type="button" class="bar-btn" id="btn-snapshot" aria-label="Snapshot current window" title="Snapshot current window"><span class="icon" aria-hidden="true">&#xE722;</span></button>
+          <button type="button" class="bar-btn" id="btn-attach" aria-label="Add to message" title="Add to message" aria-haspopup="menu" aria-expanded="false" aria-controls="attachment-menu"><span class="icon" aria-hidden="true">&#xE710;</span></button>
           <button type="button" class="bar-btn minimize-btn" id="btn-minimize" aria-label="Minimize while waiting" title="Minimize while waiting" hidden><span class="icon" aria-hidden="true">&#xE921;</span></button>
           <button type="button" class="bar-btn send-btn" id="btn-send" data-mode="send" title="Send" aria-label="Send" disabled><span class="icon" aria-hidden="true">&#xE74A;</span></button>
         </footer>

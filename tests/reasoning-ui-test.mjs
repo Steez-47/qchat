@@ -208,7 +208,7 @@ try {
   const fit = await evalJS(`(()=>{
     const bar=document.getElementById('bar'), input=document.getElementById('prompt-input'), button=document.getElementById('btn-reasoning');
     const br=bar.getBoundingClientRect(), ir=input.getBoundingClientRect(), rr=button.getBoundingClientRect();
-    const controls=['orb','prompt-input','btn-reasoning','btn-attach','btn-snapshot','btn-send'].map(id=>document.getElementById(id));
+    const controls=['orb','prompt-input','btn-reasoning','btn-attach','btn-send'].map(id=>document.getElementById(id));
     return {
       barWidth: br.width,
       scrollWidth: bar.scrollWidth,

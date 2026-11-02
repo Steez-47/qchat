@@ -132,6 +132,17 @@ pub fn observe_foreground() {
         record_target(&mut target, h.0 as isize, eligible(h));
     }
 }
+pub(crate) fn selection_target() -> Result<(isize, u32), String> {
+    observe_foreground();
+    let target = TARGET.lock().unwrap().ok_or("No previous external app window is available")?;
+    if !valid_target(target) {
+        return Err("The previous app window is no longer available".into());
+    }
+    Ok(target)
+}
+pub(crate) fn valid_target(target: (isize, u32)) -> bool {
+    unsafe { eligible(HWND(target.0 as *mut _)) == Ok(Some(target.1)) }
+}
 fn size(w: i32, h: i32) -> Result<usize, String> {
     if w <= 0 || h <= 0 || w > 16384 || h > 16384 || (w as u64 * h as u64) > 16 * 1024 * 1024 {
         return Err("Snapshot window is too large or has invalid dimensions".into());

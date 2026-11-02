@@ -91,9 +91,10 @@ try {
     const btn = $('btn-snapshot');
     const expectedBytes = atob(test.png).length;
 
-    check('snapshot is a compact accessible bar control', btn && btn.classList.contains('bar-btn')
-      && btn.getAttribute('aria-label') === 'Snapshot current window'
-      && btn.title === 'Snapshot current window' && !!btn.querySelector('.icon'));
+    check('snapshot is an accessible image action in the add menu', btn && btn.closest('#attachment-menu')
+      && btn.getAttribute('role') === 'menuitem' && btn.lastElementChild.textContent === 'Add image'
+      && btn.title === 'Snapshot current window' && !!btn.querySelector('.icon')
+      && !$('bar').contains(btn));
 
     input('keep my draft');
     attach('existing.txt');

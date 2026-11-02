@@ -118,9 +118,10 @@ fn cap(s: &str) -> String {
 }
 unsafe fn automation() -> Option<String> {
     let u: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
-    let pattern = u
-        .GetFocusedElement()
-        .ok()?
+    automation_text(&u.GetFocusedElement().ok()?)
+}
+unsafe fn automation_text(element: &IUIAutomationElement) -> Option<String> {
+    let pattern = element
         .GetCurrentPattern(UIA_TextPatternId)
         .ok()?
         .cast::<IUIAutomationTextPattern>()
@@ -142,9 +143,47 @@ unsafe fn automation() -> Option<String> {
     }
     Some(cap(&text))
 }
+unsafe fn automation_window(handle: isize) -> Option<String> {
+    let u: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+    let hwnd = HWND(handle as *mut _);
+    // A window's focus child can still identify its editor after QChat takes focus.
+    let mut info = GUITHREADINFO {
+        cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    let thread = GetWindowThreadProcessId(hwnd, None);
+    if GetGUIThreadInfo(thread, &mut info).is_ok()
+        && (info.hwndFocus == hwnd || IsChild(hwnd, info.hwndFocus).as_bool())
+    {
+        if let Ok(element) = u.ElementFromHandle(info.hwndFocus) {
+            if let Some(text) = automation_text(&element).filter(|s| !s.trim().is_empty()) {
+                return Some(text);
+            }
+        }
+    }
+    let root = u.ElementFromHandle(hwnd).ok()?;
+    let walker = u.ControlViewWalker().ok()?;
+    let mut pending = vec![(root, false)];
+    // Bound the search as well as the shared worker's time budget.
+    for _ in 0..512 {
+        let (element, include_siblings) = pending.pop()?;
+        if let Some(text) = automation_text(&element).filter(|s| !s.trim().is_empty()) {
+            return Some(text);
+        }
+        if include_siblings {
+            if let Ok(sibling) = walker.GetNextSiblingElement(&element) {
+                pending.push((sibling, true));
+            }
+        }
+        if let Ok(child) = walker.GetFirstChildElement(&element) {
+            pending.push((child, true));
+        }
+    }
+    None
+}
 // A broken accessibility provider can block a COM call indefinitely. Keep at most
 // one such call alive and let clipboard capture continue after a short UIA budget.
-fn automation_with_timeout(foreground: isize) -> Option<String> {
+fn automation_with_timeout(foreground: isize, previous_window: bool) -> Option<String> {
     use std::sync::atomic::{AtomicBool, Ordering};
     static UIA_BUSY: AtomicBool = AtomicBool::new(false);
     if UIA_BUSY.swap(true, Ordering::AcqRel) {
@@ -163,7 +202,9 @@ fn automation_with_timeout(foreground: isize) -> Option<String> {
             let _gate = Gate;
             unsafe {
                 let initialized = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
-                let result = if GetForegroundWindow().0 as isize == foreground {
+                let result = if previous_window {
+                    automation_window(foreground)
+                } else if GetForegroundWindow().0 as isize == foreground {
                     automation()
                 } else {
                     None
@@ -180,11 +221,31 @@ fn automation_with_timeout(foreground: isize) -> Option<String> {
         return None;
     }
     let text = rx.recv_timeout(Duration::from_millis(800)).ok().flatten();
-    if unsafe { GetForegroundWindow().0 as isize } == foreground {
+    if previous_window || unsafe { GetForegroundWindow().0 as isize } == foreground {
         text
     } else {
         None
     }
+}
+#[tauri::command]
+pub async fn selection_capture(window: tauri::WebviewWindow) -> Result<String, String> {
+    if window.label() != "main" {
+        return Err("Main window only".into());
+    }
+    // Isolated tests must never read the user's foreground app.
+    if crate::test_profile().is_some() {
+        return Err("Selection capture is unavailable in an isolated profile".into());
+    }
+    let target = crate::snapshot::selection_target()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let text = automation_with_timeout(target.0, true)
+            .filter(|s| !s.trim().is_empty())
+            .ok_or("No selected text was available. Select text in the other app, then use the selection shortcut.")?;
+        if !crate::snapshot::valid_target(target) {
+            return Err("The previous app window is no longer available".into());
+        }
+        Ok(text)
+    }).await.map_err(|e| e.to_string())?
 }
 pub fn activate(app: &tauri::AppHandle) {
     if crate::test_profile().is_some() {
@@ -210,7 +271,7 @@ pub fn activate(app: &tauri::AppHandle) {
             let result = if GetForegroundWindow().0 as isize != foreground {
                 Err("Selection capture cancelled because the active window changed.".into())
             } else if let Some(text) =
-                automation_with_timeout(foreground).filter(|s| !s.trim().is_empty())
+                automation_with_timeout(foreground, false).filter(|s| !s.trim().is_empty())
             {
                 Ok(text)
             } else if *app.state::<State>().1.lock().unwrap() {

@@ -167,6 +167,10 @@
             if (mock.updateFail) throw new Error(mock.updateFail);
             return null;
           case "show_main": return;
+          case "selection_capture": {
+            if (mock.selectionError) throw new Error(mock.selectionError);
+            return mock.selectionText || "Selected text";
+          }
           case "snapshot_capture": {
             if (mock.snapshotError) throw new Error(mock.snapshotError);
             return { name: "Snapshot.png", mime: "image/png", data: MOCK_SNAPSHOT_PNG };

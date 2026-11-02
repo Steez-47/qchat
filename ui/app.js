@@ -434,7 +434,10 @@
     btnMinimize: $("btn-minimize"),
     btnSend: $("btn-send"),
     btnAttach: $("btn-attach"),
+    attachmentMenu: $("attachment-menu"),
     btnSnapshot: $("btn-snapshot"),
+    btnSelection: $("btn-selection"),
+    btnFile: $("btn-file"),
     attachmentInput: $("attachment-input"),
     attachments: $("attachments"),
     orbBadge: $("orb-badge")
@@ -450,6 +453,7 @@
   let globalErrorRevision = 0;
   let sending = false;
   let snapshotCapturing = false;
+  let selectionCapturing = false;
   let chatGeneration = 0;
   let userScrolledUp = false;
   let guestDismissed = false;
@@ -1754,7 +1758,7 @@
   }
 
   async function captureSnapshot() {
-    if (snapshotCapturing || isBusy()) return;
+    if (snapshotCapturing || selectionCapturing || isBusy()) return;
     if (!snapshotRoom()) {
       showGlobalError("attachment_failed", "Attach up to 10 files, totalling at most 512 MB.");
       return;
@@ -2028,9 +2032,9 @@
     if (historyOpen) height += Math.max(0, parseFloat(el.historyPanel.style.height || 0) - el.historyPanel.offsetHeight);
     // The command menu overlays the conversation, but its top still needs native
     // window space. Measure layout heights so its entrance transform cannot move the window.
-    if (!el.slashMenu.hidden) {
+    for (const menu of [el.slashMenu, el.attachmentMenu]) if (!menu.hidden) {
       const gap = parseFloat(getComputedStyle(el.stack).gap) || 0;
-      height = Math.max(height, el.bar.offsetHeight + gap + el.slashMenu.offsetHeight);
+      height = Math.max(height, el.bar.offsetHeight + gap + menu.offsetHeight);
     }
     const content = height + 2 * GUTTER;
     // The window keeps its full height, and the empty part is click-through. Resizing it as
@@ -2634,11 +2638,14 @@
     el.btnSend.setAttribute("aria-label", active ? "Stop generating" : "Send");
     const staging = pendingFiles.some((f) => f.state === "staging");
     const attachable = pendingFiles.some((f) => f.state === "ready");
-    el.btnAttach.disabled = active || sending;
+    el.btnAttach.disabled = active || sending || snapshotCapturing || selectionCapturing;
+    el.btnFile.disabled = active || sending;
+    el.btnSelection.disabled = active || sending || snapshotCapturing || selectionCapturing;
+    if (el.btnAttach.disabled) closeAttachmentMenu();
     for (const button of el.attachments.querySelectorAll(".selection-chip button")) button.disabled = sending;
     for (const button of el.attachments.querySelectorAll('[data-action="retry-attachment"]')) button.disabled = isBusy();
-    el.btnSnapshot.disabled = active || sending || snapshotCapturing;
-    el.btnSend.disabled = !active && (!bridge.ready || sending || staging || snapshotCapturing || (!el.promptInput.value.trim() && !attachable && !chats.current.selectionTexts.length));
+    el.btnSnapshot.disabled = active || sending || snapshotCapturing || selectionCapturing;
+    el.btnSend.disabled = !active && (!bridge.ready || sending || staging || snapshotCapturing || selectionCapturing || (!el.promptInput.value.trim() && !attachable && !chats.current.selectionTexts.length));
     el.btnMinimize.hidden = !(sending || isStreaming());
     syncReasoningButton();
     syncTabsDisabled();
@@ -2701,8 +2708,8 @@
     const prompt = String(rawPrompt ?? "").trim();
     const files = retryFiles || (retrying ? [] : pendingFiles.filter((f) => f.state === "ready"));
     const staging = pendingFiles.some((f) => f.state === "staging");
-    if (snapshotCapturing || staging) {
-      if (retrying || fromInput) showCommandFeedback(snapshotCapturing ? "Wait for the snapshot to finish." : "Wait for files to finish attaching.");
+    if (snapshotCapturing || selectionCapturing || staging) {
+      if (retrying || fromInput) showCommandFeedback(snapshotCapturing ? "Wait for the snapshot to finish." : selectionCapturing ? "Wait for the selection to finish." : "Wait for files to finish attaching.");
       return;
     }
     if (isBusy() || (!prompt && !files.length && !selectionTexts.length)) return;
@@ -3007,7 +3014,10 @@
 
     const existing = new Map([...el.tabs.children].map((node) => [node.dataset.key, node]));
     let fresh = 0;
-    const nodes = chats.recent.slice(0, QSettings.settings.tabCount || 3).map((chat) => {
+    // Leave room for the bar's curved edge and All chats, then keep each title readable.
+    const maxTabs = Math.max(1, Math.floor((QSettings.settings.barWidth - 60) / 82));
+    const count = Math.min(QSettings.settings.tabCount || 3, maxTabs);
+    const nodes = chats.recent.slice(0, count).map((chat) => {
       let tab = existing.get(chat.key);
       if (!tab) {
         tab = make("button", "tab glass glass-tiny pop");
@@ -3015,7 +3025,9 @@
         tab.dataset.key = chat.key;
         tab.addEventListener("focus", () => { tabStopKey = tab.dataset.key; for (const item of el.tabs.querySelectorAll(".tab")) item.tabIndex = item === tab ? 0 : -1; });
         tab.style.setProperty("--i", String(fresh++));
-        tab.append(makeProviderLogo(chat.provider), make("span", "tab-title"), make("span", "tab-label"));
+        const copy = make("span", "tab-copy");
+        copy.append(make("span", "tab-title"), make("span", "tab-label"));
+        tab.append(makeProviderLogo(chat.provider), copy);
         tab.addEventListener("animationend", () => tab.classList.remove("pop"), { once: true });
         tab.addEventListener("click", () => switchToChat(tab.dataset.key));
       }
@@ -3177,6 +3189,7 @@
     if (focus) el.promptInput.focus({ preventScroll: true });
   }
   function openRenameChat() {
+    closeAttachmentMenu();
     const chat = chats.current;
     if (!hasContent(chat) && !draftValue().trim()) {
       showCommandFeedback("Start a conversation first.");
@@ -3232,6 +3245,7 @@
 
   function openPicker() {
     if (refuseWhileBusy()) return;
+    closeAttachmentMenu();
     if (!featureList.hidden) closeFeatureList();
     closeRenameChat(false);
     finder.close({ focus: false });
@@ -3391,6 +3405,7 @@
     el.promptInput.focus();
   }
   function showFeatureList(title, rows, searchable = false, anchor = null) {
+    closeAttachmentMenu();
     closePicker();
     closeRenameChat(false);
     finder.close({ focus: false });
@@ -3936,6 +3951,7 @@
   }, true);
   let slashMatches = [];
   function openFind() {
+    closeAttachmentMenu();
     closeRenameChat(false);
     if (!historyItems().some(item => String(item.text || "").trim())) { showCommandFeedback("No messages to search yet."); return; }
     const selected = selectedConversationText();
@@ -3964,10 +3980,11 @@
   const slashOpen = () => !el.slashMenu.hidden;
 
   function syncMenuFlag() {
-    const away = slashOpen() || !el.clearConfirm.hidden || !renameForm.hidden;
+    const away = slashOpen() || !el.attachmentMenu.hidden || !el.clearConfirm.hidden || !renameForm.hidden;
     if (away && el.tabs.contains(document.activeElement)) el.promptInput.focus();
     if (away) el.stack.dataset.menu = ""; else delete el.stack.dataset.menu;
     el.stack.toggleAttribute("data-slash-menu", slashOpen());
+    el.stack.toggleAttribute("data-attachment-menu", !el.attachmentMenu.hidden);
   }
 
   function closeSlashMenu() {
@@ -3996,6 +4013,7 @@
     let matches = query === null ? [] : COMMANDS.filter((c) => c.name !== activeProvider && c.name.startsWith(query));
     if (commandMenu) matches = COMMANDS.filter(c => c.name !== activeProvider);
     if (!matches.length) { if (slashOpen()) closeSlashMenu(); return; }
+    closeAttachmentMenu();
     closeRenameChat(false);
     finder.close({ focus: false });
     const wasOpen = slashOpen();
@@ -4035,6 +4053,7 @@
     if (["ArrowLeft", "ArrowRight"].includes(e.key)) { e.preventDefault(); (document.activeElement === el.btnClearYes ? el.btnClearNo : el.btnClearYes).focus(); }
   });
   function showClearConfirm() {
+    closeAttachmentMenu();
     dropGhost(el.clearConfirm);
     el.clearConfirm.hidden = false;
     syncMenuFlag();
@@ -4558,6 +4577,7 @@
 
   function onSettingsApplied() {
     const s = QSettings.settings;
+    if (!s.showAttach) closeAttachmentMenu();
     if (!s.keepHistory) {
       readingPositions.clear();
       chats.recent = [];
@@ -4784,10 +4804,98 @@
     });
   });
   let filePickerOpen = false;
-  el.btnAttach.addEventListener("click", () => { filePickerOpen = true; el.attachmentInput.click(); });
-  el.btnSnapshot.addEventListener("click", () => { void captureSnapshot(); });
-  el.attachmentInput.addEventListener("cancel", () => { filePickerOpen = false; });
-  el.attachmentInput.addEventListener("change", () => { filePickerOpen = false; addFiles(el.attachmentInput.files); el.attachmentInput.value = ""; updateIdleChips(); });
+  function closeAttachmentMenu({ focus = false } = {}) {
+    if (el.attachmentMenu.hidden) return;
+    leaveAsGhost(el.attachmentMenu);
+    el.attachmentMenu.hidden = true;
+    el.btnAttach.setAttribute("aria-expanded", "false");
+    if (focus) el.btnAttach.focus({ preventScroll: true });
+    syncMenuFlag();
+    queueSizes();
+  }
+  function openAttachmentMenu(last = false) {
+    if (el.btnAttach.disabled) return;
+    closePicker();
+    closeSlashMenu();
+    closeRenameChat(false);
+    finder.close({ focus: false });
+    hideClearConfirm();
+    if (!featureList.hidden) closeFeatureList();
+    dropGhost(el.attachmentMenu);
+    el.attachmentMenu.hidden = false;
+    el.btnAttach.setAttribute("aria-expanded", "true");
+    const bar = el.bar.getBoundingClientRect(), button = el.btnAttach.getBoundingClientRect();
+    el.attachmentMenu.style.right = `${Math.max(6, Math.min(bar.right - button.right, bar.width - el.attachmentMenu.offsetWidth - 6))}px`;
+    const items = [...el.attachmentMenu.querySelectorAll("button:not(:disabled)")];
+    (last ? items.at(-1) : items[0])?.focus({ preventScroll: true });
+    syncMenuFlag();
+    queueSizes();
+  }
+  el.btnAttach.addEventListener("click", () => {
+    if (el.attachmentMenu.hidden) openAttachmentMenu();
+    else closeAttachmentMenu({ focus: true });
+  });
+  el.btnAttach.addEventListener("keydown", event => {
+    if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+    event.preventDefault();
+    openAttachmentMenu(event.key === "ArrowUp");
+  });
+  document.addEventListener("pointerdown", event => {
+    if (!el.attachmentMenu.contains(event.target) && !el.btnAttach.contains(event.target)) closeAttachmentMenu();
+  }, true);
+  document.addEventListener("keydown", event => {
+    if (el.attachmentMenu.hidden || event.isComposing || event.keyCode === 229) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeAttachmentMenu({ focus: true });
+    } else if (event.key === "Tab") closeAttachmentMenu();
+  }, true);
+  el.attachmentMenu.addEventListener("focusout", () => {
+    setTimeout(() => {
+      if (!el.attachmentMenu.contains(document.activeElement) && document.activeElement !== el.btnAttach) closeAttachmentMenu();
+    }, 0);
+  });
+  el.attachmentMenu.addEventListener("keydown", event => {
+    if (event.isComposing || event.keyCode === 229 || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const items = [...el.attachmentMenu.querySelectorAll("button:not(:disabled)")];
+    const index = items.indexOf(document.activeElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+      : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    items[next]?.focus({ preventScroll: true });
+  });
+  el.btnFile.addEventListener("click", () => {
+    closeAttachmentMenu();
+    filePickerOpen = true;
+    el.attachmentInput.click();
+  });
+  el.btnSnapshot.addEventListener("click", () => {
+    closeAttachmentMenu();
+    void captureSnapshot();
+  });
+  el.btnSelection.addEventListener("click", async () => {
+    closeAttachmentMenu();
+    if (selectionCapturing || snapshotCapturing || isBusy()) return;
+    const generation = chatGeneration;
+    selectionCapturing = true;
+    hideGlobalError();
+    updateComposerMode();
+    try {
+      const text = await invoke("selection_capture");
+      if (generation === chatGeneration) addSelection(text);
+    } catch (error) {
+      if (generation === chatGeneration) showGlobalError("selection_failed", String(error?.message || error || "Could not copy the selection. Try selecting the text again."));
+    } finally {
+      selectionCapturing = false;
+      updateComposerMode();
+      if (generation === chatGeneration && document.hasFocus()
+        && [document.body, el.btnSelection, el.promptInput].includes(document.activeElement)) el.promptInput.focus();
+    }
+  });
+  el.attachmentInput.addEventListener("cancel", () => { filePickerOpen = false; el.promptInput.focus(); });
+  el.attachmentInput.addEventListener("change", () => { filePickerOpen = false; addFiles(el.attachmentInput.files); el.attachmentInput.value = ""; updateIdleChips(); el.promptInput.focus(); });
 
   // Idle collapse: out of focus for a few seconds, the bar folds into its orb (collapse.js).
   let windowHidden = false;
@@ -4799,12 +4907,12 @@
     // Keep drafts visible, including whitespace; Settings also previews on the live bar.
     // Any reply may fold while it is only being waited for, and the orb shows the wait. Once an
     // ordinary reply's words arrive they are being read, so it stays open; Work can run for minutes.
-    blocked: () => el.promptInput.value.length > 0 || switchingProvider || (effectiveMode() !== "work" && turns.some(t => t.role === "assistant" && t.status === "streaming" && (t.text || t.media?.length))) || filePickerOpen || snapshotCapturing || settingsOpen || document.visibilityState === "hidden",
+    blocked: () => el.promptInput.value.length > 0 || switchingProvider || (effectiveMode() !== "work" && turns.some(t => t.role === "assistant" && t.status === "streaming" && (t.text || t.media?.length))) || filePickerOpen || snapshotCapturing || selectionCapturing || !el.attachmentMenu.hidden || settingsOpen || document.visibilityState === "hidden",
     motion: () => QSettings.motionOn,
     timings: () => QSettings.timings,
     drag: dragWindow,
     move: moveWindow,
-    onCollapse: () => { closeSlashMenu(); closePicker(); orbOutcome = null; },
+    onCollapse: () => { closeSlashMenu(); closePicker(); closeAttachmentMenu(); orbOutcome = null; },
     onState: (next) => {
       // Opening clears the task state at once; a reply that finished before the fold shows nothing.
       if (next !== "closing" && next !== "closed") orbOutcome = null;
@@ -5251,10 +5359,10 @@
     }
   });
 
-  listen("qchat://selection", ({ payload }) => {
-    if (typeof payload !== "string" || !payload.trim()) return;
+  function addSelection(text) {
+    if (typeof text !== "string" || !text.trim()) return;
     collapse.expand(false);
-    chats.current.selectionTexts.push(payload);
+    chats.current.selectionTexts.push(text);
     chats.current.draft = draftValue();
     hideGlobalError();
     saveChats();
@@ -5262,7 +5370,8 @@
     updateIdleChips();
     el.promptInput.focus();
     queueSizes();
-  });
+  }
+  listen("qchat://selection", ({ payload }) => addSelection(payload));
   listen("qchat://selection-error", ({ payload }) => showGlobalError("selection_failed", typeof payload === "string" ? payload : "Could not copy the selection. Try selecting the text again."));
   listen("qchat://hidden", () => { windowHidden = true; collapse.reset(); });
   listen("qchat://shown", () => {

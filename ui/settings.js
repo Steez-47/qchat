@@ -629,7 +629,7 @@
           S("barWidth", "Width"),
           S("density", "Size"),
           S("placeholderText", "Placeholder", "Shown in the empty bar"),
-          S("showAttach", "Attach button", "The paperclip for files and images"),
+          S("showAttach", "Add button", "The + menu for images, selections and files"),
           S("sendStyle", "Send button"),
           S("orbStyle", "Orb", "The round mark at the left of the bar"),
           S("showStatusDot", "Connection ring on the orb", "Amber while connecting, red on errors"),
@@ -637,7 +637,7 @@
         ] },
         { title: "Recent-chat tabs", rows: [
           S("showTabs", "Show tabs", "Quick tabs for your latest chats"),
-          S("tabCount", "How many tabs"),
+          S("tabCount", "Maximum tabs", "Fewer appear when the bar is narrow"),
           S("tabStyle", "Tab style"),
           S("showTabClock", "Clock icon on tabs")
         ] }

@@ -19,7 +19,7 @@ fn main() {
             "media_load",
             "media_save",
             "conversation_export",
-            "image_copy", "snapshot_capture",
+            "image_copy", "snapshot_capture", "selection_capture",
             "update_check", "update_install",
         ]),
     ))

@@ -247,7 +247,7 @@ html[data-motion="off"] .bar-input { transition: none; }
   grid-auto-flow: column;
   grid-auto-columns: minmax(auto, max-content);
   justify-content: start;
-  gap: 4px;
+  gap: 8px;
   min-width: 0;
   padding-inline: calc(var(--r-bar) * 0.72 + 6px) 8px;
   margin-bottom: calc(-1 * var(--stack-gap, 8px));
@@ -255,29 +255,32 @@ html[data-motion="off"] .bar-input { transition: none; }
 .tab {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 24px;
+  height: 38px;
+  min-height: 38px;
   min-width: 0;
   max-width: 100%;
-  padding: 4px 7px 5px;
+  padding: 5px 10px 6px;
   border: 0;
   border-radius: var(--r-tab) var(--r-tab) 0 0;
   color: var(--text-1);
-  font: 500 11.5px/15px var(--font-small);
+  font: 400 12px/15px var(--font-small);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   transition:
     transform var(--t2) var(--ease-move),
     opacity var(--t1) linear;
 }
-.tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.tab-label { flex: none; color: var(--text-2); }
-.tab .icon { flex: none; font-size: 10px; line-height: 15px; color: var(--text-2); }
-.tab:hover:not(:disabled) { color: var(--accent-text); }
+.tab-copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; text-align: left; }
+.tab-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.tab-label { padding-left: 16px; color: var(--text-3); font-size: 10px; line-height: 11px; }
+.tab .icon { position: absolute; left: 10px; bottom: 6px; color: var(--text-3); }
+.tab:hover:not(:disabled):not([aria-disabled="true"]).glass::after { border-color: var(--stroke-2); }
+.tab:hover:not(:disabled):not([aria-disabled="true"]) .icon { color: var(--text-1); }
 .tab:active:not(:disabled) { opacity: 0.8; }
 .tab:disabled { opacity: 0.5; }
 .tab:focus-visible { outline-offset: -2px; }
 html[data-tabclock="false"] .tab .icon { display: none; }
+html[data-tabclock="false"] .tab-label { padding-left: 0; }
 html[data-motion="on"][data-tabpop="true"] .tab.pop {
   animation: tab-pop var(--t4) var(--ease-move) both;
   animation-delay: calc(var(--i, 0) * 55ms / var(--speed));
@@ -306,7 +309,7 @@ html[data-motion="on"][data-tabpop="true"] .tab.pop {
 .send-btn:disabled:not([data-mode="stop"]) { opacity: 0; transform: scale(.8); pointer-events: none; }
 .send-btn[data-mode="stop"] { opacity: 1; transform: none; }
 .send-btn:not(:disabled)[data-mode="send"] { box-shadow: none; }
-.tab { box-shadow: none; height: 24px; }
+.tab { box-shadow: none; }
 .tab.glass::after { border-bottom: 0; }
 
 .bar-input { font-size: var(--text-size); line-height: 1.45; }
@@ -327,4 +330,4 @@ html[data-mode="light"] .tok-string { color: #246437; }
 html[data-mode="light"] .tok-number { color: #834414; }
 html[data-mode="light"] .tok-comment { color: #515968; }
 
-.tab svg.icon { width: 11px; height: 11px; fill: currentColor; align-self: center; }
+.tab svg.icon { width: 10px; height: 10px; fill: currentColor; }

@@ -58,13 +58,26 @@ try {
   const family = '👨‍👩‍👧‍👦';
 
   // --- Tabs share space fairly -------------------------------------------------------------
-  await open('/?mock=signedin', { settings, chats: { v: 1, current: empty(), recent: [
+  await open('/?mock=signedin', { settings: { ...settings, barWidth: 340 }, chats: { v: 1, current: empty(), recent: [
     chat('short', 'Hi'), chat('long-a', 'Explain what this regular expression does'), chat('long-b', 'Summarize this article about the climate') ] } });
   await until(`document.querySelectorAll('#tabs .tab').length===3`, 'tabs');
   const tabs = await evalJS(`[...document.querySelectorAll('#tabs .tab')].map(t=>{const s=t.querySelector('.tab-title');return {key:t.dataset.key,cut:s.scrollWidth>s.clientWidth+1,width:t.getBoundingClientRect().width}})`);
   const overflowing = tabs.some(t => t.cut);
   check('a short tab title stays whole while longer titles shorten', overflowing && !tabs.find(t => t.key === 'short').cut, JSON.stringify(tabs));
   check('the tab row stays inside the composer width', await evalJS(`(()=>{const bar=document.getElementById('bar').getBoundingClientRect();return [...document.querySelectorAll('#tabs > *')].every(t=>{const r=t.getBoundingClientRect();return r.left>=bar.left-1&&r.right<=bar.right+1})})()`));
+
+  // A high tab setting must not squeeze away the titles or spill the metadata.
+  for (const [width, visible] of [[340, 3], [460, 4], [720, 8]]) {
+    await cdp('Emulation.setDeviceMetricsOverride', { width: width + 56, height: 800, deviceScaleFactor: 1, mobile: false, screenWidth: 1920, screenHeight: 1080 });
+    await open('/?mock=signedin', { settings: { ...settings, barWidth: width, tabCount: 8 }, chats: { v: 1, current: empty(), recent: Array.from({ length: 8 }, (_, i) => chat(`many-${i}`, `Planning weekend hiking trip ${i}`)) } });
+    const layout = await evalJS(`(()=>{const bar=document.getElementById('bar').getBoundingClientRect();return [...document.querySelectorAll('#tabs .tab')].map(t=>{const r=t.getBoundingClientRect(),title=t.querySelector('.tab-title'),time=t.querySelector('.tab-label');return {inside:r.left>=bar.left-1&&r.right<=bar.right+1,titleWidth:title.clientWidth,stacked:title.getBoundingClientRect().bottom<=time.getBoundingClientRect().top,metaFits:time.scrollWidth<=time.clientWidth+1}})})()`);
+    check(`recent titles and timestamps stay readable at ${width}px with eight chats`, layout.length === visible && layout.every(t => t.inside && t.titleWidth >= 40 && t.stacked && t.metaFits), JSON.stringify(layout));
+    check(`all eight chats stay saved at ${width}px`, (await stored()).recent.length === 8);
+  }
+  await evalJS(`document.querySelector('#tabs .tab-all').click()`);
+  await until(`!document.querySelector('.feature-list').hidden && document.querySelectorAll('.feature-list .feature-row').length>=8`, 'all saved chats');
+  check('All chats keeps every recent conversation accessible', await evalJS(`[...document.querySelectorAll('.feature-list .feature-title')].filter(t=>t.textContent.includes('Planning weekend hiking trip')).length===8`));
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 516, height: 800, deviceScaleFactor: 1, mobile: false, screenWidth: 1920, screenHeight: 1080 });
 
   // --- Titles never split a visible character ----------------------------------------------
   await open('/?mock=signedin', { settings, chats: { v: 1, current: empty(), recent: [chat('emoji', 'x'.repeat(22) + family + ' and more words')] } });
