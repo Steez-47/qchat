@@ -22,10 +22,15 @@ Serves `public/` and the `api/` handlers on http://localhost:3000 with no depend
 
 ```
 public/
-  index.html     The page
-  styles.css     All styles. Paper and ink for the page; the demos use the app's glass from docs/DESIGN.md
-  main.js        Everything interactive: Lenis smooth scroll, demo canvas fitting, the pinned story,
-                 the feature tour, reveals, the look picker and live release info
+  index.html     The landing page
+  help.html      /help: every shortcut, slash command, feature and setting, with a filter and a
+                 shortcut tester
+  styles.css     All styles for both pages. Paper and ink for the page; the demos use the app's glass
+                 from docs/DESIGN.md
+  main.js        Landing page: Lenis smooth scroll, demo canvas fitting, the pinned story, the feature
+                 tour, reveals, the stat count-up, the picker and slash-menu demos, the look picker and
+                 live release info
+  help.js        Help page: table of contents, filter (press /), shortcut tester, bar diagram, release info
   lenis.min.js   Lenis 1.3.26 smooth scrolling, vendored (MIT, see lenis.LICENSE.txt)
   icon.svg       Favicon (copy of assets/icon.svg)
   og.png         Share image
@@ -48,5 +53,13 @@ Every demo is laid out on a fixed-size canvas (`--cw` × `--ch` on its `.screen`
 With *reduce motion* on, smooth scrolling is off and every sequence jumps to its end state.
 
 The look picker's colours are copied from `ui/settings-core.js`. Update `LOOKS` in `main.js` if those change.
+
+### Keeping it in step with the app
+
+Some content mirrors the app and needs a touch when the app changes:
+
+- Shortcuts and slash commands: `help.html` (`#shortcuts`, `#commands`), the keys list in `index.html`, and `SLASH` in `main.js`. The source of truth is `COMMANDS` and the keydown handlers in `ui/app.js`.
+- Settings pages: `#settings` in `help.html`, from `PAGES` in `ui/settings.js`.
+- The "Recently shipped" cards in `index.html`, from `CHANGELOG.md`.
 
 Once the site has a domain, make `og:image` in `index.html` an absolute URL (for example `https://qchat.example/og.png`). Some social networks ignore relative image URLs.

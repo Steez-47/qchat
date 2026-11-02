@@ -1,5 +1,6 @@
 // QChat site. One file: smooth scroll, demo canvas fitting, the pinned story, the tour,
-// reveals, the look picker and the live release info. No dependencies besides Lenis.
+// reveals, the stats, the picker and slash-menu demos, the look picker and the live release
+// info. No dependencies besides Lenis.
 (() => {
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -66,8 +67,24 @@
       if (!e.isIntersecting) continue;
       e.target.classList.add("in");
       revealer.unobserve(e.target);
+      const n = e.target.querySelector("[data-count]");
+      if (n) countUp(n);
     }
   }, { rootMargin: "0px 0px -8% 0px", threshold: 0.1 });
+
+  // Hero stats count up from zero once they're on screen.
+  function countUp(el) {
+    const to = Number(el.dataset.count) || 0;
+    if (reduce || to === 0) return;
+    const t0 = performance.now(), dur = 900 + to * 20;
+    const tick = (t) => {
+      const k = clamp((t - t0) / dur);
+      el.textContent = Math.round(to * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) requestAnimationFrame(tick);
+    };
+    el.textContent = "0";
+    requestAnimationFrame(tick);
+  }
   $$("[data-reveal], [data-split]").forEach((el) => revealer.observe(el));
 
   /* ------------------------------------------------------------ Canvas fitting */
@@ -83,6 +100,15 @@
 
   /* ------------------------------------------------------------ Nav */
   const nav = $("#nav");
+  const progress = $("#nav-progress");
+
+  /* ------------------------------------------------------------ Prompt marquee */
+  // The track holds the prompts twice so the loop has no seam.
+  const track = $(".marquee-track");
+  if (track) {
+    [...track.children].forEach((c) => { const d = c.cloneNode(true); d.setAttribute("data-clone", ""); track.append(d); });
+    track.classList.add("is-looping");
+  }
 
   /* ------------------------------------------------------------ Story */
   const story = $("#story");
@@ -223,6 +249,8 @@
   const frame = () => {
     queued = false;
     nav.classList.toggle("is-scrolled", window.scrollY > 8);
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    if (progress) progress.style.transform = `scaleX(${max > 0 ? clamp(window.scrollY / max) : 0})`;
     updateStory();
     updateTour();
   };
@@ -309,6 +337,138 @@
       items[next].focus();
     });
     applyLook(5);
+  }
+
+  /* ------------------------------------------------------------ Picker demo */
+  // Segmented controls like the app's picker: provider, mode, effort. The bar's pill follows.
+  const pk = $("#picker-demo");
+  if (pk) {
+    const state = { provider: "chatgpt", mode: "chat", effort: "Medium" };
+    const NAMES = { chatgpt: "ChatGPT", gemini: "Gemini" };
+    const note = $("#pk-note");
+    const say = (text) => { note.textContent = text; note.classList.remove("pk-pop"); void note.offsetWidth; note.classList.add("pk-pop"); };
+    const paintSeg = (seg) => {
+      const buttons = $$("button", seg);
+      const k = buttons.findIndex((b) => b.getAttribute("aria-checked") === "true");
+      const hl = $(".seg-hl", seg);
+      hl.style.setProperty("--n", buttons.length);
+      hl.style.setProperty("--k", Math.max(0, k));
+      buttons.forEach((b, i) => { b.tabIndex = i === k ? 0 : -1; });
+    };
+    const render = () => {
+      const work = state.provider === "gemini" ? "Task" : "Work";
+      $(".pk-work", pk).textContent = work;
+      const mark = $("#pk-mark");
+      mark.className = `pmark ${state.provider === "gemini" ? "pm-gem" : "pm-gpt"}`;
+      $("#pk-pill").textContent = state.mode === "work" ? work : state.effort;
+      $("#pk-ph").textContent = state.mode === "work" ? `Give ${NAMES[state.provider]} a task` : `Ask ${NAMES[state.provider]}`;
+      pk.dataset.provider = state.provider;
+      pk.dataset.mode = state.mode;
+      $$(".seg", pk).forEach(paintSeg);
+    };
+    const choose = (seg, button) => {
+      const key = seg.dataset.seg;
+      if (state[key] === button.dataset.v) return;
+      $$("button", seg).forEach((b) => b.setAttribute("aria-checked", String(b === button)));
+      state[key] = button.dataset.v;
+      render();
+      const work = state.provider === "gemini" ? "Task" : "Work";
+      if (key === "provider") say(`Now chatting with ${NAMES[state.provider]}`);
+      else if (key === "mode") say(state.mode === "work" ? `${work} mode · new chat, draft kept` : "Back to a normal chat");
+      else say(`${state.effort} reasoning effort for this chat`);
+    };
+    $$(".seg", pk).forEach((seg) => {
+      seg.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) choose(seg, b); });
+      seg.addEventListener("keydown", (e) => {
+        const dir = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+        if (!dir) return;
+        e.preventDefault();
+        const buttons = $$("button", seg);
+        const next = buttons[(buttons.findIndex((b) => b.getAttribute("aria-checked") === "true") + dir + buttons.length) % buttons.length];
+        choose(seg, next);
+        next.focus();
+      });
+    });
+    render();
+  }
+
+  /* ------------------------------------------------------------ Slash menu demo */
+  // The real command list from ui/app.js (COMMANDS), filtered by prefix the way the app does.
+  const SLASH = [
+    ["new", "Start a new chat"], ["temp", "Temporary chat"], ["chats", "Search all chats"],
+    ["chatgpt", "Switch to ChatGPT"], ["gemini", "Switch to Gemini"], ["model", "Mode, effort and model"],
+    ["find", "Find in conversation"], ["copy", "Copy conversation"], ["export", "Save as Markdown"],
+    ["rename", "Rename this chat"], ["discard", "Discard unsent draft"], ["clear", "Clear recent chats"],
+    ["signin", "Sign in or manage account"], ["settings", "Open settings"], ["startup", "Open at startup"],
+    ["update", "Check for updates"], ["keys", "Keyboard shortcuts"], ["hide", "Hide QChat"]
+  ];
+  const DONE = {
+    new: "Fresh chat. Your old one is a tab now.", temp: "Temporary chat, kept out of history.", chats: "All chats opens, ready to search.",
+    chatgpt: "Now chatting with ChatGPT.", gemini: "Now chatting with Gemini.", model: "The picker pops open.",
+    find: "The find bar slides in.", copy: "Conversation copied as Markdown.", export: "Saved to Downloads as Markdown.",
+    rename: "Type a new name and press Enter.", discard: "Draft discarded. Undo for six seconds.", clear: "Tabs cleared. Undo for six seconds.",
+    signin: "The sign-in window opens.", settings: "Settings opens beside the bar.", startup: "Open at startup: On.",
+    update: "You're on the latest version.", keys: "Every shortcut, in a list.", hide: "Gone until you press Alt+Q."
+  };
+  const slashInput = $("#slash-input");
+  const slashMenu = $("#slash-menu");
+  const slashToast = $("#slash-toast");
+  if (slashInput && slashMenu) {
+    let matches = [], sel = 0, toastTimer = 0;
+    const ROWS = 5;
+    const paint = () => {
+      const v = slashInput.value.trim().toLowerCase();
+      const q = v.startsWith("/") ? v.slice(1) : null;
+      matches = q === null ? [] : SLASH.filter(([n]) => n.startsWith(q));
+      sel = Math.min(sel, Math.max(0, matches.length - 1));
+      const start = Math.max(0, Math.min(sel - ROWS + 1, matches.length - ROWS));
+      slashMenu.replaceChildren(...(matches.length ? matches.slice(start, start + ROWS).map(([n, d], i) => {
+        const row = document.createElement("div");
+        row.className = "mi";
+        row.id = `slash-${n}`;
+        row.setAttribute("role", "option");
+        row.setAttribute("aria-selected", String(start + i === sel));
+        row.innerHTML = `<b>/${n}</b><span>${d}</span>`;
+        row.addEventListener("mousedown", (e) => { e.preventDefault(); run(n); });
+        row.addEventListener("mousemove", () => { if (sel !== start + i) { sel = start + i; paint(); } });
+        return row;
+      }) : [Object.assign(document.createElement("div"), { className: "mi-empty", textContent: q === null ? "Start with / to see commands" : "No command starts with that" })]));
+      slashInput.setAttribute("aria-activedescendant", matches[sel] ? `slash-${matches[sel][0]}` : "");
+    };
+    const run = (n) => {
+      slashToast.innerHTML = `<b>/${n}</b>&nbsp; ${DONE[n]}`;
+      slashToast.classList.add("is-on");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => slashToast.classList.remove("is-on"), 2600);
+      slashInput.value = "/";
+      sel = 0;
+      paint();
+    };
+    slashInput.addEventListener("input", () => { sel = 0; paint(); });
+    slashInput.addEventListener("keydown", (e) => {
+      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && matches.length) {
+        e.preventDefault();
+        sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length;
+        paint();
+      } else if ((e.key === "Enter" || e.key === "Tab") && matches[sel]) {
+        if (e.key === "Tab" && !slashInput.value.trim().startsWith("/")) return;
+        e.preventDefault();
+        run(matches[sel][0]);
+      } else if (e.key === "Escape") {
+        slashInput.value = "/"; sel = 0; paint();
+      }
+    });
+    paint();
+  }
+
+  /* ------------------------------------------------------------ Download panel light */
+  const panel = $(".dl-panel");
+  if (panel && !reduce && matchMedia("(hover: hover)").matches) {
+    panel.addEventListener("pointermove", (e) => {
+      const r = panel.getBoundingClientRect();
+      panel.style.setProperty("--mx", `${e.clientX - r.left}px`);
+      panel.style.setProperty("--my", `${e.clientY - r.top}px`);
+    });
   }
 
   /* ------------------------------------------------------------ Release info */

@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QChat Help · Shortcuts, commands and features</title>
+  <meta name="description" content="Everything QChat can do: every keyboard shortcut, every slash command, providers and modes, chats, files, snapshots, the orb, settings and troubleshooting.">
+  <meta name="theme-color" content="#f3f2ee">
+  <meta name="color-scheme" content="light">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="QChat Help · Shortcuts, commands and features">
+  <meta property="og:description" content="Every keyboard shortcut, slash command and feature in QChat, in one page.">
+  <meta property="og:image" content="/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+  <script>document.documentElement.classList.replace("no-js", "js");</script>
+  <script src="/help.js" defer></script>
+</head>
+<body class="page-help">
+  <a class="skip" href="#content">Skip to the guide</a>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-clip" viewBox="0 0 20 20"><path d="M13.5 6.5 7.8 12.2a1.6 1.6 0 0 0 2.3 2.3l6-6a3.2 3.2 0 0 0-4.5-4.5l-6 6a4.8 4.8 0 0 0 6.8 6.8l5.2-5.2"/></symbol>
+    <symbol id="i-cam" viewBox="0 0 20 20"><rect x="3" y="5.5" width="14" height="10.5" rx="2.5"/><path d="M7.5 5.5 8.6 3.8h2.8l1.1 1.7"/><circle cx="10" cy="10.7" r="2.6"/></symbol>
+    <symbol id="i-send" viewBox="0 0 20 20"><path d="M10 15.5v-11m0 0-4.5 4.5M10 4.5l4.5 4.5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 20 20"><circle cx="9" cy="9" r="5"/><path d="m13 13 3.5 3.5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 20 20"><circle cx="10" cy="10" r="6.5"/><path d="M10 6.5V10l2.4 1.6"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 20 20"><path d="m6.5 8 3.5 3.5L13.5 8"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 20 20"><path d="M4 10h12m0 0-5-5m5 5-5 5"/></symbol>
+    <symbol id="i-down" viewBox="0 0 20 20"><path d="M10 3v10m0 0-4-4m4 4 4-4M4 16.5h12"/></symbol>
+    <symbol id="i-up" viewBox="0 0 20 20"><path d="M10 15V5m0 0-4 4m4-4 4 4"/></symbol>
+  </svg>
+
+  <header class="nav is-scrolled" id="nav">
+    <div class="wrap nav-in">
+      <a class="brand" href="/" aria-label="QChat home">
+        <img src="/icon.svg" width="26" height="26" alt="">
+        <span>QChat</span>
+      </a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="/#tour">Tour</a>
+        <a href="/#features">Features</a>
+        <a href="/#looks">Looks</a>
+        <a href="/#install">Install</a>
+        <a href="/help" aria-current="page">Help</a>
+        <a href="https://github.com/Steez-47/qchat">GitHub</a>
+      </nav>
+      <a class="btn btn-ink btn-sm" href="/download" data-dl>Download</a>
+    </div>
+    <div class="nav-progress" aria-hidden="true"><i id="nav-progress"></i></div>
+  </header>
+
+  <main id="content">
+    <section class="help-hero">
+      <div class="wrap">
+        <p class="eyebrow">Help &amp; reference</p>
+        <h1 class="h-xl help-title">Everything QChat can do.</h1>
+        <p class="lede">Every shortcut, every slash command and every feature, on one page. Inside the app, type <code>/keys</code> for the short version.</p>
+        <label class="help-search" for="help-filter">
+          <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="help-filter" type="search" placeholder="Filter shortcuts and commands" autocomplete="off" spellcheck="false">
+          <kbd aria-hidden="true">/</kbd>
+        </label>
+        <p class="help-count" id="help-count" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <div class="wrap help-grid">
+      <aside class="help-toc" aria-label="On this page">
+        <p class="eyebrow">On this page</p>
+        <ol id="toc">
+          <li><a href="#start">Quick start</a></li>
+          <li><a href="#anatomy">The bar, piece by piece</a></li>
+          <li><a href="#shortcuts">Keyboard shortcuts</a></li>
+          <li><a href="#commands">Slash commands</a></li>
+          <li><a href="#assistants">Assistants &amp; modes</a></li>
+          <li><a href="#chats">Chats &amp; history</a></li>
+          <li><a href="#replies">Reading replies</a></li>
+          <li><a href="#files">Files, images &amp; snapshots</a></li>
+          <li><a href="#orb">The orb &amp; folding</a></li>
+          <li><a href="#tray">The tray icon</a></li>
+          <li><a href="#settings">Settings</a></li>
+          <li><a href="#updates">Updates</a></li>
+          <li><a href="#limits">Limits &amp; troubleshooting</a></li>
+        </ol>
+      </aside>
+
+      <div class="help-body">
+
+        <!-- ============================================================ Quick start -->
+        <section class="hs" id="start">
+          <p class="hs-n">01</p>
+          <h2>Quick start</h2>
+          <ol class="qs">
+            <li><span class="qs-n">1</span><div><h3>Install and launch</h3><p>Run the installer. QChat appears as a small bar near the bottom of your screen and an icon in the system tray.</p></div></li>
+            <li><span class="qs-n">2</span><div><h3>Sign in, once</h3><p>Open <strong>Settings &rarr; Accounts</strong>, or pick <strong>Sign in</strong> from the tray. Log in to ChatGPT or Gemini in the window that opens and you stay signed in. Without signing in, QChat chats as a ChatGPT guest.</p></div></li>
+            <li><span class="qs-n">3</span><div><h3>Press <kbd>Alt</kbd> <kbd>Q</kbd> from anywhere</h3><p>The bar opens over whatever you&rsquo;re doing. Type, press <kbd>Enter</kbd>, read the reply, then click away. A few seconds later it folds back into its orb.</p></div></li>
+            <li><span class="qs-n">4</span><div><h3>Explore with <kbd>/</kbd></h3><p>Type a slash in the bar to see every command, or press <kbd>Ctrl</kbd> <kbd>K</kbd> for the same menu. <code>/keys</code> lists the shortcuts.</p></div></li>
+          </ol>
+        </section>
+
+        <!-- ============================================================ Anatomy -->
+        <section class="hs" id="anatomy">
+          <p class="hs-n">02</p>
+          <h2>The bar, piece by piece</h2>
+          <p class="hs-lede">QChat is one bar with a reply above it. Hover a number to find it on the bar.</p>
+          <div class="screen anatomy-screen" data-screen>
+            <div class="canvas" id="bar-map">
+              <div class="qc qc-anatomy" aria-hidden="true">
+                <div class="tabs">
+                  <span class="tab" data-part="2"><svg class="ic"><use href="#i-clock"/></svg></span>
+                  <span class="tab tab-on" data-part="3"><i class="pmark pm-gpt"></i>Debounce search</span>
+                  <span class="tab" data-part="3"><i class="pmark pm-gem"></i>Kyoto trip, 3 days <em>2h</em></span>
+                </div>
+                <div class="bar glass">
+                  <span class="orb" data-part="1"></span>
+                  <span class="bar-field" data-part="4"><span class="typed-static">Explain this error</span></span>
+                  <span class="picker-pill" data-part="5"><i class="pmark pm-gpt"></i>Medium<svg class="ic"><use href="#i-chev"/></svg></span>
+                  <span class="bar-btn" data-part="6"><svg class="ic"><use href="#i-cam"/></svg></span>
+                  <span class="bar-btn" data-part="7"><svg class="ic"><use href="#i-clip"/></svg></span>
+                  <span class="send is-ready" data-part="8"><svg class="ic"><use href="#i-send"/></svg></span>
+                </div>
+              </div>
+              <span class="pin" data-pin="1">1</span>
+              <span class="pin" data-pin="2">2</span>
+              <span class="pin" data-pin="3">3</span>
+              <span class="pin" data-pin="4">4</span>
+              <span class="pin" data-pin="5">5</span>
+              <span class="pin" data-pin="6">6</span>
+              <span class="pin" data-pin="7">7</span>
+              <span class="pin" data-pin="8">8</span>
+            </div>
+          </div>
+          <ol class="legend" id="legend">
+            <li data-part="1"><b>1</b><div><h3>Orb</h3><p>Drag it to move QChat. Click it to fold the bar away. A ring shows the connection: none when ready, amber while connecting or as a guest, red on an error.</p></div></li>
+            <li data-part="2"><b>2</b><div><h3>All chats</h3><p>The clock tab opens every chat on this PC, then every chat on your account, with search. Same as <kbd>Ctrl</kbd> <kbd>P</kbd>.</p></div></li>
+            <li data-part="3"><b>3</b><div><h3>Recent tabs</h3><p>Your latest chats ride on the bar, each with its provider&rsquo;s logo and how long ago you used it. Click one to jump back in.</p></div></li>
+            <li data-part="4"><b>4</b><div><h3>Composer</h3><p>Type a message, <kbd>/</kbd> for commands. Paste or drop files here. <kbd>Up</kbd> recalls earlier prompts when it&rsquo;s empty.</p></div></li>
+            <li data-part="5"><b>5</b><div><h3>Picker</h3><p>Provider, mode (Chat, Work or Task), reasoning effort and model, all in one small popover.</p></div></li>
+            <li data-part="6"><b>6</b><div><h3>Snapshot</h3><p>Captures the window behind QChat and attaches it, so you can ask about what&rsquo;s on screen.</p></div></li>
+            <li data-part="7"><b>7</b><div><h3>Attach</h3><p>Pick files to send. Up to 10 per message. Hide it in Settings &rarr; Bar &amp; tabs if you never use it.</p></div></li>
+            <li data-part="8"><b>8</b><div><h3>Send</h3><p>Appears once there&rsquo;s something to send. During a reply it becomes Stop.</p></div></li>
+          </ol>
+        </section>
+
+        <!-- ============================================================ Shortcuts -->
+        <section class="hs" id="shortcuts">
+          <p class="hs-n">03</p>
+          <h2>Keyboard shortcuts</h2>
+          <p class="hs-lede">QChat works without a mouse. The two global shortcuts work anywhere in Windows; the rest work while QChat is open.</p>
+
+          <div class="tester" id="tester" tabindex="0" role="button" aria-describedby="tester-hint">
+            <div class="tester-keys" id="tester-keys" aria-live="polite"><span class="tester-ph">Click here, then press a shortcut</span></div>
+            <p class="tester-hint" id="tester-hint">Try <kbd>Ctrl</kbd> <kbd>K</kbd> or <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>C</kbd>. The matching row lights up. A few, like <kbd>Ctrl</kbd> <kbd>N</kbd>, belong to your browser and can&rsquo;t be caught here.</p>
+          </div>
+
+          <div class="kb-group" data-filter-group>
+            <h3>Anywhere in Windows</h3>
+            <dl class="kb">
+              <div class="kb-row" data-keys="alt+q"><dt><kbd>Alt</kbd><kbd>Q</kbd></dt><dd>Show or hide QChat<small>Change it in Settings &rarr; Shortcuts</small></dd></div>
+              <div class="kb-row" data-keys="ctrl+alt+q"><dt><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Q</kbd></dt><dd>Open QChat with the text selected in the current app quoted<small>Change it or turn it off in Settings &rarr; Shortcuts</small></dd></div>
+            </dl>
+          </div>
+
+          <div class="kb-group" data-filter-group>
+            <h3>Writing and sending</h3>
+            <dl class="kb">
+              <div class="kb-row" data-keys="enter"><dt><kbd>Enter</kbd></dt><dd>Send the message<small>Settings &rarr; General can switch this to Ctrl+Enter</small></dd></div>
+              <div class="kb-row" data-keys="shift+enter"><dt><kbd>Shift</kbd><kbd>Enter</kbd></dt><dd>New line in a message</dd></div>
+              <div class="kb-row" data-keys="ctrl+."><dt><kbd>Ctrl</kbd><kbd>.</kbd></dt><dd>Stop the reply that&rsquo;s being written</dd></div>
+              <div class="kb-row" data-keys="arrowup arrowdown"><dt><kbd>&uarr;</kbd><kbd>&darr;</kbd></dt><dd>Recall earlier prompts in an empty composer</dd></div>
+              <div class="kb-row" data-keys="ctrl+z"><dt><kbd>Ctrl</kbd><kbd>Z</kbd></dt><dd>Bring back a draft replaced by Edit, or undo removing a chat</dd></div>
+              <div class="kb-row" data-keys="/"><dt><kbd>/</kbd></dt><dd>Open the slash command menu<small>&uarr; &darr; to choose, Enter or Tab to run</small></dd></div>
+            </dl>
+          </div>
+
+          <div class="kb-group" data-filter-group>
+            <h3>Chats and menus</h3>
+            <dl class="kb">
+              <div class="kb-row" data-keys="ctrl+k"><dt><kbd>Ctrl</kbd><kbd>K</kbd></dt><dd>Command menu; press again to close</dd></div>
+              <div class="kb-row" data-keys="ctrl+p"><dt><kbd>Ctrl</kbd><kbd>P</kbd></dt><dd>Search all chats; press again to close</dd></div>
+              <div class="kb-row" data-keys="ctrl+n"><dt><kbd>Ctrl</kbd><kbd>N</kbd></dt><dd>New chat</dd></div>
+              <div class="kb-row" data-keys="ctrl+shift+n"><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>N</kbd></dt><dd>New temporary chat (ChatGPT)</dd></div>
+              <div class="kb-row" data-keys="arrowleft arrowright home end"><dt><kbd>&larr;</kbd><kbd>&rarr;</kbd></dt><dd>Move between recent tabs once one is focused<small>Home and End jump to the first and last, Enter opens, Esc returns to the composer</small></dd></div>
+              <div class="kb-row" data-keys="escape"><dt><kbd>Esc</kbd></dt><dd>Close the open menu, dismiss the reply, then hide QChat</dd></div>
+            </dl>
+          </div>
+
+          <div class="kb-group" data-filter-group>
+            <h3>Reading, finding and copying</h3>
+            <dl class="kb">
+              <div class="kb-row" data-keys="ctrl+f"><dt><kbd>Ctrl</kbd><kbd>F</kbd></dt><dd>Find in the conversation</dd></div>
+              <div class="kb-row" data-keys="f3 shift+f3"><dt><kbd>F3</kbd><kbd>Shift</kbd><kbd>F3</kbd></dt><dd>Next or previous match<small>Enter and Shift+Enter work inside the find bar too</small></dd></div>
+              <div class="kb-row" data-keys="ctrl+home"><dt><kbd>Ctrl</kbd><kbd>Home</kbd></dt><dd>Jump to the start of the conversation</dd></div>
+              <div class="kb-row" data-keys="ctrl+end"><dt><kbd>Ctrl</kbd><kbd>End</kbd></dt><dd>Jump to the latest message</dd></div>
+              <div class="kb-row" data-keys="pageup pagedown"><dt><kbd>PgUp</kbd><kbd>PgDn</kbd></dt><dd>Scroll a long reply without leaving the composer</dd></div>
+              <div class="kb-row" data-keys="ctrl+shift+c"><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>C</kbd></dt><dd>Copy the latest reply as Markdown, or the selected text</dd></div>
+              <div class="kb-row" data-keys="ctrl+shift+x"><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>X</kbd></dt><dd>Copy the last code block in the reply</dd></div>
+            </dl>
+          </div>
+          <p class="filter-empty" hidden>No shortcuts match.</p>
+        </section>
+
+        <!-- ============================================================ Commands -->
+        <section class="hs" id="commands">
+          <p class="hs-n">04</p>
+          <h2>Slash commands</h2>
+          <p class="hs-lede">Type <kbd>/</kbd> and a few letters, or press <kbd>Ctrl</kbd> <kbd>K</kbd> to browse. Every command, in the order you&rsquo;re likely to need it:</p>
+          <div class="kb-group" data-filter-group>
+            <dl class="cmds">
+              <div class="cmd-row"><dt><code>/new</code></dt><dd>Start a new chat. Same as <kbd>Ctrl</kbd> <kbd>N</kbd>.</dd></div>
+              <div class="cmd-row"><dt><code>/temp</code></dt><dd>Start a temporary ChatGPT chat that stays out of saved history.</dd></div>
+              <div class="cmd-row"><dt><code>/chats</code></dt><dd>Search every saved chat. Same as <kbd>Ctrl</kbd> <kbd>P</kbd>.</dd></div>
+              <div class="cmd-row"><dt><code>/chatgpt</code></dt><dd>Switch this chat to ChatGPT.</dd></div>
+              <div class="cmd-row"><dt><code>/gemini</code></dt><dd>Switch this chat to Gemini.</dd></div>
+              <div class="cmd-row"><dt><code>/model</code></dt><dd>Open the picker for mode, effort and model.</dd></div>
+              <div class="cmd-row"><dt><code>/find</code></dt><dd>Find text in the conversation. Same as <kbd>Ctrl</kbd> <kbd>F</kbd>.</dd></div>
+              <div class="cmd-row"><dt><code>/copy</code></dt><dd>Copy the whole conversation as Markdown.</dd></div>
+              <div class="cmd-row"><dt><code>/export</code></dt><dd>Save the conversation as a Markdown file in Downloads (up to 4&nbsp;MiB).</dd></div>
+              <div class="cmd-row"><dt><code>/rename</code></dt><dd>Rename the current chat in QChat.</dd></div>
+              <div class="cmd-row"><dt><code>/discard</code></dt><dd>Throw away the unsent draft. Undo for six seconds.</dd></div>
+              <div class="cmd-row"><dt><code>/clear</code></dt><dd>Clear the recent-chat tabs. Undo for six seconds.</dd></div>
+              <div class="cmd-row"><dt><code>/signin</code></dt><dd>Sign in to the current provider, or manage the account.</dd></div>
+              <div class="cmd-row"><dt><code>/settings</code></dt><dd>Open the Settings window.</dd></div>
+              <div class="cmd-row"><dt><code>/startup</code></dt><dd>Turn Open at startup on or off.</dd></div>
+              <div class="cmd-row"><dt><code>/update</code></dt><dd>Check for a new version now, or install the one waiting.</dd></div>
+              <div class="cmd-row"><dt><code>/keys</code></dt><dd>Show the keyboard shortcuts inside QChat.</dd></div>
+              <div class="cmd-row"><dt><code>/hide</code></dt><dd>Hide QChat until you press <kbd>Alt</kbd> <kbd>Q</kbd> again.</dd></div>
+            </dl>
+          </div>
+          <p class="filter-empty" hidden>No commands match.</p>
+        </section>
+
+        <!-- ============================================================ Assistants -->
+        <section class="hs" id="assistants">
+          <p class="hs-n">05</p>
+          <h2>Assistants &amp; modes</h2>
+          <p class="hs-lede">QChat talks to chatgpt.com and gemini.google.com in hidden windows using your own sign-in. No API keys, and your plan&rsquo;s models and limits apply as usual.</p>
+          <div class="cards">
+            <article class="card"><h3>Pick a provider</h3><p>The pill beside the composer opens the picker. Choose ChatGPT or Gemini at the top, or type <code>/chatgpt</code> or <code>/gemini</code>. Settings &rarr; General sets which one new chats use.</p></article>
+            <article class="card"><h3>Chat, Work or Task</h3><p><strong>Work</strong> (ChatGPT) and <strong>Task</strong> (Gemini) run long agent jobs where your plan includes them. Switching starts a new chat and keeps your draft. If a task stops for your approval, QChat tells you to open the chat on the site.</p></article>
+            <article class="card"><h3>Effort and model</h3><p>Set reasoning effort (low, medium or high) and the model for each chat in the picker. Settings &rarr; General sets the starting effort for new chats.</p></article>
+            <article class="card"><h3>Each chat keeps its provider</h3><p>A chat stays with the service it started on, and its tab shows that logo. Gemini only loads the first time you use it.</p></article>
+          </div>
+        </section>
+
+        <!-- ============================================================ Chats -->
+        <section class="hs" id="chats">
+          <p class="hs-n">06</p>
+          <h2>Chats &amp; history</h2>
+          <ul class="facts">
+            <li><b>Recent tabs.</b> Up to three recent chats sit on the bar (Settings &rarr; Bar &amp; tabs changes how many).</li>
+            <li><b>All chats.</b> <kbd>Ctrl</kbd> <kbd>P</kbd>, <code>/chats</code> or the clock tab lists chats on this PC first, then every other chat on your account. Type to search.</li>
+            <li><b>Full history.</b> Opening a chat loads the whole conversation from your account, images included. Long chats open at the newest message and fill in older ones above.</li>
+            <li><b>Names.</b> New chats are named from the first line of your first prompt. <code>/rename</code> changes it.</li>
+            <li><b>Drafts.</b> Unsent text survives switching chats, reloads and restarts. QChat also remembers where you were reading.</li>
+            <li><b>Temporary chats.</b> <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>N</kbd> or <code>/temp</code>. Sending waits until ChatGPT confirms its Temporary mode; if it refuses, your draft and files are kept. ChatGPT only, because Gemini gives no reliable sign that a chat is temporary.</li>
+            <li><b>Undo.</b> Removing a chat, <code>/clear</code> and <code>/discard</code> can each be undone for six seconds, or with <kbd>Ctrl</kbd> <kbd>Z</kbd>.</li>
+            <li><b>Stored locally.</b> Up to 50 chats are kept on this PC, with full transcripts for the newest eight. Settings &rarr; Privacy turns local history off.</li>
+          </ul>
+        </section>
+
+        <!-- ============================================================ Replies -->
+        <section class="hs" id="replies">
+          <p class="hs-n">07</p>
+          <h2>Reading replies</h2>
+          <ul class="facts">
+            <li><b>Calm streaming.</b> Each block appears once it&rsquo;s finished, then flows in word by word, so code, tables and maths never jump while you read.</li>
+            <li><b>Rich formatting.</b> Highlighted code, typeset maths, aligned tables, task lists, images, audio and video.</li>
+            <li><b>Hover actions.</b> Hover a reply to copy it, retry it or open it on the provider&rsquo;s site. Your own messages have Copy and Edit.</li>
+            <li><b>Following along.</b> The view follows new text until you scroll up one notch, then stays put. Reach the end and it follows again.</li>
+            <li><b>Find.</b> <kbd>Ctrl</kbd> <kbd>F</kbd> searches the whole conversation, not just what&rsquo;s on screen.</li>
+            <li><b>Take it with you.</b> <code>/copy</code> puts the conversation on the clipboard as Markdown; <code>/export</code> saves it to Downloads.</li>
+          </ul>
+        </section>
+
+        <!-- ============================================================ Files -->
+        <section class="hs" id="files">
+          <p class="hs-n">08</p>
+          <h2>Files, images &amp; snapshots</h2>
+          <ul class="facts">
+            <li><b>Three ways in.</b> The paperclip, pasting, or dropping files anywhere on QChat. Pasting outside a text field still goes to the composer.</li>
+            <li><b>Previews.</b> Images show thumbnails before you send and previews in the chat. <b>Copy image</b> puts the pixels on the clipboard.</li>
+            <li><b>Snapshots.</b> The camera button captures the window behind QChat and attaches it. Great for errors, charts and designs.</li>
+            <li><b>Ask about selected text.</b> Select text in any app and press <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Q</kbd>. It appears as a one-line quote above your question. If an app won&rsquo;t share its selection, QChat can copy it for you and restore your clipboard (Settings &rarr; Shortcuts).</li>
+            <li><b>Downloads.</b> Files in replies download without overwriting anything you already have.</li>
+            <li><b>Retry.</b> A message whose attachments failed offers Retry for ten minutes, and a file that failed to prepare has its own Retry.</li>
+          </ul>
+        </section>
+
+        <!-- ============================================================ Orb -->
+        <section class="hs" id="orb">
+          <p class="hs-n">09</p>
+          <h2>The orb &amp; folding</h2>
+          <p class="hs-lede">Click away and, after five seconds, everything sinks into the bar and the bar closes into its orb. Click the orb, press <kbd>Alt</kbd> <kbd>Q</kbd> or any key to open it again. Drag the folded orb to move it.</p>
+          <div class="orbs">
+            <figure class="orb-tile"><div class="orb-stage"><span class="orb big"></span></div><figcaption><b>Ready</b>Nothing going on. Click to open.</figcaption></figure>
+            <figure class="orb-tile"><div class="orb-stage"><span class="orb big is-working"></span></div><figcaption><b>Working</b>A reply is on its way. Fold any time while you wait.</figcaption></figure>
+            <figure class="orb-tile"><div class="orb-stage"><span class="orb big is-ready"><i class="orb-badge">1</i></span></div><figcaption><b>Reply ready</b>The orb turns green with a &ldquo;1&rdquo;. Opening clears it.</figcaption></figure>
+            <figure class="orb-tile"><div class="orb-stage"><span class="orb big is-attention"><i class="orb-badge">!</i></span></div><figcaption><b>Needs you</b>Something went wrong, or a task wants approval.</figcaption></figure>
+            <figure class="orb-tile"><div class="orb-stage"><span class="orb big is-connecting"></span></div><figcaption><b>Connecting</b>An amber ring while signing in or chatting as a guest.</figcaption></figure>
+            <figure class="orb-tile"><div class="orb-stage"><span class="orb big"><i class="upd-badge"><svg><use href="#i-up"/></svg></i></span></div><figcaption><b>Update</b>A small arrow means a new version is out. Hover and press Update.</figcaption></figure>
+          </div>
+          <ul class="facts">
+            <li><b>Fold it yourself.</b> Click the open orb, or the minimize button shown during a reply.</li>
+            <li><b>When it won&rsquo;t fold.</b> Never while words are arriving in an ordinary reply, while the pointer is over it or while Settings is open. Long Work and Task jobs may fold at any point.</li>
+            <li><b>Change the timing.</b> Settings &rarr; Window &rarr; <em>Fold into the orb when idle</em>. Set it to 0 to turn folding off, or choose <em>Hide when you click away</em> instead.</li>
+          </ul>
+        </section>
+
+        <!-- ============================================================ Tray -->
+        <section class="hs" id="tray">
+          <p class="hs-n">10</p>
+          <h2>The tray icon</h2>
+          <p class="hs-lede">Right-click QChat&rsquo;s icon in the notification area for:</p>
+          <div class="tray">
+            <ul class="tray-menu" aria-label="Tray menu">
+              <li>Show QChat</li><li>New chat</li><li>Settings&hellip;</li><li>Sign in to ChatGPT&hellip;</li><li>Sign in to Gemini&hellip;</li><li class="sep"></li><li class="chk">Open at startup</li><li class="sep"></li><li>Quit</li>
+            </ul>
+            <p><strong>Open at startup</strong> starts QChat quietly in the tray when you log in, so <kbd>Alt</kbd> <kbd>Q</kbd> works from the first minute. Turn on <em>Show the bar at startup</em> in Settings &rarr; General to see it straight away.  <code>/hide</code> or <kbd>Esc</kbd> only hide the bar; <strong>Quit</strong> closes QChat and its tray icon.</p>
+          </div>
+        </section>
+
+        <!-- ============================================================ Settings -->
+        <section class="hs" id="settings">
+          <p class="hs-n">11</p>
+          <h2>Settings</h2>
+          <p class="hs-lede">Open with <code>/settings</code> or the tray. The live bar on your desktop is the preview. <kbd>Ctrl</kbd> <kbd>F</kbd> searches every page, a dot marks pages you&rsquo;ve changed, and each page has a Reset button.</p>
+          <div class="set-grid">
+            <div class="set-col">
+              <p class="set-h">Basics</p>
+              <dl>
+                <dt>General</dt><dd>Default assistant, starting effort, Enter or Ctrl+Enter to send, open at startup, update checks.</dd>
+                <dt>Window</dt><dd>Always on top, fold delay, hide on click-away, clear replies automatically, remember position, reset position.</dd>
+                <dt>Shortcuts</dt><dd>Record new global shortcuts. Backspace turns off the selection shortcut.</dd>
+              </dl>
+            </div>
+            <div class="set-col">
+              <p class="set-h">Look &amp; feel</p>
+              <dl>
+                <dt>Presets</dt><dd>Ready-made looks like Reader, Frosted, Crystal and Compact. Save, import and export your own.</dd>
+                <dt>Colours</dt><dd>Twenty themes, accent colour, glass tint, saturation.</dd>
+                <dt>Glass</dt><dd>Bar and reply opacity, desktop blur, &ldquo;Keep text readable&rdquo;, roundness, edge light and shadow.</dd>
+                <dt>Text</dt><dd>Size, font, line spacing, links, quotes, code font and wrapping.</dd>
+                <dt>Bar &amp; tabs</dt><dd>Width, size, placeholder, which buttons show, orb style, suggestions, tab count and style.</dd>
+                <dt>Chat</dt><dd>Reply width and height, <em>Fit to this screen</em>, how your own messages show.</dd>
+                <dt>Motion</dt><dd>Animations, feel and speed, reply entrance, follow new text, typing cursor.</dd>
+              </dl>
+            </div>
+            <div class="set-col">
+              <p class="set-h">Account</p>
+              <dl>
+                <dt>Accounts</dt><dd>Sign in or out of ChatGPT and Gemini. Your password never passes through QChat.</dd>
+                <dt>Privacy</dt><dd>Keep recent chats on this PC, or not. Clear them.</dd>
+                <dt>About</dt><dd>What QChat is, and a Quit button.</dd>
+              </dl>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============================================================ Updates -->
+        <section class="hs" id="updates">
+          <p class="hs-n">12</p>
+          <h2>Updates</h2>
+          <ul class="facts">
+            <li><b>One click.</b> When a new release is out, a small arrow appears on the orb. Hover it and press <b>Update</b>: QChat downloads the new version, checks its checksum and restarts into it.</li>
+            <li><b>Quietly.</b> QChat only asks GitHub for its latest release, at startup and about every six hours. <code>/update</code> checks right now. Settings &rarr; General turns checking off.</li>
+            <li><b>Nightly.</b> Want features early? Install <a class="ul" href="https://github.com/Steez-47/qchat/releases">QChat Nightly</a> once and it offers newer Nightlies the same way. It shares your settings, chats and sign-in.</li>
+          </ul>
+        </section>
+
+        <!-- ============================================================ Limits -->
+        <section class="hs" id="limits">
+          <p class="hs-n">13</p>
+          <h2>Limits &amp; troubleshooting</h2>
+          <div class="faq-list">
+            <details><summary>Windows shows a SmartScreen warning</summary><p>The installer isn&rsquo;t code-signed yet. Choose <strong>More info</strong>, then <strong>Run anyway</strong>. Every release lists SHA256 checksums if you&rsquo;d like to verify the file first.</p></details>
+            <details><summary>The bar is off screen or in an odd spot</summary><p>Settings &rarr; Window &rarr; <strong>Reset position</strong> puts it back at the bottom centre. QChat opens toward the middle of whichever screen you last left it on.</p></details>
+            <details><summary>Everything looks too big or too small</summary><p>Settings &rarr; Chat &rarr; <strong>Fit to this screen</strong> measures your screen again and resets only the size settings. Handy after moving to another monitor.</p></details>
+            <details><summary>&ldquo;Temporary chat could not be confirmed&rdquo;</summary><p>ChatGPT can refuse Temporary mode on guest accounts and on non-English or changed interfaces. QChat keeps your draft and files instead of sending a normal chat. That&rsquo;s the safe failure.</p></details>
+            <details><summary>Lost connection</summary><p>A connection error retries by itself when the network returns or QChat regains focus, keeping your draft and files. You can also press Retry on the error.</p></details>
+            <details><summary>Alt+Q does nothing</summary><p>Another app may own the shortcut. Pick a new one in Settings &rarr; Shortcuts. Click the shortcut, then press the new combination; it needs Ctrl, Alt or Windows.</p></details>
+            <details><summary>Attachment limits</summary><p>Up to 10 attachments and 512&nbsp;MB per message. ChatGPT&rsquo;s and Gemini&rsquo;s own upload and format limits still apply, and audio or video playback depends on WebView2&rsquo;s codecs.</p></details>
+            <details><summary>What isn&rsquo;t supported yet</summary><p>Live voice and camera sessions. Mac and Linux. QChat runs on Windows 11 and Windows 10 22H2, x64.</p></details>
+          </div>
+          <p class="help-more">Still stuck? <a class="ul" href="https://github.com/Steez-47/qchat/issues">Open an issue on GitHub</a>.</p>
+        </section>
+      </div>
+    </div>
+
+    <section class="final final-sm">
+      <div class="wrap">
+        <h2 class="h-xl">Ready when you are.</h2>
+        <div class="cta-row">
+          <a class="btn btn-ink" href="/download" data-dl>
+            <svg class="ic" aria-hidden="true"><use href="#i-down"/></svg>
+            Download QChat
+          </a>
+          <span class="meta">Free &middot; Windows 10 22H2 &amp; 11 &middot; x64 &middot; <span data-release-line>Latest release</span></span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-in">
+      <a class="brand" href="/"><img src="/icon.svg" width="22" height="22" alt=""><span>QChat</span></a>
+      <nav aria-label="Project">
+        <a href="/help">Help</a>
+        <a href="https://github.com/Steez-47/qchat">GitHub</a>
+        <a href="https://github.com/Steez-47/qchat/releases">Releases</a>
+        <a href="https://github.com/Steez-47/qchat/blob/main/CHANGELOG.md">Changelog</a>
+      </nav>
+      <p>An independent app, not affiliated with OpenAI or Google.</p>
+    </div>
+  </footer>
+</body>
+</html>
