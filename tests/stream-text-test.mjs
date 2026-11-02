@@ -105,6 +105,19 @@ for (let n=0;n<=doc.length;n++){const b=boundary(doc.slice(0,n));assert.ok(b>=pr
 assert.equal(prior,doc.length);
 console.log('PASS fence, maths and stable prefix boundaries');
 
+// Reuse complete prefixes without losing list/fence context or hiding corrected snapshots.
+const buffer = {};
+const bufferedDoc = 'Intro.\n\n- first\n\n- second\n  - nested\n\nAfter.\n\n' + F + 'js\ncode\n' + F + '\n\n<section>Done</section>\n\nEnd.\n\n';
+for (let n = 0; n <= bufferedDoc.length; n++) {
+  const text = bufferedDoc.slice(0, n);
+  assert.equal(boundary(text, buffer), boundary(text), 'cached boundary at ' + n);
+}
+assert.ok(buffer.prefix?.length > bufferedDoc.length / 2, 'finished prefixes are checkpointed');
+for (const text of [bufferedDoc.replace('Intro.', 'Corrected intro.'), 'Shorter.\n\n', '', bufferedDoc]) {
+  assert.equal(boundary(text, buffer), boundary(text), 'corrected snapshot: ' + text);
+}
+console.log('PASS incremental boundaries and corrected snapshots');
+
 assert.equal(boundary('Done.\n\n{@body const games = [\n\n"RDR2"'),7);
 const declaration='{@body const games=["$1", "$2"]}\n\n';
 assert.equal(boundary(declaration),declaration.length);

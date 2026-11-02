@@ -2589,8 +2589,9 @@
     const entry = turnNodes.get(turn.id);
     if (!entry || turn.status !== "streaming") return;
     const state = entry.reveal ||= { visible: "", target: null };
+    if (!turn.backendDone && state.target === turn.text) return;
     state.target = turn.text;
-    let shown = turn.backendDone ? turn.text : turn.text.slice(0, window.QStream.completeBoundary(turn.text));
+    let shown = turn.backendDone ? turn.text : turn.text.slice(0, window.QStream.completeBoundary(turn.text, state.boundaryCache ||= {}));
     // Text already shown is never taken back while the stream still extends it.
     if (!turn.backendDone && shown.length < state.visible.length && turn.text.startsWith(state.visible)) shown = state.visible;
     if (shown !== state.visible) {

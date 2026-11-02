@@ -52,7 +52,7 @@ try {
   await evalJS(`__mock.hold=true`);
   await type('perf'); await key('Enter');
   await waitFor(`__mock.last('chat_send')`);
-  await evalJS(`window.__bounds=0;const real=QStream.completeBoundary;QStream.completeBoundary=t=>{__bounds++;return real(t)}`);
+  await evalJS(`window.__bounds=0;window.__scanChars=0;const real=QStream.completeBoundary;QStream.completeBoundary=(t,cache)=>{__bounds++;__scanChars+=t.length-(cache?.prefix&&t.startsWith(cache.prefix)?cache.prefix.length:0);return real(t,cache)}`);
 
   // A burst of deltas inside one task is read once, on the next frame, with only the latest text.
   const words = 'The quick brown fox jumps over the lazy dog again and again'.split(' ');
@@ -73,6 +73,13 @@ try {
   await waitFor(`document.querySelectorAll('[data-role=assistant] pre code').length===2`, 3000);
   check('an earlier code block keeps its nodes when a later block arrives', await evalJS(`document.querySelector('[data-role=assistant] pre code')===__firstCode && __firstCode.contains(__firstTok) && !!__firstTok`));
   check('highlighted nodes live in the page document', await evalJS(`[...document.querySelectorAll('[data-role=assistant] pre code span')].every(s=>s.ownerDocument===document)`));
+
+  await evalJS(`__bounds=0;__scanChars=0;for(let i=0;i<30;i++)__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(two)}+'Still writing '+i})`);
+  await waitFor(`__bounds>0`);
+  check('a growing tail does not rescan completed prose and code', await evalJS(`__bounds===1 && __scanChars<100`), JSON.stringify(await evalJS(`({passes:__bounds,characters:__scanChars})`)));
+  await evalJS(`__bounds=0;__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(two)}+'Still writing 29'})`);
+  await sleep(80);
+  check('repeated identical snapshots do not parse or render again', await evalJS(`__bounds===0`));
 
   // A cached highlight is identical to a fresh one, and never shared between blocks.
   await emit('done', two + `Same block again:\n\n${fence('js', 30, 'a')}`);

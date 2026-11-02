@@ -413,6 +413,18 @@
     if (!root) return '';
     const job = options.job || null;
     const fence = (text, min = 3) => '`'.repeat(Math.max(min, ...[...String(text).matchAll(/`+/g)].map(m => m[0].length + 1)));
+    const hidden = node => {
+      if (node.matches?.(EXCLUDED_MD_SELECTOR)) return true;
+      if (/\b(?:cdk-visually-hidden|visually-hidden|sr-only|screen-reader-only|screen-reader-model-response-label|screen-reader-user-query-label|model-response-label-announcer|table-footer)\b/.test(String(node.className || ''))) return true;
+      if (node.hasAttribute?.('hidden') || node.getAttribute?.('aria-hidden') === 'true' || (node.hasAttribute?.('hide-from-message-actions') && !node.closest?.('single-image, generated-image'))) return true;
+      const style = typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
+      return style?.display === 'none' || style?.visibility === 'hidden' || style?.visibility === 'collapse';
+    };
+    const codeText = node => {
+      if (node.nodeType === 3) return node.nodeValue || '';
+      if (hidden(node)) return '';
+      return [...(node.childNodes || [])].map(codeText).join('');
+    };
 
     const walk = (node, listDepth = 0, inTable = false) => {
       if (!node) return '';
@@ -420,10 +432,8 @@
       if (node.nodeType !== 1) return '';
       const tag = (node.tagName || '').toLowerCase();
 
-      if (node.matches?.(EXCLUDED_MD_SELECTOR)) return '';
+      if (hidden(node)) return '';
       const cls = String(node.className || '');
-      if (/\b(?:cdk-visually-hidden|sr-only|screen-reader-model-response-label|screen-reader-user-query-label|model-response-label-announcer|table-footer)\b/.test(cls)) return '';
-      if (node.hasAttribute?.('hidden') || node.getAttribute?.('aria-hidden') === 'true' || (node.hasAttribute?.('hide-from-message-actions') && !node.closest?.('single-image, generated-image'))) return '';
 
       // Math handling before generic children traversal so .katex-html (or MathML glyphs) are never emitted
       if (/\b(?:math-inline|math-block|katex-display|katex)\b/.test(cls) || node.hasAttribute?.('data-math') || tag === 'math') {
@@ -437,23 +447,23 @@
       if (tag === 'code-block' || /\bformatted-code-block-internal-container\b/.test(cls)) {
         const lang = extractLanguage(node);
         const codeEl = node.querySelector?.('pre code, code[data-test-id="code-content"], pre') || node;
-        const codeText = (codeEl.textContent || '').replace(/\n$/, '');
-        const ticks = fence(codeText, 3);
-        return `\n\n${ticks}${lang}\n${codeText}\n${ticks}\n\n`;
+        const text = codeText(codeEl).replace(/\n$/, '');
+        const ticks = fence(text, 3);
+        return `\n\n${ticks}${lang}\n${text}\n${ticks}\n\n`;
       }
       if (/\bcode-block-decoration\b/.test(cls)) return '';
 
       if (tag === 'pre') {
         const codeEl = node.querySelector?.('code') || node;
-        const codeText = (codeEl.textContent || '').replace(/\n$/, '');
+        const text = codeText(codeEl).replace(/\n$/, '');
         let lang = (codeEl.className || '').match(/language-([\w+#.-]+)/i)?.[1]?.toLowerCase() || '';
         if (!lang && node.parentElement) lang = extractLanguage(node.parentElement);
-        const ticks = fence(codeText, 3);
-        return `\n\n${ticks}${lang}\n${codeText}\n${ticks}\n\n`;
+        const ticks = fence(text, 3);
+        return `\n\n${ticks}${lang}\n${text}\n${ticks}\n\n`;
       }
 
       if (tag === 'code') {
-        const text = node.textContent || '';
+        const text = codeText(node);
         const ticks = fence(text, 1);
         const pad = text.includes('`') || /^ | $/.test(text) ? ' ' : '';
         return `${ticks}${pad}${text}${pad}${ticks}`;
@@ -540,7 +550,7 @@
 
       if (tag === 'ul' || tag === 'ol') {
         const start = Number(node.getAttribute?.('start')) || 1;
-        const items = [...(node.children || node.childNodes || [])].filter(child => (child.tagName || '').toLowerCase() === 'li');
+        const items = [...(node.children || node.childNodes || [])].filter(child => (child.tagName || '').toLowerCase() === 'li' && !hidden(child));
         const lines = items.map((item, idx) => {
           const marker = tag === 'ol' ? `${start + idx}. ` : '- ';
           const indent = '  '.repeat(listDepth);
@@ -562,13 +572,13 @@
       }
 
       if (tag === 'table') {
-        const trs = [...(node.rows || node.querySelectorAll?.('tr') || [])];
+        const trs = [...(node.rows || node.querySelectorAll?.('tr') || [])].filter(row => !hidden(row));
         if (!trs.length) return '';
         const rows = trs.map(row => {
-          const cells = [...(row.cells || row.querySelectorAll?.('th, td') || [])];
+          const cells = [...(row.cells || row.querySelectorAll?.('th, td') || [])].filter(cell => !hidden(cell));
           return `| ${cells.map(cell => walk(cell, listDepth, true).trim().replace(/\|/g, '\\|').replace(/\s*\n+\s*/g, ' ')).join(' | ')} |`;
         });
-        const colCount = (trs[0].cells || trs[0].querySelectorAll?.('th, td') || []).length || 1;
+        const colCount = [...(trs[0].cells || trs[0].querySelectorAll?.('th, td') || [])].filter(cell => !hidden(cell)).length || 1;
         rows.splice(1, 0, `|${' --- |'.repeat(colCount)}`);
         return `\n\n${rows.join('\n')}\n\n`;
       }
