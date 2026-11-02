@@ -125,6 +125,22 @@ test('the boundary is the same whatever the chunking, and never throws on junk',
   }
 });
 
+test('cached boundaries match full scans across chunking, rewrites and rewinds', () => {
+  const r = random(29);
+  const cache = {};
+  const parts = [...STREAM_DOCS, '\n', '- partial', '<section title="', '\\[', '{#each [1] as i}'];
+  for (let i = 0; i < runs(150); i++) {
+    const doc = r.text(parts, 6);
+    for (let at = 0; at <= doc.length; at += 1 + r.int(9)) {
+      const text = doc.slice(0, at);
+      assert.equal(boundary(text, cache), boundary(text), JSON.stringify({ text, prefix: cache.prefix }));
+    }
+    for (const text of [doc, doc.slice(0, r.int(doc.length + 1)), doc.replace(/\n/, '\nChanged '), '']) {
+      assert.equal(boundary(text, cache), boundary(text), JSON.stringify(text));
+    }
+  }
+});
+
 test('a missed currency scan never hides a formula earlier on the line', () => {
   const text = '$x$ then $5 and $6';
   assert.equal(tags.mathEnd(text, 9), 9, 'no closer after the first price');

@@ -390,7 +390,9 @@ function createBrowser({ hostname = 'gemini.google.com', pathname = '/app', read
     btoa, atob,
     fetch: async () => ({ ok: true, blob: async () => new Blob(['image'], { type: 'image/png' }) }),
     console,
-    getComputedStyle: () => ({ overflowY: 'visible' }),
+    getComputedStyle: node => ({ overflowY: 'visible',
+      display: /display:\s*none/.test(node.getAttribute('style') || '') ? 'none' : 'block',
+      visibility: /visibility:\s*hidden/.test(node.getAttribute('style') || '') ? 'hidden' : 'visible' }),
     Date: class extends Date { static now() { return now; } },
     setTimeout: (fn, ms) => schedule(fn, ms, 0),
     clearTimeout: id => timers.delete(id),
@@ -800,6 +802,15 @@ test('HTML to Markdown converter handles nested lists, blockquotes, hr, inline c
   assert.match(md, /2\. Second\n  - Sub A\n  - Sub B\n3\. Third/);
   assert.match(md, /\$\$\n\\int_0\^1 x\^2 dx = \\frac\{1\}\{3\}\n\$\$/);
   assert.doesNotMatch(md, /glyphs/);
+});
+
+test('streamed Gemini prose and code exclude CSS staging and accessibility copies', async () => {
+  const b = createBrowser();
+  const root = parseHTML('<div><p>Again. Again.<span style="display: none">Again. Again.</span><span style="visibility: hidden">Old draft</span><span class="visually-hidden">Accessibility copy</span></p><pre><code>const x = 1;<span class="sr-only">const x = 1;</span><span style="display:none">old code</span></code></pre></div>');
+  assert.equal(b.api._htmlToMarkdown(root), 'Again. Again.\n\n```\nconst x = 1;\n```');
+  assert.equal(b.api._htmlToMarkdown(parseHTML('<div><span style="display:none">Hidden only</span></div>')), '');
+  const blocks = parseHTML('<div><ul><li>Visible</li><li style="display:none">Hidden item</li></ul><table><tr><th>Name</th></tr><tr><td>Visible</td></tr><tr style="display:none"><td>Hidden row</td></tr></table></div>');
+  assert.equal(b.api._htmlToMarkdown(blocks), '- Visible\n\n| Name |\n| --- |\n| Visible |');
 });
 
 test('send scopes to new model-response turn, streams throttled deltas, emits activity, and finishes when settled', async () => {

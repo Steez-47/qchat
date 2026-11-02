@@ -54,7 +54,17 @@
   // The largest prefix of finished blocks: the only text a response ever shows while it streams.
   // Prose ends at a blank line. A fence, display maths, tag or {#each} scope ends at its real closer
   // (at once, even with no newline after it), and never at a blank line inside the scope.
-  function completeBoundary(text) {
+  function completeBoundary(text, cache) {
+    // Resume only after a closed top-level block and a physical newline. List
+    // siblings and unfinished scopes still need their earlier parsing context.
+    // A corrected snapshot invalidates the checkpoint if its prefix changed.
+    const prefix = cache?.prefix && text.startsWith(cache.prefix) ? cache.prefix : '';
+    text = text.slice(prefix.length);
+    let checkpoint = 0;
+    const finish = end => {
+      if (cache) cache.prefix = prefix + text.slice(0, checkpoint);
+      return prefix.length + end;
+    };
     let fence = null, offset = 0, end = 0, math = null, mathFresh = false, inline = null, container = false;
     let skipUntil = 0, prevBlank = true, scopeFresh = false, listIndent = 0, rootListIndent = null;
     const tags = [];
@@ -130,7 +140,7 @@
           if (line[i] === "{") {
             const body = window.QResponseTags.bodyAt(text, offset + i);
             if (body) {
-              if (body.partial) return end;
+              if (body.partial) return finish(end);
               if (!tags.length && !line.slice(0, i).trim()) releaseAfter(body.end);
               skipUntil = body.end;
               i = body.end - offset;
@@ -138,7 +148,7 @@
             }
             const directive = window.QResponseTags.eachAt(text, offset + i);
             if (directive) {
-              if (directive.partial) return end;
+              if (directive.partial) return finish(end);
               if (directive.close) {
                 const index = tags.lastIndexOf("@each");
                 if (index >= 0 && index === tags.length - 1) {
@@ -163,7 +173,7 @@
             const semantic = tag && (SEMANTIC_TAG.test(tag.name.toLowerCase()) || (/^[A-Z]/.test(tag.name) && (tag.self || Object.keys(tag.attrs || {}).length)));
             if (!tag || (/[\p{L}\p{N}]/u.test(text[at - 1] || "") && !tag.close && !semantic)) { i++; continue; }
             // A closer or attribute still arriving: nothing from here is finished.
-            if (tag.partial) return end;
+            if (tag.partial) return finish(end);
             const name = tag.name.toLowerCase();
             if (tag.close) {
               const index = tags.lastIndexOf(name);
@@ -195,9 +205,10 @@
         }
       }
       prevBlank = !fence && !math && !line.trim();
+      if (!last && end === next && !container && !fence && !math && !inline && !tags.length && skipUntil <= next) checkpoint = next;
       offset = next;
     }
-    return end;
+    return finish(end);
   }
 
   // Blanks inline code so markup inside it is ignored, keeping every offset valid.

@@ -231,22 +231,39 @@
         /(?:^|\s)(?:sr-only|visually-hidden|screen-reader-only)(?:\s|$)/.test(typeof node.className === 'string' ? node.className : '')) return true;
     return css && cssHidden(node);
   }
+  // Code and maths have their own representations; textContent would include
+  // hidden accessibility/staging copies even when the enclosing block is visible.
+  function replyText(node, options) {
+    if (node.nodeType === 3) return node.nodeValue || '';
+    if (hiddenReplyNode(node, options) || /^(BUTTON|SCRIPT|STYLE|SVG)$/.test(node.tagName || '')) return '';
+    return node.childNodes?.length ? [...node.childNodes].map(child => replyText(child, options)).join('') : node.textContent || '';
+  }
+  function replyMath(node) {
+    const cls = typeof node.className === 'string' ? node.className : '';
+    if (!/\b(?:katex|katex-display|math-inline|math-block)\b/.test(cls) && !node.hasAttribute?.('data-math') && node.tagName?.toLowerCase() !== 'math') return null;
+    const tex = node.getAttribute?.('data-math') || node.querySelector?.('annotation[encoding="application/x-tex"]')?.textContent;
+    if (!tex?.trim()) return null;
+    const display = /\b(?:katex-display|math-block)\b/.test(cls) || node.getAttribute?.('display') === 'block';
+    return display ? `\n\n$$\n${tex.trim()}\n$$\n\n` : `$${tex.trim()}$`;
+  }
   function nodeMarkdown(node) {
     if (node.nodeType === 3) return node.nodeValue;
     if (node.nodeType !== 1 || hiddenReplyNode(node) || node.matches('button, svg, style, script, img, video, audio')) return '';
     const inner = (from = node) => [...from.childNodes].map(nodeMarkdown).join('');
     const tag = node.tagName.toLowerCase();
+    const math = tag !== 'pre' && tag !== 'code' ? replyMath(node) : null;
+    if (math !== null) return math;
     if (/^h[1-6]$/.test(tag)) return `${'#'.repeat(+tag[1])} ${inner().trim()}\n\n`;
     if (tag === 'p') return `${inner().trim()}\n\n`;
     if (tag === 'br') return '\n';
     if (tag === 'hr') return '---\n\n';
     if (tag === 'strong' || tag === 'b') return `**${inner()}**`;
     if (tag === 'em' || tag === 'i') return `*${inner()}*`;
-    if (tag === 'code') return `\`${node.textContent}\``;
+    if (tag === 'code') return `\`${replyText(node)}\``;
     if (tag === 'pre') {
       const code = node.querySelector('code');
       const language = code?.className.match(/language-([\w+#.-]+)/)?.[1] || '';
-      return `\`\`\`${language}\n${(code || node).textContent.replace(/\n$/, '')}\n\`\`\`\n\n`;
+      return `\`\`\`${language}\n${replyText(code || node).replace(/\n$/, '')}\n\`\`\`\n\n`;
     }
     if (tag === 'a') return /^https:/.test(node.href) ? `[${inner()}](${node.href})` : inner();
     if (tag === 'blockquote') return `${inner().trim().split('\n').map(line => `> ${line}`).join('\n')}\n\n`;
@@ -577,6 +594,9 @@
   }
   function completedMarkdown(job, body, plain) {
     if (!body?.childNodes?.length) return plain;
+    // A raw layout copy can mount before its rendered tree. Check it before
+    // escaping literal text, which would disguise the layout as ordinary prose.
+    if ([...body.childNodes].every(node => node.nodeType === 3) && richLayout(plain)) return '';
     const escape = text => text.replace(/([\\`*_[\]<>])/g, '\\$1');
     const registered = node => [...(job.media?.values() || [])].find(item => media.get(item.id)?.node === node);
     const normalLink = raw => {
@@ -597,18 +617,28 @@
       if (node.nodeType === 3) return escape(node.nodeValue || '');
       const tag = node.tagName?.toLowerCase();
       if (['script', 'style', 'iframe', 'svg', 'button'].includes(tag) || hiddenReplyNode(node, options)) return '';
+      const math = tag !== 'pre' && tag !== 'code' ? replyMath(node) : null;
+      if (math !== null) return math;
       if (tag === 'pre') {
         const code = node.querySelector('code') || node;
-        const text = (code.textContent || '').replace(/\n$/, '');
+        const text = replyText(code, options).replace(/\n$/, '');
         const language = /(?:^|\s)language-([\w+-]+)/.exec(code.className || '')?.[1] || '';
         const ticks = fence(text, 3);
         return `\n\n${ticks}${language}\n${text}\n${ticks}\n\n`;
       }
       if (tag === 'code') {
-        const text = node.textContent || '', ticks = fence(text, 1), pad = text.includes('`') ? ' ' : '';
+        const text = replyText(node, options), ticks = fence(text, 1), pad = text.includes('`') ? ' ' : '';
         return `${ticks}${pad}${text}${pad}${ticks}`;
       }
       if (tag === 'br') return '\n';
+      if (tag === 'hr') return '\n\n---\n\n';
+      if (tag === 'table') {
+        const rows = [...(node.rows || node.querySelectorAll('tr'))].filter(row => !hiddenReplyNode(row, options));
+        const lines = rows.map(row => `| ${[...row.cells].filter(cell => !hiddenReplyNode(cell, options))
+          .map(cell => [...cell.childNodes].map(walk).join('').trim().replace(/\|/g, '\\|').replace(/\n+/g, ' ')).join(' | ')} |`);
+        if (lines.length) lines.splice(1, 0, `|${' --- |'.repeat([...rows[0].cells].filter(cell => !hiddenReplyNode(cell, options)).length)}`);
+        return `\n\n${lines.join('\n')}\n\n`;
+      }
       const children = [...(node.childNodes || [])].map(walk).join('');
       if (node.getAttribute?.('data-d-component') === 'pressable' && node.getAttribute?.('role') === 'link') {
         const item = registered(node);
@@ -616,11 +646,16 @@
       }
       if (tag === 'strong' || tag === 'b') return `**${children}**`;
       if (tag === 'em' || tag === 'i') return `*${children}*`;
+      if (tag === 'del' || tag === 's') return `~~${children}~~`;
+      if (tag === 'blockquote') return `\n\n${children.trim().split('\n').map(line => `> ${line}`).join('\n')}\n\n`;
       if (/^h[1-6]$/.test(tag || '')) return `\n\n${'#'.repeat(Number(tag[1]))} ${children.trim()}\n\n`;
       if (tag === 'ul' || tag === 'ol') {
         const start = Number(node.getAttribute('start')) || 1;
         const items = [...node.childNodes].filter(child => child.tagName?.toLowerCase() === 'li');
-        return '\n\n' + items.map((item, i) => `${tag === 'ol' ? `${start + i}.` : '-'} ${walk(item).trim().replace(/\n/g, '\n  ')}`).join('\n') + '\n\n';
+        return '\n\n' + items.filter(item => !hiddenReplyNode(item, options)).map((item, i) => {
+          const marker = tag === 'ol' ? `${start + i}. ` : '- ';
+          return marker + walk(item).trim().replace(/\n/g, '\n' + ' '.repeat(marker.length));
+        }).join('\n') + '\n\n';
       }
       if (tag === 'a' || tag === 'img' || tag === 'audio' || tag === 'video' || tag === 'source') {
         const item = registered(node);
@@ -671,8 +706,7 @@
     job.assistantNode = node;
     const body = node && (selectors.body.map(s => node.querySelector(s)).find(Boolean) || node);
     const plain = body?.innerText?.trim() || '';
-    const semantic = job.requiresDOM || node?.hasAttribute('data-dil-source-message-id') || body?.querySelector('[data-testid="generated-image-gallery"]');
-    let text = semantic ? completedMarkdown(job, body, plain) : plain;
+    let text = completedMarkdown(job, body, plain);
     // DIL is a layout language, not answer text. A source/copy surface can
     // mount before the real rendered content; never forward that surface.
     if (richLayout(text)) text = '';

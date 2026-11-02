@@ -415,6 +415,33 @@ test('completed DIL fallback preserves semantic code fences, inline formatting a
   assert.doesNotMatch(done(b)?.text, /<pre|<strong/);
 });
 
+test('DIL streaming reads maths and code once, preserving tables and quotes', async () => {
+  const b = browser({ data: sse(message(['<box>layout</box>'])), hold: true });
+  b.stop(true); await b.send(); await b.tick(100); b.resume(); await b.tick(100);
+  const annotation = semantic('annotation', ['x^2'], { encoding: 'application/x-tex' });
+  const formula = semantic('span', [semantic('math', [semantic('mi', ['x2']), annotation]),
+    semantic('span', ['x2'], { 'aria-hidden': 'true' })], { className: 'katex' });
+  formula.querySelector = selector => selector.includes('annotation') ? annotation : null;
+  const cell = (tag, text) => semantic(tag, [text]);
+  const rows = [semantic('tr', [cell('th', 'Name'), cell('th', 'Value')]),
+    semantic('tr', [cell('td', 'A | B'), cell('td', '42')])];
+  rows.forEach(row => { row.cells = row.childNodes; });
+  const table = semantic('table', rows); table.rows = rows;
+  const code = semantic('pre', [semantic('code', ['const x = 1;',
+    semantic('span', ['const x = 1;'], { className: 'sr-only' })], { className: 'language-js' })]);
+  const body = b.dil('Rendered response').querySelector('[data-dil-message-id]');
+  body.childNodes = [semantic('p', ['Formula ', formula]), code, table,
+    semantic('blockquote', [semantic('p', ['Quoted answer'])]), semantic('p', ['Pending'])];
+  await b.tick(500);
+  const text = b.events.filter(event => event.type === 'delta').at(-1)?.text;
+  assert.match(text, /Formula \$x\^2\$/);
+  assert.doesNotMatch(text, /x2/);
+  assert.match(text, /```js\nconst x = 1;\n```/);
+  assert.match(text, /\| Name \| Value \|\n\| --- \| --- \|\n\| A \\\| B \| 42 \|/);
+  assert.match(text, /> Quoted answer/);
+  assert.equal(terminal(b).length, 0);
+});
+
 test('streaming DIL reads each paragraph once and ignores accessibility copies', async () => {
   for (const raw of ['<box><text>layout</text></box>', 'Network prefix']) {
     const b = browser({ data: sse(message([raw])), hold: true });
@@ -451,6 +478,30 @@ test('DIL conversion does not fall back to hidden-only innerText', async () => {
   turn.querySelector('[data-dil-message-id]').childNodes = [semantic('span', ['Accessibility copy still mounting'], { 'aria-hidden': 'true' })];
   await b.tick(300);
   assert.equal(b.events.filter(event => event.type === 'delta').length, 0);
+});
+
+test('legacy DOM-only streaming also filters hidden copies and retains formatting', async () => {
+  const b = browser({ netDisabled: true });
+  b.stop(true); await b.send();
+  const node = b.dom('Again. Again.Again. Again.');
+  node.childNodes = [semantic('p', ['Again. Again.', semantic('span', ['Again. Again.'], { className: 'sr-only' })]),
+    semantic('p', [semantic('strong', ['Next paragraph'])])];
+  await b.tick(500);
+  assert.equal(b.events.filter(event => event.type === 'delta').at(-1)?.text, 'Again. Again.\n\n\n\n**Next paragraph**');
+  assert.equal(terminal(b).length, 0);
+});
+
+test('DOM conversion holds raw layout copy text but preserves literal code examples', async () => {
+  const b = browser({ netDisabled: true });
+  b.stop(true); await b.send();
+  const raw = '<box><text>Layout still mounting</text></box>';
+  const node = b.dom(raw);
+  node.childNodes = [{ nodeType: 3, nodeValue: raw, textContent: raw }];
+  await b.tick(500);
+  assert.equal(b.events.some(event => event.type === 'delta' && event.text.includes('Layout still mounting')), false);
+  node.childNodes = [semantic('pre', [semantic('code', [raw])])];
+  await b.tick(500);
+  assert.equal(b.events.filter(event => event.type === 'delta').at(-1)?.text, '```\n' + raw + '\n```');
 });
 test('DIL markdown links use opaque registered media and safe normal HTTPS links', async () => {
   const file = semantic('a', ['Download CSV'], { href: 'sandbox:/mnt/data/report.csv' }); file.href = 'sandbox:/mnt/data/report.csv';
