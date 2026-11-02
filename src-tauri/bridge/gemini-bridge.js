@@ -655,7 +655,7 @@
     if (convId) job.conversationId = convId;
 
     const domAct = detectActivity(node || document);
-    if (domAct && !job.text) {
+    if (domAct) {
       startActivity(job, domAct, `dom:${domAct.kind}`);
     } else if (!domAct && job.activityKey?.startsWith('dom:')) {
       completeActivity(job);
@@ -676,7 +676,7 @@
         job.text = md;
         job.stableAt = Date.now();
         progress(job);
-        if (job.activity) completeActivity(job);
+        if (job.activity && !domAct) completeActivity(job);
         delta(job, false);
       } else if (!job.stableAt && (md || job.media?.size)) {
         job.stableAt = Date.now();

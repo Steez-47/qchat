@@ -388,8 +388,8 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
 /* The topmost reply reserves room for its floating toolbar inside the stack, so
    the window height measured on the stack already accounts for it. The toolbar
    overlaps the bubble edge by 2px to keep its buttons reachable. */
-.bubble-zone > .turn-row[data-role="assistant"]:first-child:not([data-capped]) { padding-top: 36px; }
-.bubble-zone > .turn-row[data-role="assistant"]:first-child:not([data-capped]) .bubble-tools { bottom: calc(100% - 38px); }
+.bubble-zone > .turn-row[data-role="assistant"][data-response]:first-child:not([data-capped]) { padding-top: 36px; }
+.bubble-zone > .turn-row[data-role="assistant"][data-response]:first-child:not([data-capped]) .bubble-tools { bottom: calc(100% - 38px); }
 /* A capped reply has no spare room above it: tuck the toolbar just inside the
    bubble's top-right corner with a solid fill so text never shows through. */
 .bubble-zone > .turn-row[data-role="assistant"]:first-child[data-capped] .bubble-tools {
@@ -807,26 +807,36 @@ html[data-codewrap="true"] .code-block pre { white-space: pre-wrap; overflow-wra
 .media-preview audio { display: block; width: 100%; margin: 8px 0; }
 .media-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
 
+.reply-status {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--r-chip);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 18px;
+  animation: chip-in var(--t2) var(--ease-out) both;
+}
+.bubble-response:not([hidden]) ~ .reply-status { margin-top: var(--stack-gap); }
 .image-generation {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 8px;
-  width: calc(var(--reply-col) - 34px);
+  min-width: 220px;
   max-width: 100%;
-  min-height: 72px;
-  padding: 14px;
-  border-radius: var(--r-inner);
-  background: var(--fill-1);
   color: var(--text-2);
 }
-.turn-content:empty ~ .image-generation { margin-top: 0; }
 .image-generation-value { margin-left: auto; font-variant-numeric: tabular-nums; }
 .progress-ring { width: 24px; height: 24px; flex: none; animation: ring-rotate calc(2000ms / var(--speed)) linear infinite; }
 .progress-ring circle { fill: none; stroke: var(--accent-text); stroke-width: 1.85; stroke-linecap: round; stroke-dasharray: 55 100; }
 .image-generation[data-percentage] .progress-ring { animation: none; transform: rotate(-90deg); }
 .image-generation[data-percentage] .progress-ring circle { stroke-dasharray: var(--image-progress) 100; }
-html[data-motion="off"] .progress-ring { animation-duration: 4s; }
+html[data-motion="off"] .progress-ring { animation: none; }
+.reply-status .progress-ring { width: 16px; height: 16px; }
+html[data-motion="off"] .reply-status { animation: none; }
 @keyframes ring-rotate { to { transform: rotate(360deg); } }
 
 .turn-sources { margin-top: 10px; font-size: .9em; }
@@ -836,8 +846,8 @@ html[data-motion="off"] .progress-ring { animation-duration: 4s; }
 .turn-sources li { margin: 5px 0; overflow-wrap: anywhere; }
 .turn-sources a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
-.tool-activity { display: flex; align-items: center; gap: 9px; min-width: 220px; max-width: 100%; padding: 4px 0 8px; color: var(--text-2); font-size: 12px; }
-.writing-indicator { padding-top: 8px; color: var(--text-2); font-size: 12px; line-height: 1.4; }
+.tool-activity { display: flex; align-items: center; gap: 9px; min-width: 220px; max-width: 100%; }
+.writing-indicator { display: flex; align-items: center; gap: 9px; }
 .tool-activity .progress-ring { width: 16px; height: 16px; }
 .tool-activity-label { white-space: nowrap; }
 .tool-activity-track { position: relative; overflow: hidden; width: 64px; height: 2px; margin-left: auto; border-radius: 2px; background: var(--fill-2); }

@@ -897,6 +897,34 @@ test('send scopes to new model-response turn, streams throttled deltas, emits ac
   assert.equal(doneEvt.conversationId, '6c98fba71ccb5d25');
 });
 
+test('tool activity can resume repeatedly after Gemini has already written answer text', async () => {
+  const b = createBrowser({ ready: true });
+  let turn;
+  b.sendButton.onClick = () => {
+    b.setStop(true);
+    turn = b.addTurn({ userText: 'research', replyHtml: '<p>First findings.</p>', streaming: true });
+  };
+  await b.api.send({ id: 'resume-tools', prompt: 'research' });
+  await b.tick(300);
+  const activity = () => b.events.filter(e => e.type === 'activity' && e.id === 'resume-tools');
+  for (let i = 0; i < 2; i++) {
+    const overlay = makeEl('thinking-overlay', {}, [makeText('Searching Google...')]);
+    turn.append(overlay); b.notifyMutations(); await b.tick(300);
+    assert.equal(activity().at(-1)?.state, 'running');
+    assert.equal(activity().at(-1)?.kind, 'search');
+    assert.equal(activity().filter(e => e.state === 'running').length, i + 1, 'One start per search phase');
+    assert.equal(b.events.filter(e => e.type === 'delta').at(-1).text.includes('Searching'), false);
+    overlay.remove(); b.notifyMutations(); await b.tick(300);
+    assert.equal(activity().at(-1)?.state, 'complete');
+    turn.querySelector('.markdown').append(makeEl('p', {}, [makeText('More findings.')]));
+    b.notifyMutations(); await b.tick(300);
+  }
+  turn.append(makeEl('thinking-overlay', {}, [makeText('Searching Google...')])); b.notifyMutations(); await b.tick(300);
+  b.api.stop(); await b.tick(300);
+  assert.equal(activity().at(-1)?.state, 'complete');
+  assert.equal(b.events.filter(e => e.type === 'done' && e.id === 'resume-tools').length, 1);
+});
+
 test('send rejects concurrent request with busy and reports stream_failed on empty settled response', async () => {
   const b = createBrowser({ ready: true });
   let mr = null;
