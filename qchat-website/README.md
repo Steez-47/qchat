@@ -27,13 +27,16 @@ public/
                  shortcut tester
   styles.css     All styles for both pages. Paper and ink for the page; the demos use the app's glass
                  from docs/DESIGN.md
-  main.js        Landing page: Lenis smooth scroll, demo canvas fitting, the pinned story, the feature
-                 tour, reveals, the stat count-up, the picker and slash-menu demos, the look picker and
-                 live release info
+  main.js        Landing page: Lenis smooth scroll, demo canvas fitting, the hero desktop, the pinned
+                 story, the feature tour, reveals, the stat count-up, the picker and slash-menu demos,
+                 the look picker and live release info
   help.js        Help page: table of contents, filter (press /), shortcut tester, bar diagram, release info
   lenis.min.js   Lenis 1.3.26 smooth scrolling, vendored (MIT, see lenis.LICENSE.txt)
   icon.svg       Favicon (copy of assets/icon.svg)
   og.png         Share image
+  wall.webp      The desktop wallpaper behind every demo, rendered from art/wall.svg
+art/wall.svg     Wallpaper source. Re-render: headless browser screenshot at 2400x1500, then
+                 `ffmpeg -i wall.png -c:v libwebp -quality 80 public/wall.webp`
 api/
   download.js    /download → 302 to the latest *_x64-setup.exe, or the releases page
   release.js     /api/release → { version, url, size, publishedAt, page }
@@ -47,10 +50,14 @@ The download buttons link to `/download`. Once `/api/release` answers, `main.js`
 
 Every demo is laid out on a fixed-size canvas (`--cw` × `--ch` on its `.screen`) and scaled as a whole to fit, so nothing inside can reflow or spill out at odd widths. Phones get a narrower canvas with its own positions.
 
+- **Hero desktop** (`#desk`): a Windows desktop under the headline that tilts flat as it scrolls in. `main.js` loops the bar through `CHATS`: the orb opens, a question is typed and rises out of the bar, the reply surfaces word by word, its chat becomes a tab, then everything folds back into the orb. Alt+Q on the page or a click on the orb toggles it, and the loop pauses while it's off screen.
 - **Story** (`#story`): a tall section with a sticky stage. Scroll progress sets state classes on `#story-canvas` (`is-open`, `is-typing`, `is-sent`, `is-reply`, `is-tabs`, `is-fold`), and CSS transitions animate between them, so scrolling back reverses smoothly.
 - **Tour** (`#tour`): on wide screens the five `.layer`s share one sticky screen and the step nearest the middle of the viewport plays. Below 900px each layer moves into its own screen under its step. Each scene is a short CSS keyframe sequence started by `.play`.
 
-With *reduce motion* on, smooth scrolling is off and every sequence jumps to its end state.
+- **Fold tiles** (`#fold`): each tile folds a small bar into its orb, then shows the orb's state. Hovering replays it.
+- **Looks** (`#looks`): the preview cycles through the looks while it's on screen, until someone touches the swatches.
+
+With *reduce motion* on, smooth scrolling is off, every sequence jumps to its end state and the hero desktop sits open on a finished answer.
 
 The look picker's colours are copied from `ui/settings-core.js`. Update `LOOKS` in `main.js` if those change.
 

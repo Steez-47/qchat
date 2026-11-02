@@ -37,7 +37,7 @@
   }
 
   // Replies in the demos: words surface from low contrast, like the app's streaming.
-  for (const el of $$("[data-words]")) {
+  function splitWords(el) {
     let i = 0;
     const walk = (node) => {
       for (const child of [...node.childNodes]) {
@@ -57,7 +57,9 @@
       }
     };
     walk(el);
+    return i;
   }
+  $$("[data-words]").forEach(splitWords);
 
   /* ------------------------------------------------------------ Reveals */
   $$(".hero [data-reveal]").forEach((el, i) => el.style.setProperty("--rd", `${0.25 + i * 0.08}s`));
@@ -66,6 +68,7 @@
     for (const e of entries) {
       if (!e.isIntersecting) continue;
       e.target.classList.add("in");
+      if (e.target.classList.contains("orb-tile")) e.target.classList.add("play");
       revealer.unobserve(e.target);
       const n = e.target.querySelector("[data-count]");
       if (n) countUp(n);
@@ -108,6 +111,190 @@
   if (track) {
     [...track.children].forEach((c) => { const d = c.cloneNode(true); d.setAttribute("data-clone", ""); track.append(d); });
     track.classList.add("is-looping");
+  }
+
+  /* ------------------------------------------------------------ Hero desktop */
+  // The bar on a desktop, playing the app's two authored moments on a loop: a question is typed
+  // and rises out of the bar, the reply surfaces word by word and its chat becomes a tab, then
+  // everything sinks into the bar and the bar closes into its orb. Alt+Q or the orb toggles it,
+  // the way Alt+Q shows and hides the real thing. The loop only runs while it's on screen.
+  const deskScreen = $("#desk-screen");
+  const desk = $("#desk");
+
+  function updateDesk() {
+    if (!deskScreen || reduce) return;
+    const top = deskScreen.parentElement.getBoundingClientRect().top;
+    const vh = window.innerHeight;
+    const k = clamp((vh - top) / Math.max(1, vh - 64 - 24));
+    const e = k * k * (3 - 2 * k);
+    deskScreen.style.transform = `rotateX(${((1 - e) * 24).toFixed(2)}deg) scale(${(0.88 + 0.12 * e).toFixed(4)})`;
+  }
+
+  if (desk) {
+    const stack = $("#desk-stack");
+    const tabsEl = $("#desk-tabs");
+    const typedEl = $("#desk-typed");
+    const tryKeys = $$(".try-keys kbd");
+    const CHATS = [
+      { p: "chatgpt", q: "Make this email sound friendlier", t: "Friendlier launch email",
+        a: "<p>Hi Priya, thanks for checking in! The launch is moving to <strong>October 14</strong> while we wait on a vendor delivery. I&rsquo;ll share the full plan on Friday.</p>" },
+      { p: "gemini", q: "Plan three days in Kyoto", t: "Kyoto, 3 days",
+        a: "<p><strong>Day 1</strong>, Higashiyama and dinner in Gion. <strong>Day 2</strong>, Arashiyama at dawn, then the Philosopher&rsquo;s Path. <strong>Day 3</strong>, a morning in Nara and back for Pontocho.</p>" },
+      { p: "chatgpt", q: "Regex for a UK postcode", t: "UK postcode regex",
+        a: "<p>This covers the usual formats, like SW1A 1AA and M1 1AE:</p><pre class=\"code code-glass\">/^[A-Z]{1,2}\\d[A-Z\\d]? ?\\d[A-Z]{2}$/i</pre>" },
+      { p: "gemini", q: "How do I say “see you tomorrow” in Spanish?", t: "Spanish phrases",
+        a: "<p>&ldquo;Hasta ma&ntilde;ana.&rdquo; With friends, &ldquo;nos vemos ma&ntilde;ana&rdquo; sounds a little warmer.</p>" }
+    ];
+    const AGO = ["now", "4m", "1h"];
+    const recent = [];
+    const ABORT = Symbol("abort");
+    let gen = 0, next = 0, open = false, visible = false, wake = null, resumeTimer = 0;
+
+    const set = (name, on) => desk.classList.toggle(name, on);
+    const wait = (ms, g) => new Promise((res, rej) => setTimeout(() => (g === gen ? res() : rej(ABORT)), ms));
+    const whenVisible = (g) => new Promise((res, rej) => {
+      const go = () => (g === gen ? res() : rej(ABORT));
+      if (visible) go(); else wake = go;
+    });
+    const show = (el) => { void el.offsetWidth; el.classList.add("is-in"); };
+
+    function renderTabs(fresh) {
+      const tabs = recent.slice(0, 3).map((c, i) => {
+        const s = document.createElement("span");
+        s.className = `tab${fresh && i === 0 ? " is-new" : ""}`;
+        s.innerHTML = `<i class="pmark ${c.p === "gemini" ? "pm-gem" : "pm-gpt"}"></i>${c.t} <em>${AGO[i]}</em>`;
+        return s;
+      });
+      const clock = document.createElement("span");
+      clock.className = "tab";
+      clock.innerHTML = '<svg class="ic"><use href="#i-clock"/></svg>';
+      tabsEl.replaceChildren(...tabs, ...(tabs.length ? [clock] : []));
+    }
+
+    function message(c) {
+      const u = document.createElement("div");
+      u.className = "bubble bubble-user d-msg";
+      u.textContent = c.q;
+      const r = document.createElement("div");
+      r.className = "bubble bubble-reply d-msg";
+      r.innerHTML = c.a;
+      return [u, r, splitWords(r)];
+    }
+
+    function remember(c) {
+      const at = recent.indexOf(c);
+      if (at >= 0) recent.splice(at, 1);
+      recent.unshift(c);
+    }
+
+    function openBar() {
+      open = true;
+      stack.replaceChildren();
+      set("is-fold", false);
+      set("is-open", true);
+    }
+
+    function fold() {
+      open = false;
+      typedEl.textContent = "";
+      set("is-typing", false);
+      set("can-send", false);
+      set("show-hud", false);
+      set("is-fold", true);
+    }
+
+    async function cycle(g, byUser) {
+      const c = CHATS[next++ % CHATS.length];
+      if (!open) {
+        set("show-hud", true);
+        if (!byUser) await wait(700, g);
+        openBar();
+        await wait(850, g);
+        set("show-hud", false);
+      }
+      set("is-typing", true);
+      for (let i = 1; i <= c.q.length; i++) {
+        typedEl.textContent = c.q.slice(0, i);
+        if (i === 1) set("can-send", true);
+        await wait(28 + Math.random() * 34, g);
+      }
+      await wait(450, g);
+      typedEl.textContent = "";
+      set("is-typing", false);
+      set("can-send", false);
+      const [u, r, words] = message(c);
+      stack.replaceChildren(u);
+      show(u);
+      await wait(700, g);
+      stack.append(r);
+      show(r);
+      await wait(800 + words * 24, g);
+      remember(c);
+      renderTabs(true);
+      await wait(3600, g);
+      fold();
+      await wait(2200, g);
+    }
+
+    async function run(byUser) {
+      const g = ++gen;
+      clearTimeout(resumeTimer);
+      try {
+        for (let first = byUser; ; first = false) {
+          await whenVisible(g);
+          await cycle(g, first);
+        }
+      } catch (err) {
+        if (err !== ABORT) throw err;
+      }
+    }
+
+    // Reduced motion: no loop. The bar sits open on a finished answer, and Alt+Q still folds it.
+    function still() {
+      openBar();
+      const c = CHATS[0];
+      const [u, r] = message(c);
+      stack.replaceChildren(u, r);
+      u.classList.add("is-in");
+      r.classList.add("is-in");
+      remember(c);
+      renderTabs(false);
+    }
+
+    function toggle() {
+      if (reduce) { if (open) fold(); else still(); return; }
+      if (open) {
+        gen++;
+        fold();
+        const g = gen;
+        resumeTimer = setTimeout(() => { if (g === gen) run(false); }, 3200);
+      } else {
+        run(true);
+      }
+    }
+
+    $("#desk-orb").addEventListener("click", toggle);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Alt") tryKeys[0]?.classList.add("is-down");
+      if (e.code === "KeyQ" && e.altKey) tryKeys[1]?.classList.add("is-down");
+      if (e.code !== "KeyQ" || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.repeat) return;
+      if (!visible) return;
+      e.preventDefault();
+      toggle();
+    });
+    document.addEventListener("keyup", (e) => {
+      if (e.key === "Alt") tryKeys[0]?.classList.remove("is-down");
+      if (e.code === "KeyQ") tryKeys[1]?.classList.remove("is-down");
+    });
+    window.addEventListener("blur", () => tryKeys.forEach((k) => k.classList.remove("is-down")));
+
+    new IntersectionObserver(([e]) => {
+      visible = e.isIntersecting;
+      if (visible && wake) { const go = wake; wake = null; go(); }
+    }, { threshold: 0.3 }).observe(deskScreen);
+
+    if (reduce) still();
+    else run(false);
   }
 
   /* ------------------------------------------------------------ Story */
@@ -251,6 +438,7 @@
     nav.classList.toggle("is-scrolled", window.scrollY > 8);
     const max = document.documentElement.scrollHeight - window.innerHeight;
     if (progress) progress.style.transform = `scaleX(${max > 0 ? clamp(window.scrollY / max) : 0})`;
+    updateDesk();
     updateStory();
     updateTour();
   };
@@ -337,6 +525,26 @@
       items[next].focus();
     });
     applyLook(5);
+
+    // Until someone picks a look, the preview tries them on by itself while it's on screen.
+    let look = 5, lookTimer = 0, auto = !reduce;
+    const stopAuto = () => { auto = false; clearInterval(lookTimer); };
+    ["pointerdown", "keydown", "focusin"].forEach((t) => swatches.addEventListener(t, stopAuto));
+    new IntersectionObserver(([e]) => {
+      clearInterval(lookTimer);      if (e.isIntersecting && auto) lookTimer = setInterval(() => applyLook(look = (look + 1) % LOOKS.length), 2200);
+    }, { threshold: 0.4 }).observe(preview);
+  }
+
+  /* ------------------------------------------------------------ Fold tiles */
+  // Hovering a tile folds its little bar into the orb again.
+  if (!reduce) {
+    $$(".fold .orb-tile").forEach((t) => t.addEventListener("pointerenter", () => {
+      if (!t.classList.contains("in")) return;
+      t.style.setProperty("--rd", "0s");
+      t.classList.remove("play");
+      void t.offsetWidth;
+      t.classList.add("play");
+    }));
   }
 
   /* ------------------------------------------------------------ Picker demo */

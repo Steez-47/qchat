@@ -51,18 +51,18 @@ try {
   await until(`window.__mock && ${$('btn-attach')}?.disabled===false && window.QSettings`);
   await evalJS(`__mock.emit('qchat://settings-changed',{...QSettings.settings,animations:'off',idleCollapse:0,look:'graphite'});const input=${$('prompt-input')};input.value='Keep this draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.setSelectionRange(2,7)`);
   await sleep(180);
-  check('one plus button replaces both bar icons', await evalJS(`${$('btn-attach')}.textContent.trim()==='\uE710' && !${$('bar')}.contains(${$('btn-snapshot')}) && ${$('btn-attach')}.getAttribute('aria-haspopup')==='menu'`));
+  check('up chevron opens the attachment menu', await evalJS(`${$('btn-attach')}.textContent.trim()==='\uE70E' && !${$('bar')}.contains(${$('btn-snapshot')}) && ${$('btn-attach')}.getAttribute('aria-haspopup')==='menu'`));
   check('menu starts closed', await hidden());
   await pointerClick('btn-attach');
   check('pointer opens the menu', !await hidden());
   await pointerClick('btn-attach');
-  check('clicking plus again closes the focused menu', await hidden());
+  check('clicking chevron again closes the focused menu', await hidden());
   const before = JSON.stringify(await geometry());
   await open();
-  check('menu opens with image, selection and file actions', await evalJS(`!${$('attachment-menu')}.hidden && ${$('btn-attach')}.getAttribute('aria-expanded')==='true' && [...${$('attachment-menu')}.children].map(n=>n.lastElementChild.textContent).join('|')==='Add image|Add selection|Add file'`));
+  check('menu opens with snapshot, selection and file actions', await evalJS(`!${$('attachment-menu')}.hidden && ${$('btn-attach')}.getAttribute('aria-expanded')==='true' && [...${$('attachment-menu')}.children].map(n=>n.lastElementChild.textContent).join('|')==='Snapshot|Add selection|Add file'`));
   check('opening preserves bar and input geometry', before === JSON.stringify(await geometry()));
   check('menu sits above the bar and inside the viewport', await evalJS(`(()=>{const m=${$('attachment-menu')}.getBoundingClientRect(),b=${$('bar')}.getBoundingClientRect();return m.bottom<b.top&&m.top>=0&&m.left>=0&&m.right<=innerWidth})()`));
-  check('focus starts on image', await focus() === 'btn-snapshot');
+  check('focus starts on snapshot', await focus() === 'btn-snapshot');
   await press('ArrowDown', 40);
   check('down moves to selection', await focus() === 'btn-selection');
   await press('End', 35);
@@ -71,10 +71,10 @@ try {
   check('arrows wrap', await focus() === 'btn-snapshot');
   await press('Home', 36);
   await press('Escape', 27);
-  check('escape dismisses only the menu and restores the plus focus', await hidden() && await focus() === 'btn-attach' && await evalJS(`__mock.count('hide_main')===0`));
+  check('escape dismisses only the menu and restores the chevron focus', await hidden() && await focus() === 'btn-attach' && await evalJS(`__mock.count('hide_main')===0`));
   check('draft and caret survive menu navigation', await evalJS(`${$('prompt-input')}.value==='Keep this draft'&&${$('prompt-input')}.selectionStart===2&&${$('prompt-input')}.selectionEnd===7`));
   await press('ArrowUp', 38);
-  check('up on plus opens at the last action', !await hidden() && await focus() === 'btn-file');
+  check('up on chevron opens at the last action', !await hidden() && await focus() === 'btn-file');
   await press('Tab', 9);
   check('tab closes the menu and moves focus to the composer controls', await hidden() && await evalJS(`!${$('attachment-menu')}.contains(document.activeElement)&&document.activeElement!==document.body`));
   await open();
@@ -127,7 +127,7 @@ try {
   await shot('light-narrow.png');
   await press('Escape', 27);
   await evalJS(`__mock.emit('qchat://settings-changed',{...QSettings.settings,showAttach:false})`);
-  check('existing visibility setting hides the plus button', await evalJS(`getComputedStyle(${$('btn-attach')}).display==='none'`));
+  check('existing visibility setting hides the attachment button', await evalJS(`getComputedStyle(${$('btn-attach')}).display==='none'`));
   check('no page errors', problems.length === 0);
 } catch (error) {
   console.error(error);

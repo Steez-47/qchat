@@ -91,9 +91,9 @@ try {
     const btn = $('btn-snapshot');
     const expectedBytes = atob(test.png).length;
 
-    check('snapshot is an accessible image action in the add menu', btn && btn.closest('#attachment-menu')
-      && btn.getAttribute('role') === 'menuitem' && btn.lastElementChild.textContent === 'Add image'
-      && btn.title === 'Snapshot current window' && !!btn.querySelector('.icon')
+    check('snapshot is an accessible camera action in the add menu', btn && btn.closest('#attachment-menu')
+      && btn.getAttribute('role') === 'menuitem' && btn.lastElementChild.textContent === 'Snapshot'
+      && btn.title === 'Snapshot current window' && btn.querySelector('.icon')?.textContent === '\uE722'
       && !$('bar').contains(btn));
 
     input('keep my draft');

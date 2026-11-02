@@ -62,7 +62,6 @@
     <!-- ================================================================ Hero -->
     <section class="hero">
       <div class="wrap hero-grid">
-        <p class="eyebrow" data-reveal>For Windows 10 &amp; 11</p>
         <h1 class="display" data-split>Ask, then get back to&nbsp;work.</h1>
         <div class="hero-side">
           <p class="lede" data-reveal>QChat is a small glass bar that talks to ChatGPT or Gemini through the accounts you already use. It floats over whatever you&rsquo;re doing and folds away when you&rsquo;re done.</p>
@@ -73,8 +72,67 @@
             </a>
             <a class="link-arrow" href="#story">See it work <svg class="ic" aria-hidden="true"><use href="#i-arrow"/></svg></a>
           </div>
-          <p class="meta" data-reveal>Free &middot; x64 &middot; <span data-release-line>Latest release</span></p>
+          <p class="meta" data-reveal>Free &middot; Windows 10 &amp; 11 &middot; x64 &middot; <span data-release-line>Latest release</span></p>
         </div>
+      </div>
+
+      <div class="hero-stage" data-reveal>
+        <div class="screen desk-screen" data-screen id="desk-screen" role="img" aria-label="The QChat bar opening from its orb over a Windows desktop, answering a question, then folding away">
+          <div class="canvas" id="desk" data-state="folded">
+            <div class="win win-mail" aria-hidden="true">
+              <div class="win-bar"><span class="win-title">Re: launch timing &mdash; Mail</span><span class="win-ctl"><i></i><i></i><i></i></span></div>
+              <div class="mail">
+                <p class="mail-row"><span>To</span>Priya Shah</p>
+                <p class="mail-row"><span>Subject</span>Re: launch timing</p>
+                <div class="mail-body">
+                  <p>Priya,</p>
+                  <p>The launch is moving to October 14. Vendor shipped late. Plan on Friday.</p>
+                  <p>J</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="hud desk-hud" aria-hidden="true"><kbd>Alt</kbd><span>+</span><kbd>Q</kbd></div>
+
+            <div class="qc desk-qc" aria-hidden="true">
+              <div class="qc-stack" id="desk-stack"></div>
+              <div class="tabs" id="desk-tabs"></div>
+              <div class="bar glass">
+                <button class="orb desk-orb" type="button" id="desk-orb" tabindex="-1" aria-label="Open or fold QChat"></button>
+                <span class="bar-field">
+                  <span class="ph" id="desk-ph">Ask anything &middot; / commands</span>
+                  <span class="typed" id="desk-typed"></span><span class="caret"></span>
+                </span>
+                <span class="bar-btn"><svg class="ic"><use href="#i-cam"/></svg></span>
+                <span class="bar-btn"><svg class="ic"><use href="#i-clip"/></svg></span>
+                <span class="send"><svg class="ic"><use href="#i-send"/></svg></span>
+              </div>
+            </div>
+
+            <div class="taskbar" aria-hidden="true">
+              <div class="tb-apps">
+                <i class="tb-ic tb-start"><b></b><b></b><b></b><b></b></i>
+                <i class="tb-search"><svg class="ic"><use href="#i-search"/></svg>Search</i>
+                <i class="tb-ic tb-files"></i>
+                <i class="tb-ic tb-web"></i>
+                <i class="tb-ic tb-mail is-on"></i>
+                <i class="tb-ic tb-code"></i>
+              </div>
+              <div class="tb-tray">
+                <svg class="ic tb-chev"><use href="#i-up"/></svg>
+                <img class="tb-q" src="/icon.svg" width="18" height="18" alt="">
+                <span class="tb-time">14:32<small>03/11/2026</small></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="desk-try" data-reveal>
+          <span class="try-keys">Go on, press <kbd>Alt</kbd> <kbd>Q</kbd></span>
+          <span class="try-tap">Tap the orb to open and fold it</span>
+        </p>
+      </div>
+
+      <div class="wrap">
         <dl class="stats" data-stagger>
           <div data-reveal><dt><span data-count="2">2</span></dt><dd>assistants, ChatGPT and Gemini</dd></div>
           <div data-reveal><dt><span data-count="0">0</span></dt><dd>API keys. Just your own sign-in</dd></div>
@@ -177,7 +235,6 @@
     <section class="tour" id="tour">
       <div class="wrap">
         <header class="sec-head">
-          <p class="eyebrow" data-reveal>The tour</p>
           <h2 class="h-xl" data-split>Built for the ten seconds between tasks.</h2>
         </header>
 
@@ -379,7 +436,6 @@
     <section class="assist" id="assistants">
       <div class="wrap assist-grid">
         <div class="assist-copy">
-          <p class="eyebrow" data-reveal>Two assistants, one bar</p>
           <h2 class="h-xl" data-split>Your accounts. Your models.</h2>
           <p class="body-l" data-reveal>QChat drives chatgpt.com and gemini.google.com in hidden windows with the sign-in you already have. No API keys, no extra subscription. Whatever your plan includes, QChat can use.</p>
           <ul class="ticks" data-stagger>
@@ -437,15 +493,14 @@
     <section class="fold" id="fold">
       <div class="wrap">
         <header class="sec-head fold-head">
-          <p class="eyebrow" data-reveal>Minimize while it thinks</p>
           <h2 class="h-xl" data-split>Fold it away. The orb keeps watch.</h2>
           <p class="body-l" data-reveal>Long answer? Click the orb and get on with your day. QChat shrinks to a dot that tells you exactly what&rsquo;s going on, so you only come back when there&rsquo;s something to read.</p>
         </header>
         <div class="orbs orbs-wide" data-stagger>
-          <figure class="orb-tile" data-reveal><div class="orb-stage"><span class="orb big is-working"></span></div><figcaption><b>Working</b>A thin arc spins while the reply is on its way.</figcaption></figure>
-          <figure class="orb-tile" data-reveal><div class="orb-stage"><span class="orb big is-ready"><i class="orb-badge">1</i></span></div><figcaption><b>Reply ready</b>Green with a &ldquo;1&rdquo;. Click to read it.</figcaption></figure>
-          <figure class="orb-tile" data-reveal><div class="orb-stage"><span class="orb big is-attention"><i class="orb-badge">!</i></span></div><figcaption><b>Needs you</b>An error, or a task asking for approval.</figcaption></figure>
-          <figure class="orb-tile" data-reveal><div class="orb-stage"><span class="orb big"><i class="upd-badge"><svg><use href="#i-up"/></svg></i></span></div><figcaption><b>Update</b>A new version is out. Hover, press Update.</figcaption></figure>
+          <figure class="orb-tile" data-reveal><div class="orb-stage"><i class="fold-ph">Ask anything</i><span class="orb big is-working"></span></div><figcaption><b>Working</b>A thin arc spins while the reply is on its way.</figcaption></figure>
+          <figure class="orb-tile" data-reveal><div class="orb-stage"><i class="fold-ph">Ask anything</i><span class="orb big is-ready"><i class="orb-badge">1</i></span></div><figcaption><b>Reply ready</b>Green with a &ldquo;1&rdquo;. Click to read it.</figcaption></figure>
+          <figure class="orb-tile" data-reveal><div class="orb-stage"><i class="fold-ph">Ask anything</i><span class="orb big is-attention"><i class="orb-badge">!</i></span></div><figcaption><b>Needs you</b>An error, or a task asking for approval.</figcaption></figure>
+          <figure class="orb-tile" data-reveal><div class="orb-stage"><i class="fold-ph">Ask anything</i><span class="orb big"><i class="upd-badge"><svg><use href="#i-up"/></svg></i></span></div><figcaption><b>Update</b>A new version is out. Hover, press Update.</figcaption></figure>
         </div>
       </div>
     </section>
@@ -454,7 +509,6 @@
     <section class="details" id="features">
       <div class="wrap">
         <header class="sec-head">
-          <p class="eyebrow" data-reveal>And the details</p>
           <h2 class="h-xl" data-split>Small on screen. Thorough underneath.</h2>
         </header>
         <ul class="grid-list" data-stagger>
@@ -516,7 +570,6 @@
     <section class="looks" id="looks">
       <div class="wrap looks-grid">
         <div class="looks-copy">
-          <p class="eyebrow" data-reveal>Make it yours</p>
           <h2 class="h-xl" data-split>Twenty looks, one material.</h2>
           <p class="body-l" data-reveal>Pick a look, then tune glass opacity, density, font and motion in Settings. An optional guard keeps text at 4.5:1 contrast on any wallpaper.</p>
           <div class="swatches" id="swatches" role="radiogroup" aria-label="Looks" data-reveal></div>
@@ -553,7 +606,6 @@
     <section class="news" id="new">
       <div class="wrap">
         <header class="sec-head news-head">
-          <p class="eyebrow" data-reveal>Recently shipped</p>
           <h2 class="h-xl" data-split>Always getting better.</h2>
           <a class="link-arrow" href="https://github.com/Steez-47/qchat/blob/main/CHANGELOG.md" data-reveal>Full changelog <svg class="ic" aria-hidden="true"><use href="#i-arrow"/></svg></a>
         </header>
@@ -572,7 +624,6 @@
     <section class="install" id="install">
       <div class="wrap">
         <header class="sec-head">
-          <p class="eyebrow" data-reveal>Install</p>
           <h2 class="h-xl" data-split>Up and running in a minute.</h2>
         </header>
         <ol class="install-steps" data-stagger>
@@ -602,7 +653,6 @@
     <section class="faq" id="faq">
       <div class="wrap faq-grid">
         <header>
-          <p class="eyebrow" data-reveal>Questions</p>
           <h2 class="h-xl" data-split>Good to know.</h2>
         </header>
         <div class="faq-list" data-stagger>
@@ -622,13 +672,14 @@
     <!-- ================================================================ Final -->
     <section class="final">
       <div class="wrap">
-        <h2 class="display final-h" data-split>Your next question is one keystroke away.</h2>
-        <div class="cta-row" data-reveal>
-          <a class="btn btn-ink" href="/download" data-dl>
-            <svg class="ic" aria-hidden="true"><use href="#i-down"/></svg>
-            Download QChat
+        <div class="final-desk" data-reveal>
+          <h2 class="display final-h" data-split>Your next question is one keystroke away.</h2>
+          <a class="bar glass cta-bar" href="/download" data-dl>
+            <span class="orb" aria-hidden="true"></span>
+            <span class="cta-text">Download QChat<span class="cta-more"> for Windows</span></span>
+            <span class="send" aria-hidden="true"><svg class="ic"><use href="#i-down"/></svg></span>
           </a>
-          <a class="link-arrow" href="/help">Read the guide <svg class="ic" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <p class="final-meta">Free &middot; Windows 10 &amp; 11 &middot; <span data-release-line>Latest release</span> &middot; <a class="ul" href="/help">Read the guide</a></p>
         </div>
       </div>
     </section>
