@@ -15,7 +15,8 @@
       // engine drops those itself, so a long history's buttons are never visited here.
       const nodes = candidates ||= [...document.querySelectorAll(':is([data-surface], .glass, .thinking, button, textarea):not(.glass *)')];
       const membership = new Set(nodes);
-      // Each ancestor's clip box, read once per pass: bubbles in one scroller share them all.
+      // Each ancestor's clip box and opacity, read once per pass: bubbles in one
+      // scroller share them all. Native glass must fade with the whole DOM subtree.
       const clips = new Map();
       const clipOf = (parent) => {
         let c = clips.get(parent);
@@ -26,6 +27,7 @@
             const box = parent.getBoundingClientRect();
             c = { x, y, l: box.left + parent.clientLeft, t: box.top + parent.clientTop, r: box.left + parent.clientLeft + parent.clientWidth, b: box.top + parent.clientTop + parent.clientHeight };
           } else c = { x: false, y: false };
+          c.opacity = Number(style.opacity);
           clips.set(parent, c);
         }
         return c;
@@ -43,12 +45,14 @@
         const raw = s.borderTopLeftRadius.split(' ')[0];
         const radius = parseFloat(raw) * (raw.endsWith('%') ? Math.min(b.width,b.height)/100 : 1);
         let left=Math.max(0,b.left),top=Math.max(0,b.top),right=Math.min(innerWidth,b.right),bottom=Math.min(innerHeight,b.bottom);
+        let opacity = Number(s.opacity);
         for(let parent=n.parentElement;parent && right>left && bottom>top;parent=parent.parentElement){
           const c=clipOf(parent);
+          opacity *= c.opacity;
           if(c.x){left=Math.max(left,c.l);right=Math.min(right,c.r);}
           if(c.y){top=Math.max(top,c.t);bottom=Math.min(bottom,c.b);}
         }
-        if(right>left && bottom>top) rects.push({x:left,y:top,w:right-left,h:bottom-top,r:Math.min(radius||0,(right-left)/2,(bottom-top)/2),b:n.matches('.glass, .thinking'),s:n.matches('.bubble, .thinking') ? chatBlur : barBlur});
+        if(right>left && bottom>top) rects.push({x:left,y:top,w:right-left,h:bottom-top,r:Math.min(radius||0,(right-left)/2,(bottom-top)/2),b:n.matches('.glass, .thinking'),s:(n.matches('.bubble, .thinking') ? chatBlur : barBlur) * opacity});
       }
       const next = JSON.stringify(rects);
       if (next !== last) { last=next; Promise.resolve(invoke('surfaces_set', {rects:rects.slice(0,2048)})).catch(() => {}); }
