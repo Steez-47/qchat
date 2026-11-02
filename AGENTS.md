@@ -2,7 +2,7 @@
 
 QChat is a Windows desktop app (Tauri 2 + vanilla JS) that puts ChatGPT and Gemini in a small glass bar. The landing page lives in `qchat-website/`.
 
-The user talks to one model at a time and tells it what to do. There is no orchestrator, worker hierarchy or delegation setup in this project. Don't create one, and don't add or restore `.agents/` planning or ledger files.
+The user talks to one model at a time and tells it what to do. There is no orchestrator, worker hierarchy or delegation setup in this project. Don't create one, and don't add or restore `.agents/` planning or ledger files. - Read SUB-AGENTS.md if you are the lead model.
 
 ## Working here
 
