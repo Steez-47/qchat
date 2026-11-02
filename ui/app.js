@@ -742,7 +742,7 @@
       // Called on every streamed frame, so this path must not touch the message text.
       const shown = el.zone.querySelectorAll(".turn-row:not(.leaving):not([hidden])").length;
       const saved = chats.current.transcript.filter(hasTurnContent).length;
-      const moreOnPage = chats.current.conversationId && !backfilled.has(chats.current);
+      const moreOnPage = chats.current.conversationId && !chats.current.carried && !backfilled.has(chats.current);
       el.historyControls.hidden = saved <= shown && !moreOnPage;
       return;
     }
@@ -1064,7 +1064,8 @@
   // ChatGPT holds the messages from before this PC kept a transcript. Read them
   // once per chat; any failure just leaves the local transcript as it is.
   function backfillHistory(chat) {
-    if (!chat.conversationId || backfilled.has(chat) || isBusy()) return;
+    // A carried chat's earlier part was said to the other assistant, so this PC holds the record.
+    if (!chat.conversationId || chat.carried || backfilled.has(chat) || isBusy()) return;
     backfilled.add(chat);
     setHistoryStatus("Loading earlier messages");
     clearTimeout(backfillTimer);
@@ -1225,8 +1226,16 @@
       draft: text(raw.draft, Infinity),
       selectionTexts: cleanSelections(raw.selectionTexts),
       createdAt: time(raw.createdAt),
+      ...(raw.carried === true ? { carried: true } : {}),
+      ...(cleanCarry(raw.carry) ? { carry: cleanCarry(raw.carry) } : {}),
       ...(reasoningEffort ? { reasoningEffort } : {})
     };
+  }
+  // A chat brought over from the other assistant that hasn't sent there yet. It remembers where
+  // it came from, so going straight back reopens that conversation instead of starting over.
+  function cleanCarry(raw) {
+    if (!raw || typeof raw !== "object" || !["chatgpt", "gemini"].includes(raw.provider)) return null;
+    return { provider: raw.provider, conversationId: typeof raw.conversationId === "string" && raw.conversationId ? raw.conversationId : null, carried: raw.carried === true };
   }
 
   function loadChats() {
@@ -1383,13 +1392,57 @@
   async function chooseProvider(provider) {
     if (provider === activeProvider) { showCommandFeedback(`Already using ${providerName()}`); return; }
     if (refuseWhileBusy()) return;
+    const chat = chats.current;
+    const carry = QSettings.settings.contextSwitching !== false && !chat.temporary && historyItems(true).length > 0;
     if (!await setProvider(provider)) return;
-    await resetChatPreservingComposer();
+    if (carry && chats.current === chat) carryChat(chat, provider);
+    else await resetChatPreservingComposer();
     // A mode belongs to the provider that offered it; a fresh site starts in Chat.
     chats.current.mode = "chat";
     saveChats();
     syncReasoningButton();
     if (pickerOpen) { renderPicker(); requestModes(); requestPickerModels(); }
+  }
+
+  // Context switching: the chat stays on screen and moves to the new assistant. Its next message
+  // starts a fresh conversation there and quietly brings the history along (carriedHistory).
+  function carryChat(chat, provider) {
+    if (chat.carry?.provider === provider) {
+      // Back before anything was sent: the old conversation still holds everything.
+      Object.assign(chat, { provider, conversationId: chat.carry.conversationId, carried: chat.carry.carried });
+      if (!chat.carried) delete chat.carried;
+      delete chat.carry;
+    } else {
+      chat.carry = { provider: chat.provider, conversationId: chat.conversationId, carried: Boolean(chat.carried) };
+      Object.assign(chat, { provider, conversationId: null, carried: true });
+      // Its page may still hold this chat's old conversation from an earlier visit.
+      page = { key: null, conv: null, pristine: false };
+    }
+    backfilled.delete(chat);
+    setModeLabel("");
+    saveChats();
+    renderHistory();
+    updateComposerMode();
+    el.promptInput.focus();
+  }
+
+  const CARRY_FILE = "chat-history.txt";
+  const CARRY_INLINE_MAX = 100000;
+  // What the new assistant gets with the first message. None of it shows in QChat.
+  function carriedHistory() {
+    return `This is the chat history, respond accordingly.\n\n${serializeConversation("Assistant")}`;
+  }
+  function carriedPrompt(wire, history = "") {
+    const note = history
+      ? "The chat history below is our conversation so far. Treat it as your own earlier replies in this chat and answer my next message as a direct continuation. Don't mention the history or this note."
+      : `The attached ${CARRY_FILE} is our conversation so far. Treat it as your own earlier replies in this chat and answer my next message as a direct continuation. Don't mention the file or this note.`;
+    const context = history ? `\n\n<chat_history>\n${history.length > CARRY_INLINE_MAX ? history.slice(-CARRY_INLINE_MAX) : history}\n</chat_history>` : "";
+    return `${note}${context}${wire ? `\n\nMy next message:\n\n${wire}` : ""}`;
+  }
+  async function stageCarry(history) {
+    const item = { file: new File([history], CARRY_FILE, { type: "text/plain" }), offset: 0, state: "staging", cancelled: false, id: null, previewURL: null };
+    await stageAttachment(item);
+    return item.state === "ready" ? item : null;
   }
 
   function storedChat(chat, capped = false) {
@@ -2777,6 +2830,8 @@
     const reasoningEffort = effectiveReasoning(chat);
     const mode = effectiveMode(chat);
     const consumeSelections = fromInput || (selectionTexts.length > 0 && selectionTexts.every((text, index) => chat.selectionTexts[index] === text));
+    // Read before this exchange joins the transcript.
+    const history = chat.carry && chat.provider === activeProvider ? carriedHistory() : "";
     sending = true;
     sentReasoning = reasoningEffort;
     orbOutcome = null;
@@ -2845,6 +2900,18 @@
       if (generation !== chatGeneration) return;
       if (assistantTurn.status !== "streaming") throw { code: "stopped" };
       const args = { id: assistantTurn.id, prompt: wirePrompt(prompt, selectionTexts), attachmentIds: files.map((f) => f.id), provider: activeProvider, temporary: Boolean(chat.temporary), mode };
+      if (history) {
+        // As a file where the site takes one, otherwise inside the message itself.
+        const carried = files.length < 10 && providerStates[activeProvider]?.loggedIn !== false ? await stageCarry(history) : null;
+        if (generation !== chatGeneration || assistantTurn.status !== "streaming") {
+          if (carried) void discardAttachment(carried);
+          if (generation !== chatGeneration) return;
+          throw { code: "stopped" };
+        }
+        args.prompt = carriedPrompt(args.prompt, carried ? "" : history);
+        if (carried) args.attachmentIds.push(carried.id);
+        assistantTurn.carrying = true;
+      }
       // Work decides its own thinking; Chat keeps the chosen effort (ChatGPT only).
       if (mode === "work") { args.reasoningEffort = null; args.conversationId = chat.conversationId || null; }
       else if (activeProvider === "chatgpt") args.reasoningEffort = reasoningEffort;
@@ -4529,7 +4596,7 @@
     if (notices.length) showCommandFeedback(notices.join(" · "));
   }
 
-  function serializeConversation() {
+  function serializeConversation(assistant = providerName()) {
     const items = historyItems(true);
     if (!chats.current.transcript.length && chats.current.lastPrompt && !items.some(item => item.role === "user")) {
       items.unshift({role:"user",text:chats.current.lastPrompt,hadAttachments:chats.current.lastHadAttachments});
@@ -4539,7 +4606,7 @@
       const names = (item.media || []).map(file => file.name).filter(Boolean);
       const media = names.length ? names.map(name => `[Attachment: ${name.replace(/[\r\n]+/g, " ")}]`).join("\n") : item.hasMedia || item.hadAttachments ? "[Attachment]" : "";
       const body = [text, media].filter(Boolean).join("\n\n");
-      return body ? `## ${item.role === "user" ? "You" : providerName()}\n\n${body}` : "";
+      return body ? `## ${item.role === "user" ? "You" : assistant}\n\n${body}` : "";
     }).filter(Boolean).join("\n\n---\n\n");
   }
 
@@ -5367,6 +5434,7 @@
               chat.conversationId = evt.conversationId;
               page = { key: chat.key, conv: evt.conversationId, pristine: false };
             }
+            if (turn.carrying) delete chat.carry;
             backfilled.delete(chat);
             rememberTurn(turn);
             const snapshot = completedSnapshot(turn.text, turn.media?.length);
@@ -5388,6 +5456,7 @@
         const turn = turns.find((t) => t.id === evt.id);
         if (turn?.chatKey === chats.current.key && typeof evt.conversationId === "string" && evt.conversationId) {
           chats.current.conversationId = evt.conversationId;
+          if (turn.carrying) delete chats.current.carry;
           page = { key: chats.current.key, conv: evt.conversationId, pristine: false };
           saveChats();
         }
