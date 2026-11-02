@@ -340,11 +340,11 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
   100% { opacity: 0; transform: translateX(260%); }
 }
 
-/* Hover tools: float fully above the reply with a 4px gap, right-aligned */
+/* Hover tools overlap the reply edge so hover and native hit regions stay connected. */
 .bubble-tools {
   position: absolute;
   top: auto;
-  bottom: calc(100% + 4px);
+  bottom: calc(100% - 2px);
   right: 12px;
   z-index: 5;
   display: flex;
@@ -387,9 +387,9 @@ html[data-motion="on"][data-shimmer="true"] .turn-row[data-status="streaming"] .
 
 /* The topmost reply reserves room for its floating toolbar inside the stack, so
    the window height measured on the stack already accounts for it. The toolbar
-   then rests 4px above the bubble top with that padding as the lift. */
+   overlaps the bubble edge by 2px to keep its buttons reachable. */
 .bubble-zone > .turn-row[data-role="assistant"]:first-child:not([data-capped]) { padding-top: 36px; }
-.bubble-zone > .turn-row[data-role="assistant"]:first-child:not([data-capped]) .bubble-tools { bottom: calc(100% - 32px); }
+.bubble-zone > .turn-row[data-role="assistant"]:first-child:not([data-capped]) .bubble-tools { bottom: calc(100% - 38px); }
 /* A capped reply has no spare room above it: tuck the toolbar just inside the
    bubble's top-right corner with a solid fill so text never shows through. */
 .bubble-zone > .turn-row[data-role="assistant"]:first-child[data-capped] .bubble-tools {
