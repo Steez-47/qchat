@@ -1339,6 +1339,8 @@
         }
         if (active !== job || job.cancelled) return;
         composer = find('composer') || composer;
+        const typed = node => String(node.tagName === 'TEXTAREA' ? node.value : node.innerText ?? node.textContent ?? '').trim();
+        const completePrompt = node => promptMatch(typed(node)) === promptMatch(job.prompt);
         const fill = composer => {
           composer.focus?.();
           if (composer.tagName === 'TEXTAREA') {
@@ -1347,11 +1349,20 @@
           } else {
             document.execCommand?.('selectAll', false);
             document.execCommand?.('insertText', false, prompt);
+            // Some Gemini editors take only the first line of a multiline insert. Retrying
+            // that same insert never repairs the hand-off. Use editor commands for each line
+            // so the site's own input handlers receive the whole continuation.
+            if (!completePrompt(composer) && /[\r\n]/.test(prompt)) {
+              document.execCommand?.('selectAll', false);
+              const lines = prompt.replace(/\r\n?/g, '\n').split('\n');
+              for (let i = 0; i < lines.length; i++) {
+                if (i && !document.execCommand?.('insertLineBreak', false)) break;
+                if (lines[i]) document.execCommand?.('insertText', false, lines[i]);
+              }
+            }
           }
         };
-        const typed = node => String(node.tagName === 'TEXTAREA' ? node.value : node.innerText ?? node.textContent ?? '').trim();
-        const completePrompt = node => promptMatch(typed(node)) === promptMatch(job.prompt);
-        let uploadQuietAt = Date.now(), filledComposer = null, filledAt = 0;
+        let uploadQuietAt = Date.now(), filledComposer = null, filledAt = 0, incompleteAt = null;
         for (let i = 0; i < (attachmentCount > 0 ? 1200 : 100) && active === job && !job.started && !job.cancelled; i++) {
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           // Recheck the complete attachment batch until Send, then fill the current composer.
@@ -1359,7 +1370,7 @@
             const pending = uploadBusy();
             const present = attachmentRemovers(job.attachmentNames, true).length >= attachmentCount;
             if (pending || !present) uploadQuietAt = Date.now();
-            if (pending || !present || Date.now() - uploadQuietAt < 800) { await sleep(100); continue; }
+            if (pending || !present || Date.now() - uploadQuietAt < 800) { incompleteAt = null; await sleep(100); continue; }
           }
           composer = find('composer');
           if (!composer) { await sleep(100); continue; }
@@ -1369,7 +1380,17 @@
           if (temporary && !temporaryReady()) { fail(job, 'temporary_unavailable', 'Temporary chat could not be confirmed. Try again.'); return; }
           // An attachment enables Send by itself. Require the entire prompt, including the
           // question after a history note, and refill if the editor only accepted part of it.
-          if (!completePrompt(composer) || (attachmentCount > 0 && Date.now() - filledAt < 300)) {
+          if (!completePrompt(composer)) {
+            if (incompleteAt === null) incompleteAt = Date.now();
+            // A text insertion failure won't improve by waiting for the upload timeout.
+            if (Date.now() - incompleteAt >= 5000) {
+              fail(job, 'send_failed', 'Gemini did not take the complete message text. Try again.'); return;
+            }
+            await sleep(100);
+            continue;
+          }
+          incompleteAt = null;
+          if (attachmentCount > 0 && Date.now() - filledAt < 300) {
             await sleep(100);
             continue;
           }

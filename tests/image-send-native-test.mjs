@@ -182,18 +182,20 @@ try {
   await chooseProvider('chatgpt');
   await main.evaluate('window.dispatchEvent(new KeyboardEvent("keydown",{key:"n",ctrlKey:true,bubbles:true,cancelable:true}))');
   await sendText('Remember this context from ChatGPT: kōwhai 🌏');
-  // Gemini already holds a different conversation. Its first insertion only takes the note;
+  // Gemini already holds a different conversation. Multiline insertion only takes the note;
   // the bridge must restore the complete continuation before clicking the attachment-enabled Send.
   site = providerSites.gemini;
-  await site.evaluate(`(()=>{history.pushState({},'', '/app/oldconversation123');const exec=document.execCommand.bind(document);let partial=true;document.execCommand=(cmd,ui,text)=>exec(cmd,ui,cmd==='insertText'&&partial?(partial=false,text.split('\\n')[0]):text);})()`);
+  await site.evaluate(`(()=>{history.pushState({},'', '/app/oldconversation123');const exec=document.execCommand.bind(document);document.execCommand=(cmd,ui,text)=>exec(cmd,ui,cmd==='insertText'?text.split('\\n')[0]:text);})()`);
   await chooseProvider('gemini');
-  const errors = await sendText('What was the context? Include my new question.');
+  const continuation = 'What was the context? Include my new question.\n\n  Keep this indentation, kōwhai 🌏 and <b>& literal text</b>.';
+  const errors = await sendText(continuation);
   const submissions = await site.evaluate('fixtureSubmissions');
   const historyFile = submissions[0]?.files.find(file => file.name === 'chat-history.txt');
   const historyText = historyFile ? new TextDecoder().decode(Uint8Array.from(historyFile.bytes)) : '';
   check('context switch resets an existing Gemini chat and submits exactly once', submissions.length === 1 && submissions[0].path === '/app' && errors.length === 0);
-  check('context switch sends the entire new message alongside exact history bytes', submissions[0]?.text.endsWith('What was the context? Include my new question.') && historyText.includes('Remember this context from ChatGPT: kōwhai 🌏') && !historyText.includes('What was the context?'));
-  check('context switch keeps the history file and instructions out of the visible chat', await main.evaluate(`(()=>{const chat=JSON.parse(localStorage.getItem('qchat.chats')).current;return !chat.carry&&chat.transcript.some(turn=>turn.text==='What was the context? Include my new question.')&&!JSON.stringify(chat.transcript).includes('chat-history.txt');})()`));
+  // Chromium preserves leading spaces in contenteditable as nonbreaking spaces.
+  check('context switch sends the entire new message alongside exact history bytes', submissions[0]?.text.replace(/\u00a0/g, ' ').endsWith(continuation) && historyText.includes('Remember this context from ChatGPT: kōwhai 🌏') && !historyText.includes('What was the context?'), JSON.stringify(submissions[0]?.text));
+  check('context switch keeps the history file and instructions out of the visible chat', await main.evaluate(`(()=>{const chat=JSON.parse(localStorage.getItem('qchat.chats')).current;return !chat.carry&&chat.transcript.some(turn=>turn.text===${JSON.stringify(continuation)})&&!JSON.stringify(chat.transcript).includes('chat-history.txt');})()`));
   // Return to a ChatGPT page that still holds its previous thread. A partial editor insertion
   // must not send just the history note, or reuse that old thread for the carried conversation.
   site = providerSites.chatgpt;
@@ -218,7 +220,7 @@ try {
   site = providerSites.gemini;
   await site.evaluate(`(()=>{
     const exec=document.execCommand.bind(document),timeout=window.setTimeout;
-    document.execCommand=(cmd,ui,text)=>exec(cmd,ui,cmd==='insertText'?text.split('\\n')[0]:text);
+    document.execCommand=(cmd,ui,text)=>cmd==='insertLineBreak'?false:exec(cmd,ui,cmd==='insertText'?text.split('\\n')[0]:text);
     window.setTimeout=(fn,ms,...args)=>timeout(fn,ms===100?1:ms,...args);
   })()`);
   await main.evaluate(`(()=>{const input=document.getElementById('prompt-input');input.value='Continue that discussion';input.dispatchEvent(new Event('input'));document.getElementById('btn-send').click();})()`);

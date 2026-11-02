@@ -342,6 +342,7 @@ function createBrowser({ hostname = 'gemini.google.com', pathname = '/app', read
     activeElement: composer,
     execCommand(cmd, _, val) {
       if (cmd === 'selectAll') composerText = '';
+      if (cmd === 'insertLineBreak') { composerText += '\n'; (this.activeElement || composer).textContent = composerText; }
       if (cmd === 'insertText') { composerText += val; (this.activeElement || composer).textContent = composerText; }
       return true;
     },
@@ -544,11 +545,28 @@ test('a composer that never takes the complete question cannot submit the histor
   const b = createBrowser({ loggedIn: true }); uploadFixture(b);
   const submissions = submissionFixture(b);
   const exec = b.document.execCommand.bind(b.document);
-  b.document.execCommand = (cmd, ui, text) => exec(cmd, ui, cmd === 'insertText' ? text.split('\n')[0] : text);
+  b.document.execCommand = (cmd, ui, text) => cmd === 'insertLineBreak' ? false : exec(cmd, ui, cmd === 'insertText' ? text.split('\n')[0] : text);
   const sent = b.api.send({ id: 'incomplete-history', prompt: 'Continue from the history.\n\nAnswer this new question.', attachmentCount: 1 });
-  await b.tick(121000); await sent;
+  await b.tick(7000);
   assert.deepEqual(submissions, []);
   assert.equal(b.events.find(event => event.id === 'incomplete-history' && event.type === 'error')?.code, 'send_failed');
+  await sent;
+});
+
+test('a Gemini editor that only accepts the first pasted line still sends the entire continuation', async () => {
+  for (const attachmentCount of [0, 1]) {
+    const b = createBrowser({ loggedIn: true });
+    if (attachmentCount) uploadFixture(b);
+    const submissions = submissionFixture(b);
+    const prompt = 'Continue our conversation.\n\nMy next message:\n\n' + GPROMPT;
+    const exec = b.document.execCommand.bind(b.document);
+    b.document.execCommand = (cmd, ui, text) => exec(cmd, ui, cmd === 'insertText' ? text.split('\n')[0] : text);
+    const sent = b.api.send({ id: 'multiline-history', prompt, attachmentCount });
+    await b.tick(5000);
+    assert.deepEqual(submissions, [{ text: prompt, attachments: attachmentCount }]);
+    await sent;
+    assert.equal(b.events.filter(event => event.type === 'error').length, 0);
+  }
 });
 
 test('editable block spacing does not stall a complete history continuation or its ignored Send retry', async () => {
