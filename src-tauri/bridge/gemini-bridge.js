@@ -419,7 +419,10 @@
       if (/\b(?:cdk-visually-hidden|visually-hidden|sr-only|screen-reader-only|screen-reader-model-response-label|screen-reader-user-query-label|model-response-label-announcer|table-footer)\b/.test(String(node.className || ''))) return true;
       if (node.hasAttribute?.('hidden') || node.getAttribute?.('aria-hidden') === 'true' || (node.hasAttribute?.('hide-from-message-actions') && !node.closest?.('single-image, generated-image'))) return true;
       const style = typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
-      return style?.display === 'none' || style?.visibility === 'hidden' || style?.visibility === 'collapse';
+      return style?.display === 'none' || style?.visibility === 'hidden' || style?.visibility === 'collapse' ||
+        style?.opacity === '0' || style?.contentVisibility === 'hidden' ||
+        /^inset\(50%(?: 50%){0,3}\)$/.test(style?.clipPath || '') ||
+        /^rect\(0px[, ]+0px[, ]+0px[, ]+0px\)$/.test(style?.clip || '');
     };
     const codeText = node => {
       if (node.nodeType === 3) return node.nodeValue || '';

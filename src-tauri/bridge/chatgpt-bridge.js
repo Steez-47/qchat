@@ -218,19 +218,24 @@
     return nodes.filter(node => !nodes.some(other => other !== node && node.contains(other)))
       .sort((a, b) => a.compareDocumentPosition(b) & 4 ? -1 : 1);
   }
-  function cssHidden(node) {
+  function cssHidden(node, { root, inheritedVisibility } = {}) {
+    if (node === root) return false;
     const style = node?.nodeType === 1 && typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
-    return style?.display === 'none' || style?.visibility === 'hidden' || style?.visibility === 'collapse';
+    return style?.display === 'none' ||
+      (['hidden', 'collapse'].includes(style?.visibility) && style.visibility !== inheritedVisibility) ||
+      style?.opacity === '0' || style?.contentVisibility === 'hidden' ||
+      /^inset\(50%(?: 50%){0,3}\)$/.test(style?.clipPath || '') ||
+      /^rect\(0px[, ]+0px[, ]+0px[, ]+0px\)$/.test(style?.clip || '');
   }
   // Streaming text can have a second, screen-reader-only copy beside the
   // painted words. Read the displayed representation once, including when
   // the site hides its staging nodes through CSS rather than attributes.
-  // `css: false` is for a root that is itself kept out of view, where CSS
-  // visibility says nothing about which of its words are the reply.
-  function hiddenReplyNode(node, { css = true } = {}) {
+  // A copy root may itself be kept out of view. Exempt only that root and its
+  // inherited visibility, so nested staging copies still get filtered.
+  function hiddenReplyNode(node, options) {
     if (node.hasAttribute?.('hidden') || node.getAttribute?.('aria-hidden') === 'true' ||
         /(?:^|\s)(?:sr-only|visually-hidden|screen-reader-only)(?:\s|$)/.test(typeof node.className === 'string' ? node.className : '')) return true;
-    return css && cssHidden(node);
+    return cssHidden(node, options);
   }
   // Code and maths have their own representations; textContent would include
   // hidden accessibility/staging copies even when the enclosing block is visible.
@@ -611,9 +616,9 @@
       } catch (_) { return null; }
     };
     const fence = (text, minimum) => '`'.repeat(Math.max(minimum, ...[...text.matchAll(/`+/g)].map(match => match[0].length + 1)));
-    // A copy surface the site keeps out of view is read by its markup alone:
-    // visibility is inherited, so every word in it would otherwise look hidden.
-    const options = { css: !cssHidden(body) };
+    // Do not disable CSS filtering for the entire tree when the site's copy
+    // surface is hidden: its descendants can still contain extra text copies.
+    const options = { root: body, inheritedVisibility: typeof getComputedStyle === 'function' ? getComputedStyle(body).visibility : undefined };
     const walk = node => {
       if (node.nodeType === 3) return escape(node.nodeValue || '');
       const tag = node.tagName?.toLowerCase();
