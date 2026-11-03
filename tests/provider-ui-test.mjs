@@ -85,7 +85,7 @@ try {
   await evalJS(`__mock.emit('bridge',{type:'status',provider:'chatgpt',ready:false,loggedIn:false})`);
   check('other provider status leaves orb alone', orb===await evalJS(`document.getElementById('status-dot').dataset.state`));
   await evalJS(`__mock.interval=1`); await send('hello Gemini');
-  await waitFor(`__mock.count('chat_send')>0`); await sleep(500);
+  await waitFor(`__mock.count('chat_send')>0`); await waitFor(`document.querySelector('[data-role=assistant]')?.dataset.status==='done'`); await sleep(100);
   check('Gemini send carries provider without reasoning', await evalJS(`__mock.last('chat_send').args.provider==='gemini' && !('reasoningEffort' in __mock.last('chat_send').args)`));
   await evalJS(`__mock.emit('bridge',{type:'error',provider:'gemini',code:'offline'})`);
   check('Gemini error copy uses its provider',await evalJS(`document.getElementById('global-error').textContent.includes('Gemini') && !document.getElementById('global-error').textContent.includes('ChatGPT')`));

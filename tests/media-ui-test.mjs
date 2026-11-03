@@ -73,7 +73,8 @@ try {
     check('writing feedback stays outside the answer and keeps the finished step',activity.checkVisibility() && !reply.querySelector('[role=status]') && !answerBeforeTool.includes('Writing') && activity.querySelectorAll('.live-step[data-kind=search]').length===1);
     event('activity',{kind:'browse',state:'running'}); await wait(30);
     check('activity updates without replacing streamed text or status node',document.querySelector('.live-status')===activity && activity.textContent.includes('Reading sources') && document.querySelector('.turn-content').textContent.includes('Checking'));
-    check('activity updates keep the unfinished paragraph buffered',!document.querySelector('.turn-content').textContent.includes('Pending text'));
+    await untilLong(()=>document.querySelector('.turn-content').textContent.includes('Pending text'));
+    check('activity updates keep the unfinished paragraph streaming in the same node',document.querySelector('.turn-content p')===paragraph && document.querySelector('.live-status')===activity);
     check('returning to tools preserves the answer and paragraph node',reply.checkVisibility() && reply.textContent===answerBeforeTool && reply.querySelector('p')===paragraph && activity.dataset.kind==='browse');
     check('tool box sits below the reply without covering it',activity.getBoundingClientRect().top>=reply.getBoundingClientRect().bottom);
     event('activity',{kind:'code',state:'running',label:'<script>secret arguments</script>'}); await wait(30);

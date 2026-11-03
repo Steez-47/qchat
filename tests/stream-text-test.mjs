@@ -136,3 +136,43 @@ assert.equal(stabilizeCode('Read [the docs](https://exa'),'Read the docs','a rea
 assert.equal(stabilizeCode('Read [the doc'),'Read the doc','a real open bracket is still hidden');
 assert.equal(stabilizeCode('Read [the docs](https://example.com) now'),'Read [the docs](https://example.com) now','a whole link is untouched');
 console.log('PASS inline code literals in stabilize');
+
+// The live view: finished blocks as they are, plus the block being written with its markup closed.
+const live=(text)=>ctx.window.QStream.liveView(text,{});
+for (const [text,want] of [
+ ['First unfinished','First unfinished'],
+ ['Done.\n\nSecond **bo','Done.\n\nSecond **bo**'],
+ ['Intro *italic* and **bold** then more','Intro *italic* and **bold** then more'],
+ ['1. **Second ','1. **Second** '],
+ ['Hi <cite>x</cite> and more','Hi <cite>x</cite> and more'],
+ ['Press <kbd>Ctrl</kbd> to','Press <kbd>Ctrl</kbd> to'],
+ ['Hi <mark>open and','Hi '],
+ ['Press <','Press '],
+ ['Hi <b','Hi '],
+ ['<section>one\n\ntwo',''],
+ ['Costs $5 and $10 total','Costs $5 and $10 total'],
+ ['Formula $x^2','Formula '],
+ ['Formula $x^2$ ok','Formula $x^2$ ok'],
+ ['Fact citeturn0','Fact '],
+ ['```js\nconst a = 1;\nconst b','```js\nconst a = 1;\nconst b'],
+ ['```js',''],
+ ['```html\n<div>open\n','```html\n<div>open\n'],
+ ['| a | b |\n|---|---|\n| x | y |\n| z','| a | b |\n|---|---|\n| x | y |\n'],
+ ['Link [text](http://ex','Link text'],
+ ['A [ref][docs].\n\n[docs]: https://exa','A [ref][docs].\n\n'],
+ ['Code `<div` here','Code `<div` here'],
+ ['$$\nx\n',''],
+ ['{#each [1] as x}<mark>{x}</mark>',''],
+ ['if a <b we stop','if a <b we stop'],
+]) assert.equal(live(text),want,'live view: '+JSON.stringify(text));
+console.log('PASS live view of the block being written');
+
+const stops=(text)=>JSON.parse(JSON.stringify(ctx.window.QStream.revealStops(text).map(at=>text.slice(0,at))));
+assert.deepEqual(stops('One **bold** word'),['One ','One **bold** ','One **bold** word'],'emphasis markers travel with their word');
+assert.deepEqual(stops('Use `code` here'),['Use ','Use `code` ','Use `code` here'],'code markers travel with their word');
+const snap=ctx.window.QStream.graphemeEnd;
+assert.equal(snap('A👩‍💻\n',5),6,'a position inside a joined emoji moves to its end');
+assert.equal(snap('Aé x',2),3,'a combining mark stays with its letter');
+assert.equal(snap('Hello',3),3,'a boundary stays put');
+assert.equal(snap('Hi',9),2,'past the end clamps');
+console.log('PASS marker-aware reveal stops and grapheme snapping');

@@ -98,7 +98,8 @@ try {
   await waitFor(`__mock.last('chat_send')`);
   check('Thinking shows while waiting', await waitFor(`(${liveText}).includes('Thinking')`));
   await evalJS(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:'Unfinished paragr'})`); await sleep(120);
-  check('Thinking stays while no reply text is visible yet', await evalJS(`(${liveText}).includes('Thinking')`));
+  // The unfinished paragraph streams in at once, and the status moves on to Writing.
+  check('the live paragraph shows and the status moves to Writing', await waitFor(`document.querySelector('[data-role="assistant"] .turn-content')?.textContent.includes('Unfinished') && (${liveText}).includes('Writing')`));
   await evalJS(`__mock.emit('bridge',{type:'done',id:__mock.last('chat_send').args.id,text:'A finished reply.'})`); await sleep(300);
   check('kept prompt stays and the live status leaves once the reply is done', await evalJS(`!!document.querySelector('.turn-row[data-role="user"]') && !document.querySelector('.live-status:not([hidden])')`));
   await open('/?mock=1', {settings, chats:empty}); await sleep(150);

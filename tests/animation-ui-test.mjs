@@ -67,13 +67,15 @@ try {
       if(now-start<${ms})requestAnimationFrame(sample);else resolve(frames);}
     requestAnimationFrame(sample);
   })`);
+  // Live text flows: every frame is a prefix of the final text and never shrinks.
+  const flows=(frames,final)=>frames.every((f,i)=>final.startsWith(f.text) && (!i || f.text.length>=frames[i-1].text.length));
   await begin();
   const burst='abcdefghijklmnopqrstuvwxyz'.repeat(4);
-  const frames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(burst)}});`,300);
-  check('unfinished backend chunk stays hidden on every frame',frames.length>5 && frames.every(f=>f.text===''));
+  const frames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(burst)}});`,600);
+  check('an unbroken backend chunk flows in and never shrinks',frames.length>5 && flows(frames,burst) && frames.at(-1).text===burst && new Set(frames.map(f=>f.text.length)).size>3,JSON.stringify(frames.map(f=>f.text.length)));
   const final=burst+' Final characters arrive together.';
-  const doneFrames=await capture(`__mock.emit('bridge',{type:'done',id:__mock.last('chat_send').args.id,text:${JSON.stringify(final)},conversationId:'animation-fixture'});`,140);
-  check('DONE displays its complete final snapshot without a character queue',doneFrames.every(f=>f.text===final),JSON.stringify(doneFrames.map(f=>f.text.length)));
+  const doneFrames=await capture(`__mock.emit('bridge',{type:'done',id:__mock.last('chat_send').args.id,text:${JSON.stringify(final)},conversationId:'animation-fixture'});`,500);
+  check('DONE drains to its complete final snapshot within a short budget',flows(doneFrames,final) && doneFrames.filter(f=>f.t>420).every(f=>f.text===final),JSON.stringify(doneFrames.map(f=>f.text.length)));
   await finishReply();
   check('final displayed and saved response are exact',await evalJS(`(${plain})===${JSON.stringify(final)} && JSON.parse(localStorage.getItem('qchat.chats')).current.lastResponse===${JSON.stringify(final)}`));
   await emit('delta','late stale text'); await sleep(80);
@@ -82,17 +84,19 @@ try {
   await begin();
   const plainList='First item\nSecond item';
   const formattedList='1. **First item**\n2. **Second item**';
-  await emit('delta',plainList); await sleep(100);
-  check('unfinished list snapshot stays buffered',await evalJS(`(${plain})===''`));
-  const formattedFrames=await capture(`__mock.emit('bridge',{type:'done',id:__mock.last('chat_send').args.id,text:${JSON.stringify(formattedList)},conversationId:'animation-fixture'});`,200);
-  check('final list appears completely formatted in every visible frame',formattedFrames.every(f=>f.text.includes('First item') && f.text.includes('Second item')) && new Set(formattedFrames.map(f=>f.text)).size===1);
+  await emit('delta',plainList);
+  await until(`(${plain}).startsWith('First item')`,'unfinished snapshot streams');
+  check('the first words of an unfinished snapshot show at once',await evalJS(`(${plain}).startsWith('First item')`));
+  const formattedFrames=await capture(`__mock.emit('bridge',{type:'done',id:__mock.last('chat_send').args.id,text:${JSON.stringify(formattedList)},conversationId:'animation-fixture'});`,500);
+  check('a corrected list is formatted in every visible frame and finishes whole',formattedFrames.every(f=>!/\*|^\d\./m.test(f.text)) && formattedFrames.at(-1).text.includes('Second item'),JSON.stringify(formattedFrames.map(f=>f.text)));
   await finishReply();
   check('formatted list renders and saves the exact raw Markdown',await evalJS(`document.querySelectorAll('[data-role=assistant] .turn-content ol li strong').length===2 && JSON.parse(localStorage.getItem('qchat.chats')).current.lastResponse===${JSON.stringify(formattedList)}`));
 
   await begin();
   const unicode='A👩‍💻B🇳🇿Ce\u0301D👍🏽'.repeat(6);
-  const unicodeFrames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(unicode+'\n\n')}});`,180);
-  check('finished Unicode block never splits emoji or combining graphemes',unicodeFrames.every(f=>f.text===unicode));
+  const unicodeFrames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(unicode+'\n\n')}});`,700);
+  const clusterEnds=new Set([0,...[...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(unicode)].map(g=>g.index+g.segment.length)]);
+  check('streamed Unicode never splits emoji or combining graphemes',flows(unicodeFrames,unicode) && unicodeFrames.every(f=>clusterEnds.has(f.text.length)) && unicodeFrames.at(-1).text===unicode,JSON.stringify(unicodeFrames.map(f=>f.text.length)));
   await emit('done',unicode); await finishReply();
   for(const [prefix,extended] of [['Ae','Ae\u0301'],['A👩','A👩‍💻']]) {
     await begin(); await emit('delta',prefix+'\n\n');
@@ -104,9 +108,10 @@ try {
 
   await begin();
   const lines=Array.from({length:12},(_,i)=>`Line ${i+1}`).join('\n\n');
-  const lineFrames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(lines+'\n\n')}});`,800);
+  const lineFrames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(lines+'\n\n')}});`,1200);
   const lineSizes=lineFrames.filter(f=>f.h>0 && f.t>350);
-  check('finished multiline block appears atomically',lineFrames.every(f=>f.text.includes('Line 12') && f.text.includes('Line 1')));
+  const lineText=Array.from({length:12},(_,i)=>`Line ${i+1}`).join('\n');
+  check('a multiline burst flows in line by line and finishes',flows(lineFrames,lineText) && lineFrames.at(-1).text===lineText && new Set(lineFrames.map(f=>f.text)).size>4,JSON.stringify(lineFrames.map(f=>f.text.length)));
   check('completed block viewport settles without height reversals',lineSizes.length>8 && lineSizes.slice(1).every((f,i)=>f.h>=lineSizes[i].h-1));
   await emit('done',lines); await finishReply();
 
@@ -114,7 +119,7 @@ try {
   const words=Array.from({length:300},(_,i)=>`word${i}`).join(' ');
   const wrapped=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(words+'\n\n')}});`,1000);
   const shown=wrapped.filter(f=>f.h>0 && f.t>350);
-  check('large paragraph arrives without partial word frames',wrapped.every(f=>f.text===words));
+  check('a large paragraph flows in whole words only',flows(wrapped,words) && wrapped.every(f=>!f.text || /\s/.test(words[f.text.length]||' ') || /\s$/.test(f.text)) && wrapped.at(-1).text.length>words.length/2,JSON.stringify(wrapped.filter(f=>f.text && !/\s/.test(words[f.text.length]||' ')).map(f=>f.text.slice(-12)).slice(0,4)));
   check('wrapped block has no height reversals',shown.length>8 && shown.slice(1).every((f,i)=>f.h>=shown[i].h-1));
   check('stream wrapping keeps a stable text width',new Set(shown.map(f=>Math.round(f.w))).size===1);
   check('block arrival uses bounded native window resizes',await evalJS(`__mock.fits.length<10`));
@@ -124,20 +129,20 @@ try {
 
   await begin();
   await emit('delta','Old phrase.\n\nA buffered ending');
-  await until(`(${plain})==='Old phrase.'`,'correction has a completed prefix');
+  await until(`(${plain})==='Old phrase.\\nA buffered ending'`,'first snapshot fully shown');
   const corrected='Corrected phrase 🌿 with a new ending.';
-  const correctionFrames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(corrected+'\n\nUnfinished tail')}});`,180);
-  check('completed upstream correction replaces once and keeps its tail hidden',correctionFrames.every(f=>f.text===corrected));
+  const correctionFrames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(corrected+'\n\nUnfinished tail')}});`,500);
+  check('an upstream correction replaces the old text at once, then keeps flowing',correctionFrames.every(f=>f.text.startsWith('Corrected phrase') && !f.text.includes('Old')) && flows(correctionFrames,corrected+'\nUnfinished tail'),JSON.stringify(correctionFrames.map(f=>f.text)));
   const appended=corrected+'\n\nSubsequent paragraph arrives completely.';
-  const appendFrames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(appended+'\n\nIncomplete')}});`,160);
-  check('appending a complete block keeps the corrected prefix and hides the new tail',appendFrames.every(f=>f.text.startsWith(corrected) && f.text.endsWith('arrives completely.') && !f.text.includes('Incomplete')));
+  const appendFrames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(appended+'\n\nIncomplete')}});`,700);
+  check('a corrected tail keeps the corrected prefix on every frame',appendFrames.every(f=>f.text.startsWith(corrected)) && appendFrames.at(-1).text.includes('arrives completely.'),JSON.stringify(appendFrames.map(f=>f.text.slice(corrected.length))));
   await emit('done',appended); await finishReply();
   check('upstream correction and appended tail finish exactly',await evalJS(`(()=>{const p=[...document.querySelectorAll('[data-role=assistant] .turn-content p')];return p.length===2 && p[0].textContent===${JSON.stringify(corrected)} && p[1].textContent==='Subsequent paragraph arrives completely.' && JSON.parse(localStorage.getItem('qchat.chats')).current.lastResponse===${JSON.stringify(appended)};})()`));
 
   await begin();
   const stoppedText='Buffered response '.repeat(30);
   await emit('delta',stoppedText); await sleep(80);
-  check('Stop fixture starts with a buffered reply',await evalJS(`(${plain})===''`));
+  check('Stop fixture is part way through revealing its reply',await evalJS(`(()=>{const t=${plain};return t.length>0 && t.length<${stoppedText.trimEnd().length}})()`));
   await key('.',{ctrlKey:true}); await sleep(150);
   await emit('delta','stale text after Stop'); await sleep(180);
   check('Stop flushes all received text and ignores later snapshots',await evalJS(`(${plain})===${JSON.stringify(stoppedText.trimEnd())} && document.getElementById('btn-send').dataset.mode==='send'`));
@@ -170,18 +175,20 @@ try {
   const prose='The quick brown fox jumps over the lazy dog.';
   const fadeSeen=await evalJS(`(async()=>{__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(prose+'\n\nUnfinished')}});for(let i=0;i<40;i++){for(const n of ['qchat-fade-0','qchat-fade-1','qchat-fade-2'])if(CSS.highlights.get(n)?.size)return true;await new Promise(requestAnimationFrame);}return false;})()`);
   check('completed blocks still use paint-only fade highlights',fadeSeen);
-  check('fade adds no wrapper elements or unfinished words',await evalJS(`!document.querySelector('.turn-content span') && (${plain})===${JSON.stringify(prose)}`));
+  await until(`(${plain}).endsWith('Unfinished')`,'the snapshot is fully shown');
+  check('fade adds no wrapper elements',await evalJS(`!document.querySelector('.turn-content span') && (${plain})===${JSON.stringify(prose+'\nUnfinished')}`));
   await emit('done',prose); await finishReply();
   check('highlights clear when the reply is done',await evalJS(`!CSS.highlights.has('qchat-fade-0')`));
 
   await begin('paragraph');
   await emit('delta','First paragraph is done.\n\nSecond paragraph is still being wri');
   await until(`(${plain}).includes('First paragraph is done.')`,'first finished paragraph');
-  await sleep(100);
-  check('an unfinished paragraph stays hidden',await evalJS(`(${plain})==='First paragraph is done.'`));
+  await until(`(${plain}).includes('still being wri')`,'the unfinished paragraph streams');
+  check('the paragraph still being written shows as it arrives',await evalJS(`(${plain})==='First paragraph is done.\\nSecond paragraph is still being wri'`));
   await emit('delta','First paragraph is done.\n\nSecond paragraph is now finished.\n\nThird sta');
   await until(`(${plain}).includes('now finished.')`,'second finished paragraph');
-  check('the next one appears only once finished',!(await evalJS(plain)).includes('Third'));
+  await until(`(${plain}).endsWith('Third sta')`,'the next paragraph streams');
+  check('a corrected paragraph replaces its earlier words in place',!(await evalJS(plain)).includes('still being'));
   await emit('done','First paragraph is done.\n\nSecond paragraph is now finished.\n\nThird starts and ends here.');
   await finishReply();
   check('the end of the reply is exact',await evalJS(`(${plain}).endsWith('Third starts and ends here.')`));
@@ -241,7 +248,7 @@ try {
   await open('/',{settings:{v:4,animations:'off',autoDismiss:0,streamStyle:'word'}});
   await evalJS(`__mock.hold=true`);await send('Reduced motion');await until(`__mock.last('chat_send')`);
   await emit('delta',burst);await sleep(30);
-  check('motion off keeps unfinished word-mode snapshots hidden',await evalJS(`(${plain})===''`));
+  check('motion off shows each snapshot as it lands',await evalJS(`(${plain})===${JSON.stringify(burst)}`));
   await emit('delta',burst+'\n\n'); await sleep(80);
   check('motion off releases a finished block at once',await evalJS(`(${plain})===${JSON.stringify(burst)}`));
   check('no runtime errors',problems.length===0,problems.join(' | '));
