@@ -42,6 +42,8 @@ assert.equal(md('<Entity value="A &amp; B"/>'), 'A &amp; B');
 assert.equal(md('<Future label="&lt;img&gt;"/>'), '&lt;img&gt;');
 assert.equal(md('<Link href=https://example.com/path title=Read/>'), '[Read](https://example.com/path)');
 assert.equal(md('<b>Hello</b> <i>world</i>'), '**Hello** *world*');
+// Markers hug their words so they still render; empty emphasis leaves nothing behind.
+assert.equal(md('<b>Note: </b>tight and<i> spaced </i>words, <s>gone </s>now<b> </b>.'), '**Note:** tight and *spaced* words, ~~gone~~ now .');
 assert.equal(md('<Entity value="John"/> <Entity value="Doe"/>'), 'John Doe');
 assert.equal(md('<code>a</code> <code>b</code>'), '\` a \` \` b \`');
 for (const math of ['$x < y$','$$a < b$$','\\(x < y\\)','\\[a <b\\]','$a <b$']) {

@@ -410,6 +410,28 @@
     return tag === 'math-block' || (tag === 'div' && /math/i.test(cls));
   }
 
+  // The page shows these characters as plain words, so they must stay plain in Markdown:
+  // "2*3*4" is not italic, a mentioned <b> tag is not markup, "_init_" keeps its underscores.
+  // Only characters that could start markup are escaped, so copies stay readable.
+  function proseText(text) {
+    return text.replace(/[\\`*_<\]~]/g, (char, at) => {
+      const before = text[at - 1] || '', after = text[at + 1] || '';
+      if (char === '\\') return /[!-/:-@[-`{-~]/.test(after) ? '\\\\' : char;
+      if (char === '*') return /\s/.test(before) && /\s/.test(after) ? char : '\\*';
+      if (char === '_') return /[\p{L}\p{N}]/u.test(before) && /[\p{L}\p{N}]/u.test(after) ? char : '\\_';
+      if (char === '<') return /[A-Za-z/!?]/.test(after) ? '\\<' : char;
+      if (char === ']') return after === '(' || after === '[' ? '\\]' : char;
+      if (char === '~') return before === '~' || after === '~' ? '\\~' : char;
+      return '\\`';
+    });
+  }
+  // Markers hug their words: "<strong>Note: </strong>" becomes "**Note:** ", not "**Note: **".
+  function emphasis(marker, content) {
+    const body = content.trim();
+    if (!body) return content;
+    return `${content.slice(0, content.length - content.trimStart().length)}${marker}${body}${marker}${content.slice(content.trimEnd().length)}`;
+  }
+
   function htmlToMarkdown(root, options = {}) {
     if (!root) return '';
     const job = options.job || null;
@@ -432,7 +454,7 @@
 
     const walk = (node, listDepth = 0, inTable = false) => {
       if (!node) return '';
-      if (node.nodeType === 3) return node.nodeValue || '';
+      if (node.nodeType === 3) return proseText(node.nodeValue || '');
       if (node.nodeType !== 1) return '';
       const tag = (node.tagName || '').toLowerCase();
 
@@ -513,25 +535,9 @@
         return `\n\n${text}\n\n`;
       }
 
-      if (tag === 'strong' || tag === 'b') {
-        const content = inner();
-        if (!content.trim()) return content;
-        const lead = content.match(/^\s*/)[0], trail = content.match(/\s*$/)[0];
-        return `${lead}**${content.trim()}**${trail}`;
-      }
-
-      if (tag === 'em' || tag === 'i') {
-        const content = inner();
-        if (!content.trim()) return content;
-        const lead = content.match(/^\s*/)[0], trail = content.match(/\s*$/)[0];
-        return `${lead}*${content.trim()}*${trail}`;
-      }
-
-      if (tag === 'del' || tag === 's') {
-        const content = inner();
-        if (!content.trim()) return content;
-        return `~~${content.trim()}~~`;
-      }
+      if (tag === 'strong' || tag === 'b') return emphasis('**', inner());
+      if (tag === 'em' || tag === 'i') return emphasis('*', inner());
+      if (tag === 'del' || tag === 's') return emphasis('~~', inner());
 
       if (tag === 'a') {
         const text = inner().trim();
@@ -591,6 +597,8 @@
     };
 
     return walk(root, 0, false)
+      // Two bold runs side by side ("**a****b**") would parse as one run with literal stars.
+      .replace(/(?<=[^\s*\\])\*\*\*\*(?=[^\s*])/g, '')
       .replace(/[ \t]+\n/g, '\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim();

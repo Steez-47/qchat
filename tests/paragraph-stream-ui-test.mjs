@@ -169,6 +169,13 @@ try {
   await evalJS(`__streamDoc.querySelector('[data-dil-message-id]').style.display='none';__streamDoc.querySelector('[data-dil-message-id] p:last-child').insertAdjacentHTML('beforebegin','<p>Hidden copy root.<span class="staging">Hidden copy root.</span><span class="transparent">Hidden copy root.</span><span class="clipped">Hidden copy root.</span></p>')`);
   await until(`(${plain}).includes('Hidden copy root.')`, 'hidden provider copy remains readable');
   check('a hidden provider copy root still excludes its nested staging copies',await evalJS(`(${plain}).split('Hidden copy root.').length===2 && !(${plain}).includes('old code') && (${plain}).split('several genuinely credible firsthand').length===2`));
+  // The current page styles emphasis with classes, streams words in from transparent and draws
+  // its search status inside the reply. Emphasis survives, words count once, status never shows.
+  await evalJS(`__streamDoc.querySelector('[data-dil-message-id] p:last-child').insertAdjacentHTML('beforebegin','<div data-assistant-reasoning-summary><hr data-logical-answer-activity-divider><div data-cot><span data-text-shimmer-text>Searching the web</span><span aria-hidden="true" data-text-shimmer-overlay>Searching the web</span></div></div><p><span style="font-weight:700">Styled bold</span> and <span style="font-style:italic">styled italic</span>, <strong>Note: </strong>tight, <strong>joined</strong><strong>bold</strong> run, <span data-d-streaming-word style="opacity:0">arriving</span> word, 2*3*4 stays.</p>')`);
+  await until(`(${plain}).includes('arriving word')`, 'styled emphasis paragraph renders');
+  const styledEmphasis = await evalJS(`(()=>{const c=document.querySelector('[data-role=assistant] .turn-content');const strong=[...c.querySelectorAll('strong')].map(n=>n.textContent);return {strong,em:[...c.querySelectorAll('em')].map(n=>n.textContent),text:c.textContent,rules:c.querySelectorAll('hr').length}})()`);
+  check('class-styled bold and italic, tight markers and joined runs render as emphasis',styledEmphasis.strong.includes('Styled bold') && styledEmphasis.em.includes('styled italic') && styledEmphasis.strong.includes('Note:') && styledEmphasis.strong.includes('joinedbold') && !/\*/.test(styledEmphasis.text.replace('2*3*4','')),JSON.stringify(styledEmphasis));
+  check('a streamed word mid fade-in counts once and the search status stays out',styledEmphasis.text.split('arriving word').length===2 && !styledEmphasis.text.includes('Searching the web') && styledEmphasis.rules===0 && styledEmphasis.text.includes('2*3*4 stays'),JSON.stringify(styledEmphasis));
   if (shotsDir) { await settle(); await mkdir(shotsDir,{recursive:true}); const shot=await cdp('Page.captureScreenshot',{format:'png'}); await writeFile(path.join(shotsDir,'chatgpt-stream-no-duplicates.png'),Buffer.from(shot.data,'base64')); }
   await evalJS(`__streamDoc.querySelector('[data-testid="stop-button"]').remove()`); await finishReply();
   check('ChatGPT completion keeps the full reply without bringing hidden copies back',await evalJS(`(${plain}).includes('Still composing') && (${plain}).split('several genuinely credible firsthand').length===2 && !(${plain}).includes('The feedback varies.') && (${plain}).split('Hidden copy root.').length===2 && (${plain}).split('Fades into view.').length===2 && __streamEvents.some(event=>event.type==='done' && !event.text.includes('old code'))`));
@@ -186,6 +193,12 @@ try {
     const snapshot='First **rich** paragraph.\n\nSecond complete.\n\n';
     const frames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(snapshot)}});`,150);
     check(`${motion}: no word frames`,frames.every(f=>!f.text.includes('Second')||f.text.endsWith('Second complete.')));
+    if (motion==='on') {
+      const before = await evalJS(plain);
+      await emit('delta',''); await sleep(100);
+      const after = await evalJS(plain);
+      check('an empty snapshot keeps the reply that already arrived',after===before && before.endsWith('Second complete.') && await evalJS(`saved===document.querySelector('.turn-content p')`),JSON.stringify({before,after}));
+    }
     await emit('done','First **rich** paragraph.\n\nSecond complete.\n\nFinal tail'); await finishReply();
     check(`${motion}: final tail flushed`,await evalJS(`(${plain}).endsWith('Final tail')`));
     check(`${motion}: DOM and selection preserved`,await evalJS(`saved===document.querySelector('.turn-content p') && savedText===saved.firstChild && getSelection().toString()==='First rich paragraph.'`));

@@ -79,6 +79,8 @@ try {
     '',
     '> A quote with **bold**.',
     '',
+    'Roughly (~5 min) or (~10 min), with ~~struck~~ text and **Note:** emphasis.',
+    '',
     'The end.'
   ].join('\n');
   const reply = `document.querySelector('[data-role=assistant] .turn-content')`;
@@ -98,6 +100,7 @@ try {
 
   check('table columns keep their alignment', await evalJS(`(()=>{const cells=[...${reply}.querySelectorAll('tr:first-child > *, tbody tr:first-child > *')];const a=cells.map(c=>getComputedStyle(c).textAlign);return a.slice(0,3).join()==='left,center,right'&&a.slice(3,6).join()==='left,center,right'})()`));
   check('task items show a checkbox instead of a bullet', await evalJS(`(()=>{const items=[...${reply}.querySelectorAll('li')].filter(li=>li.querySelector(':scope > input[type=checkbox], :scope > p:first-child > input[type=checkbox]'));const plain=[...${reply}.querySelectorAll('li')].find(li=>li.textContent.includes('plain bullet'));return items.length===6&&items.some(li=>li.querySelector(':scope > input'))&&items.some(li=>li.querySelector(':scope > p > input'))&&items.every(li=>getComputedStyle(li).listStyleType==='none')&&items[1].querySelector('input').checked&&items.every(li=>li.querySelector('input').disabled)&&getComputedStyle(plain).listStyleType!=='none'})()`));
+  check('one tilde stays literal and two tildes strike through', await evalJS(`(()=>{const d=[...${reply}.querySelectorAll('del')];return d.length===1&&d[0].textContent==='struck'&&${reply}.textContent.includes('Roughly (~5 min) or (~10 min), with struck text and Note: emphasis.')})()`));
   check('keyboard keys render as keys', await evalJS(`(()=>{const k=[...${reply}.querySelectorAll('kbd')];return k.length===2&&k[0].textContent==='Ctrl'&&!k[0].attributes.length&&getComputedStyle(k[0]).display==='inline-block'})()`));
   check('kbd keeps no attributes from the reply', await evalJS(`(()=>{const t=document.createElement('template');t.innerHTML=QResponseTags.sanitizeHTML('<kbd onclick="x()">A</kbd><kbd>B</kbd>');return !t.content.querySelector('[onclick]')&&t.content.querySelectorAll('kbd').length===1})()`));
 

@@ -329,7 +329,8 @@ test('reply tags stay quick on hostile input', () => {
     dollars: '$'.repeat(100000),
     ampersands: '&#'.repeat(50000),
     each: '{#each x}'.repeat(5000),
-    'dollar words': '$a '.repeat(30000)
+    'dollar words': '$a '.repeat(30000),
+    'spaced emphasis': `<b>a${' '.repeat(50000)}b${' '.repeat(50000)}c </b>`.repeat(4)
   })) within(8000, () => tags.toMarkdown(text), name);
 });
 
