@@ -530,6 +530,52 @@ test('standard messages, append patches, malformed packets and terminal SSE with
   await b.send(); await b.tick(200);
   assert.equal(done(b)?.text, 'one 😀'); assert.equal(terminal(b).length, 1);
 });
+test('SSE interleaved hidden source and visible reply lanes never append into each other', async () => {
+  const first = 'A **bold** opening', tail = ' with more words.\n\nAgain. Again.';
+  // Recorded protocol shape: c/p/o are inherited across wire packets, while
+  // operations inside a patch batch have their own path/operation context.
+  const packets = [
+    { c: 16, p: '', o: 'add', v: message([''], { id: 'hidden-source', metadata: { is_visually_hidden_from_conversation: true } }) },
+    { c: 17, v: message([''], { id: 'visible-reply' }) },
+    { c: 16, o: 'patch', v: [{ p: '/message/content/parts/0', o: 'append', v: first }] },
+    { c: 17, v: [{ p: '/message/update_time', o: 'replace', v: 1 }, { p: '/message/content/parts/0', o: 'append', v: first }] },
+    { c: 16, p: '/message/content/parts/0', o: 'append', v: tail },
+    { c: 17, p: '', o: 'patch', v: [{ p: '/message/content/parts/0', o: 'append', v: tail }] },
+    // c is also inherited: this batch still belongs to the visible reply.
+    { v: [{ p: '/message/content/parts/0', o: 'append', v: ' Finished.' }] },
+    '[DONE]'
+  ];
+  const final = first + tail + ' Finished.';
+  const b = browser({ chunks: packets.map(packet => encoder.encode(sse(packet))), chunkDelays: packets.map(() => 100) });
+  await b.send(); await b.tick(2000);
+  const texts = b.events.filter(event => ['delta', 'done'].includes(event.type)).map(event => event.text);
+  assert.ok(texts.includes(first), 'the visible opening streams before completion');
+  assert.ok(texts.every(text => final.startsWith(text)), JSON.stringify(texts));
+  assert.equal(done(b)?.text, final);
+});
+
+test('SSE object appends retain metadata and introduce the canonical DIL snapshot', async () => {
+  const clean = 'Canonical **reply**.';
+  const b = browser({ data: sse(
+    message([''], { metadata: { existing: true } }),
+    { o: 'patch', v: [
+      { p: '/message/content/parts/0', o: 'append', v: '<box>Layout</box>' },
+      { p: '/message/metadata', o: 'append', v: { model_dil_v2: { fallbackMarkdown: clean, constants: {} } } }
+    ] }, '[DONE]') });
+  await b.send(); await b.tick(200);
+  assert.equal(done(b)?.text, clean);
+  const poisoned = browser({ data: sse(
+    message(['Visible prose.'], { metadata: { model_dil_v2: {} } }),
+    { p: '/message/metadata/model_dil_v2', o: 'append', v: JSON.parse('{"__proto__":{"fallbackMarkdown":"Poisoned prose."}}') }, '[DONE]') });
+  await poisoned.send(); await poisoned.tick(200);
+  assert.equal(done(poisoned)?.text, 'Visible prose.', 'object append cannot create an inherited canonical snapshot');
+  const hidden = browser({ data: sse(
+    message([''], { metadata: { is_visually_hidden_from_conversation: true } }),
+    { p: '/message/metadata', o: 'append', v: { model_dil_v2: { fallbackMarkdown: clean } } }, '[DONE]') });
+  await hidden.send(); await hidden.tick(200);
+  assert.ok(!hidden.events.some(event => event.type === 'delta' && event.text), 'object append cannot discard the hidden-message flag');
+});
+
 test('NDJSON final packet without trailing newline and revision snapshots', async () => {
   const b = browser({ type: 'application/x-ndjson', data: [
     { type: 'content', messageId: 'a', revision: 1, markdown: 'Hello ' },
@@ -558,6 +604,58 @@ test('DIL fallback snapshots replace layout deltas and corrected prose without d
   }
   if (process.env.QCHAT_RICH_REPLAY) writeFileSync(process.env.QCHAT_RICH_REPLAY, JSON.stringify(replies));
 });
+test('SSE DIL metadata keeps canonical prose while its rendered layout contains transient repeated text', async () => {
+  const clean = 'There is a **possibility of significant network congestion**.\n\nBut download servers and the internet are different.';
+  const woven = 'There is a possibility possibility of significant network congestion.\n\nBut significant network congestion.\n\nBut download servers and the internet are different.';
+  const b = browser({ data: sse(message(['<box>Rendered layout</box>'], {
+    metadata: { model_dil_v2: { fallbackMarkdown: clean, fallbackMarkdownVersion: 1 } }
+  })), hold: true });
+  b.stop(true); await b.send(); await b.tick(200);
+  b.dil(woven); await b.tick(600);
+  const streamed = b.events.filter(event => event.type === 'delta');
+  assert.ok(streamed.length, 'canonical prose is emitted before completion');
+  for (const event of streamed) assert.equal(event.text, clean);
+  b.stop(false); b.resume(); await b.tick(2500);
+  assert.equal(done(b)?.text, clean);
+});
+
+test('SSE DIL metadata appends and shorter corrections replace snapshots without joining rendered text', async () => {
+  const first = 'A **clean** prefix.', extended = first + ' More text.', final = 'Corrected **answer**.';
+  const packets = [
+    message(['<box>Layout</box>'], { metadata: { model_dil_v2: { fallbackMarkdown: first, fallbackMarkdownVersion: 1 } } }),
+    { p: '/message/metadata/model_dil_v2/fallbackMarkdown', o: 'append', v: ' More text.' },
+    { p: '/message/content/parts/0', o: 'append', v: '<box>Another layout revision</box>' },
+    { p: '/message/metadata/model_dil_v2/fallbackMarkdown', o: 'replace', v: final },
+    '[DONE]'
+  ];
+  const b = browser({ chunks: packets.map(packet => encoder.encode(sse(packet))), chunkDelays: [0, 150, 150, 150, 150] });
+  b.stop(true); await b.send(); await b.tick(100);
+  b.dil('A clean prefix. A clean prefix. More text. More text. A stale rendered paragraph.');
+  await b.tick(1000); b.stop(false); await b.tick(2500);
+  const texts = b.events.filter(event => ['delta', 'done'].includes(event.type)).map(event => event.text);
+  assert.ok(texts.includes(first)); assert.ok(texts.includes(extended));
+  assert.ok(texts.every(text => [first, extended, final].includes(text)), JSON.stringify(texts));
+  assert.equal(done(b)?.text, final);
+});
+
+test('SSE DIL metadata-only prose and an explicit empty canonical correction are respected', async () => {
+  const a = browser({ data: sse(message([], { metadata: { model_dil_v2: { fallbackMarkdown: '**Metadata prose**' } } }), '[DONE]') });
+  await a.send(); await a.tick(200);
+  assert.equal(done(a)?.text, '**Metadata prose**');
+  const b = browser({ data: sse(
+    message(['<box>Old layout</box>'], { metadata: { model_dil_v2: { fallbackMarkdown: 'Old prose.' } } }),
+    { p: '/message/metadata/model_dil_v2/fallbackMarkdown', o: 'replace', v: '' }, '[DONE]') });
+  await b.send(); await b.tick(200);
+  assert.equal(done(b)?.text, '');
+});
+
+test('SSE DIL metadata never hides interactive source behind its static fallback', async () => {
+  const interactive = '<button onClick={() => alert("hi")}>Press</button>';
+  const b = browser({ data: sse(message([interactive], { metadata: { model_dil_v2: { fallbackMarkdown: 'Press' } } }), '[DONE]') });
+  await b.send(); await b.tick(200);
+  assert.equal(done(b)?.text, interactive);
+});
+
 test('raw rich layout uses the scoped rendered reply even when the corrected reply is shorter', async () => {
   const raw = '## GTA VI\n\n<row align="center" gap={3}><AsyncImage query="secret image query"/><text weight="medium">Edge #430</text></row>\n' + 'stale draft '.repeat(100);
   const b = browser({ data: sse(message([raw])), hold: true });

@@ -893,29 +893,41 @@
       !message.metadata?.is_visually_hidden_from_conversation && !internalContent(message.content) && message.recipient !== 'all_tools' &&
       (!message.recipient || message.recipient === 'all');
   }
-  function apply(job, packet) {
+  function apply(job, packet, state = job.deltaState ||= { channel: 0, messages: new Map() }) {
     if (!packet || typeof packet !== 'object') return;
     if (active !== job || job.finished || job.finishing || job.cancelled) return;
     if (packet.error) { fail(job, 'stream_failed', 'ChatGPT reported a response error. View the conversation in ChatGPT.'); return; }
     if (packet.op && packet.path !== undefined) packet = { ...packet, p: packet.path, o: packet.op, v: packet.value };
     if (packet.conversation_id) job.conversationId = packet.conversation_id;
-    if (packet.message) job.message = packet.message;
-    else if (packet.author && packet.content) job.message = packet;
-    if (packet.o === 'patch' && Array.isArray(packet.v)) { packet.v.forEach(op => apply(job, op)); return; }
+    // SSE compresses c/p/o across wire packets. c selects a message, not the
+    // assistant's final/analysis channel: hidden source and visible DIL messages
+    // can stream the same words concurrently. Keep their documents separate.
+    if (packet.c !== undefined) state.channel = packet.c;
+    if (packet.p !== undefined) state.path = packet.p;
+    if (packet.o !== undefined) state.operation = packet.o;
+    const path = state.path, operation = state.operation;
+    let record = state.messages.get(state.channel);
+    if (!record) state.messages.set(state.channel, record = {});
+    if (packet.message) record.message = packet.message;
+    else if (packet.author && packet.content) record.message = packet;
+    job.message = record.message;
+    if (operation === 'patch' && Array.isArray(packet.v)) {
+      // Nested operations must not overwrite the wire packet's inherited path
+      // or operation; the next packet may contain only v (another patch batch).
+      const nested = { ...state };
+      packet.v.forEach(op => apply(job, op, nested));
+      return;
+    }
     if (!Object.prototype.hasOwnProperty.call(packet, 'v')) { renderMessage(job); return; }
-    if (packet.p !== undefined) job.path = packet.p;
-    if (packet.o !== undefined) job.operation = packet.o;
-    const path = packet.p === undefined ? job.path : packet.p;
-    const operation = packet.o === undefined ? job.operation : packet.o;
     const value = packet.v;
     if (value && typeof value === 'object' && value.message) {
-      job.message = value.message;
+      record.message = job.message = value.message;
       if (value.conversation_id) job.conversationId = value.conversation_id;
-    } else if (value?.author && value?.content) job.message = value;
+    } else if (value?.author && value?.content) record.message = job.message = value;
     else if (path && job.message) {
       const keys = path.split('/').slice(1).map(k => k.replace(/~1/g, '/').replace(/~0/g, '~'));
       if (keys.some(key => ['__proto__', 'prototype', 'constructor'].includes(key))) return;
-      let target = { message: job.message };
+      let target = record;
       for (let i = 0; i < keys.length - 1; i++) {
         target = target[keys[i]];
         if (!target || typeof target !== 'object') return;
@@ -927,6 +939,11 @@
       } else if (operation === 'append') {
         if (typeof target[key] === 'string' && typeof value === 'string') target[key] += value;
         else if (Array.isArray(target[key])) target[key].push(...(Array.isArray(value) ? value : [value]));
+        else if (target[key] && typeof target[key] === 'object' && value && typeof value === 'object') {
+          for (const [name, item] of Object.entries(value)) {
+            if (!['__proto__', 'prototype', 'constructor'].includes(name)) target[key][name] = item;
+          }
+        }
       } else if (operation === 'remove') delete target[key];
       else target[key] = value;
     }
@@ -946,7 +963,16 @@
       else if (part && ['text', 'output_text'].includes(part.type || part.content_type) && typeof part.text === 'string') { text += part.text; hasText = true; }
       else structuredMedia(job, part, i);
     });
-    if (hasText) { if (text) completeActivity(job); networkText(job, text); }
+    // Signed-in SSE carries the same canonical DIL prose as NDJSON, but in message
+    // metadata. Its layout can contain transient duplicate copies while rendering;
+    // use the supplied Markdown snapshot instead of switching to page text.
+    const fallback = job.message.metadata?.model_dil_v2?.fallbackMarkdown;
+    const canonicalFallback = typeof fallback === 'string' && !window.QResponseTags.hasInteractive(text);
+    if (hasText || canonicalFallback) {
+      if (canonicalFallback) text = fallback;
+      if (text) completeActivity(job);
+      networkText(job, text, canonicalFallback);
+    }
   }
   function detach(job, reason) {
     if (active !== job || job.finished || job.finishing) return;
@@ -964,7 +990,7 @@
       // Each observed response reads only its own reader. A newer stream for the same job
       // replaces this one; this loop then stops instead of applying a second copy.
       reader = response.body.getReader();
-      job.reader = reader; job.readerDisposed = false; job.path = undefined; job.operation = undefined;
+      job.reader = reader; job.readerDisposed = false; job.deltaState = undefined;
       const decoder = new TextDecoder(); let buffer = '';
       let format = /event-stream/i.test(response.headers.get('content-type') || '') ? 'sse' : null;
       let data = [];
