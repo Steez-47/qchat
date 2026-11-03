@@ -87,7 +87,7 @@ body { padding: 16px; }
 
 .section-nav {
   flex: none;
-  width: 148px;
+  width: 168px;
   display: flex;
   flex-direction: column;
   gap: 1px;

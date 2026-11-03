@@ -4,6 +4,19 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-03
+
+### Added
+- An Experimental page in Settings for features that are still being worked on.
+
+### Changed
+- Context switching moved to Settings > Experimental and is now off by default, because it does not work reliably yet. It is turned off once when upgrading from 1.6.0; turn it back on there to try it.
+- Search, browsing, code and image progress show in their own status box instead of an empty reply bubble, and the reply bubble appears only once there is text or media.
+- The settings sidebar is a little wider, so longer page names fit.
+
+### Fixed
+- Gemini tool activity that starts after the answer text has begun is shown and completes correctly.
+
 ## [1.6.0] - 2026-11-03
 
 ### Added

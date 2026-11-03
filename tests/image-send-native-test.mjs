@@ -120,7 +120,7 @@ try {
   if (ownership.status !== 0 || ownership.stdout.trim() !== 'owned') throw Error('Debug endpoint is not owned by the isolated app');
   main = await connect(target);
   await until(() => main.evaluate('document.readyState==="complete"&&!!window.QSettings'), 'main ready');
-  await main.evaluate('(async()=>{window.fixtureEvents=[];await window.__TAURI__.event.listen("bridge",event=>fixtureEvents.push(event.payload));window.__TAURI__.event.emit("qchat://settings-changed",QSettings.save({...QSettings.settings,animations:"off",autoDismiss:0,reasoningEffort:"medium"}));})()');
+  await main.evaluate('(async()=>{window.fixtureEvents=[];await window.__TAURI__.event.listen("bridge",event=>fixtureEvents.push(event.payload));window.__TAURI__.event.emit("qchat://settings-changed",QSettings.save({...QSettings.settings,animations:"off",autoDismiss:0,reasoningEffort:"medium",contextSwitching:true}));})()');
   for (const provider of ['chatgpt', 'gemini']) {
     if (provider === 'gemini') await main.evaluate('window.__TAURI__.core.invoke("provider_set",{provider:"gemini"})');
     site = await install(provider);

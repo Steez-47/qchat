@@ -494,7 +494,7 @@
   const NAV = [
     { title: "Basics", pages: ["general", "window", "shortcuts"] },
     { title: "Look & feel", pages: ["presets", "colours", "glass", "text", "bar", "chat", "motion"] },
-    { title: "Account", pages: ["accounts", "privacy", "about"] }
+    { title: "Account", pages: ["accounts", "privacy", "experimental", "about"] }
   ];
 
   const PAGES = {
@@ -504,7 +504,6 @@
       groups: [
         { title: "New chats", rows: [
           S("defaultProvider", "Assistant", "Which service a new session uses"),
-          S("contextSwitching", "Context switching", "Switching assistant mid-chat brings the chat along, so the new one picks up where you left off"),
           S("defaultReasoning", "Reasoning effort", "Where new chats start. Change it per chat in the composer"),
           S("sendKey", "Send with", "The other key combination adds a new line")
         ] },
@@ -710,6 +709,15 @@
         { rows: [
           S("keepHistory", "Keep recent chats", "Off stores nothing and hides the tabs"),
           () => actionRow("Recent chats", "Removes the tabs and their saved replies", clearButton)
+        ] }
+      ]
+    },
+    experimental: {
+      title: "Experimental", glyph: "",
+      about: "Features that are still being worked on. They may not work reliably yet.",
+      groups: [
+        { rows: [
+          S("contextSwitching", "Context switching", "Switching assistant mid-chat brings the chat along, so the new one picks up where you left off")
         ] }
       ]
     },

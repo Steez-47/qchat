@@ -6,7 +6,7 @@
   const STORAGE_KEY = "qchat.settings";
   const THEME_KEY = "qchat.theme";
   const LEGACY_LOOK_KEY = "qchat.look";
-  const VERSION = 7;
+  const VERSION = 8;
 
   // ---------------------------------------------------------------------------
   // Looks. Everything else (fills, text tiers, rims) is derived in apply().
@@ -140,7 +140,7 @@
     idleCollapse: range(5, 0, 60, 1, "s"),
     sendKey: choice("enter", ["enter", "ctrl"]),
     defaultProvider: choice("chatgpt", ["chatgpt", "gemini"]), showBarAtStartup: bool(false),
-    contextSwitching: bool(true),
+    contextSwitching: bool(false),
     defaultReasoning: choice("medium", ["low", "medium", "high"]),
     autoDismiss: range(0, 0, 120, 5, "s"),
 
@@ -295,6 +295,9 @@
         if (parsed.textSize === 14) parsed.textSize = 15;
         if (parsed.lineHeight === 1.6) parsed.lineHeight = 1.65;
       }
+      // Context switching shipped on in v1.6.0 (settings v7) but is unreliable, so it moved to
+      // Experimental and starts off. Turn it off once for anyone upgrading from a build that saved it.
+      if (typeof parsed.v === "number" && parsed.v < 8) delete parsed.contextSwitching;
       // Settings saved before screen fit hold the big-screen sizes. A size that was never
       // changed from that default takes this screen's default instead.
       if ((parsed.v || 0) < 7) for (const key of FIT_KEYS) if (parsed[key] === BASE_DEFAULTS[key]) delete parsed[key];
