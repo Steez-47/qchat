@@ -13,7 +13,7 @@
       scheduled = false;
       // Anything inside a glass object is already covered by that object's rect. The selector
       // engine drops those itself, so a long history's buttons are never visited here.
-      const nodes = candidates ||= [...document.querySelectorAll(':is([data-surface], .glass, .thinking, button, textarea):not(.glass *)')];
+      const nodes = candidates ||= [...document.querySelectorAll(':is([data-surface], .glass, .live-status, .image-generation, button, textarea):not(.glass *)')];
       const membership = new Set(nodes);
       // Each ancestor's clip box and opacity, read once per pass: bubbles in one
       // scroller share them all. Native glass must fade with the whole DOM subtree.
@@ -52,7 +52,7 @@
           if(c.x){left=Math.max(left,c.l);right=Math.min(right,c.r);}
           if(c.y){top=Math.max(top,c.t);bottom=Math.min(bottom,c.b);}
         }
-        if(right>left && bottom>top) rects.push({x:left,y:top,w:right-left,h:bottom-top,r:Math.min(radius||0,(right-left)/2,(bottom-top)/2),b:n.matches('.glass, .thinking'),s:(n.matches('.bubble, .thinking') ? chatBlur : barBlur) * opacity});
+        if(right>left && bottom>top) rects.push({x:left,y:top,w:right-left,h:bottom-top,r:Math.min(radius||0,(right-left)/2,(bottom-top)/2),b:n.matches('.glass, .live-status, .image-generation'),s:(n.matches('.bubble, .live-status, .image-generation') ? chatBlur : barBlur) * opacity});
       }
       const next = JSON.stringify(rects);
       if (next !== last) { last=next; Promise.resolve(invoke('surfaces_set', {rects:rects.slice(0,2048)})).catch(() => {}); }

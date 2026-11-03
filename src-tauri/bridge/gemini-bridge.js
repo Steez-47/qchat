@@ -617,7 +617,8 @@
       if (/search|web|google/i.test(label)) return { kind: 'search', label: 'Searching the web' };
       if (/code|python|run/i.test(label)) return { kind: 'code', label: 'Running code' };
       if (/read|browse|source/i.test(label)) return { kind: 'browse', label: 'Reading sources' };
-      if (label || thinking.children?.length) return { kind: 'tool', label: 'Using a tool' };
+      // Gemini's own reasoning, not a tool: the app shows it as Thinking.
+      if (label || thinking.children?.length) return { kind: 'thinking', label: 'Thinking' };
     }
     const statusNodes = [...(root.querySelectorAll?.('[role="status"], [aria-live], .response-container-header-processing-state, .response-container-header-status') || [])];
     for (const st of statusNodes) {
@@ -627,7 +628,7 @@
       if (/search|looking up|google/i.test(text)) return { kind: 'search', label: 'Searching the web' };
       if (/browse|reading/i.test(text)) return { kind: 'browse', label: 'Reading sources' };
       if (/running|executing|code|python/i.test(text)) return { kind: 'code', label: 'Running code' };
-      if (/thinking|reasoning|analyzing|working/i.test(text)) return { kind: 'tool', label: 'Using a tool' };
+      if (/thinking|reasoning|analyzing|working/i.test(text)) return { kind: 'thinking', label: 'Thinking' };
     }
     return null;
   }

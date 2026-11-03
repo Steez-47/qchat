@@ -248,35 +248,10 @@ html[data-enter="none"] .turn-row.rising, html[data-enter="none"] .turn-row.swap
 .bubble-user .media-preview img { max-height: 92px; margin: 0; }
 .bubble-user .image-copy { display: none; }
 
-/* Thinking dots: a tiny chip resting on the bubble's lower-left corner */
-.thinking {
-  position: absolute;
-  left: -10px;
-  bottom: -7px;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 18px;
-  padding: 0 7px;
-  border-radius: 9px;
-  background: rgb(var(--tint-a) / var(--glass-solid));
-  box-shadow: inset 0 0 0 1px var(--stroke-1), 0 2px 5px -1px rgb(0 0 0 / var(--shadow-b));
-}
-.thinking span {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--accent-text);
-  animation: dot-pulse calc(1100ms / var(--speed)) ease-in-out infinite;
-}
-.thinking span:nth-child(2) { animation-delay: calc(140ms / var(--speed)); }
-.thinking span:nth-child(3) { animation-delay: calc(280ms / var(--speed)); }
 @keyframes dot-pulse {
   0%, 70%, 100% { opacity: 0.35; transform: translateY(0); }
   35% { opacity: 1; transform: translateY(-2px); }
 }
-html[data-motion="off"] .thinking span { animation: none; opacity: 0.75; }
 
 /* Text wraps in a stable column; only the outer viewport changes size. */
 .bubble-response {
@@ -807,28 +782,34 @@ html[data-codewrap="true"] .code-block pre { white-space: pre-wrap; overflow-wra
 .media-preview audio { display: block; width: 100%; margin: 8px 0; }
 .media-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
 
+/* Live status: slim capsules under the reply, a different object from the glass answer.
+   Near-solid like the other chips that sit over the conversation, so they read on any wallpaper. */
 .reply-status {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 6px;
   width: fit-content;
   max-width: 100%;
-  padding: 9px 12px;
-  border-radius: var(--r-chip);
-  color: var(--text-2);
-  font-size: 12px;
-  line-height: 18px;
-  animation: chip-in var(--t2) var(--ease-out) both;
 }
 .bubble-response:not([hidden]) ~ .reply-status { margin-top: var(--stack-gap); }
-.image-generation {
+.live-status, .image-generation {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 220px;
+  gap: 7px;
+  height: 28px;
   max-width: 100%;
+  padding: 0 12px 0 8px;
+  border-radius: 14px;
+  background: rgb(var(--tint-a) / var(--glass-solid));
+  box-shadow: inset 0 0 0 1px var(--stroke-1), 0 4px 12px -5px rgb(0 0 0 / var(--shadow-b));
   color: var(--text-2);
+  font: 500 12px/16px var(--font-small);
+  white-space: nowrap;
+  transform-origin: 14px 50%;
+  animation: status-in var(--t3) var(--ease-out) both;
 }
+.image-generation { min-width: 220px; gap: 9px; }
 .image-generation-value { margin-left: auto; font-variant-numeric: tabular-nums; }
 .progress-ring { width: 24px; height: 24px; flex: none; animation: ring-rotate calc(2000ms / var(--speed)) linear infinite; }
 .progress-ring circle { fill: none; stroke: var(--accent-text); stroke-width: 1.85; stroke-linecap: round; stroke-dasharray: 55 100; }
@@ -836,7 +817,6 @@ html[data-codewrap="true"] .code-block pre { white-space: pre-wrap; overflow-wra
 .image-generation[data-percentage] .progress-ring circle { stroke-dasharray: var(--image-progress) 100; }
 html[data-motion="off"] .progress-ring { animation: none; }
 .reply-status .progress-ring { width: 16px; height: 16px; }
-html[data-motion="off"] .reply-status { animation: none; }
 @keyframes ring-rotate { to { transform: rotate(360deg); } }
 
 .turn-sources { margin-top: 10px; font-size: .9em; }
@@ -846,16 +826,106 @@ html[data-motion="off"] .reply-status { animation: none; }
 .turn-sources li { margin: 5px 0; overflow-wrap: anywhere; }
 .turn-sources a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
-.tool-activity { display: flex; align-items: center; gap: 9px; min-width: 220px; max-width: 100%; }
-.writing-indicator { display: flex; align-items: center; gap: 9px; }
-.tool-activity .progress-ring { width: 16px; height: 16px; }
-.tool-activity-label { white-space: nowrap; }
-.tool-activity-track { position: relative; overflow: hidden; width: 64px; height: 2px; margin-left: auto; border-radius: 2px; background: var(--fill-2); }
-.tool-activity-track::after { content: ""; position: absolute; width: 40%; height: 100%; background: var(--accent-text); border-radius: inherit; animation: tool-scan calc(1200ms / var(--speed)) ease-in-out infinite alternate; }
-@keyframes tool-scan { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
-html[data-motion="off"] .tool-activity .progress-ring,
-html[data-motion="off"] .tool-activity-track::after { animation: none; }
-html[data-motion="off"] .tool-activity-track::after { left: 30%; }
+/* Finished steps: small marks at the front, split from the live phase by a hairline. */
+.live-status:has(.live-status-steps:not([hidden])) { padding-left: 5px; }
+.live-status-steps {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-right: 7px;
+  box-shadow: inset -1px 0 0 var(--stroke-1);
+}
+.live-step {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--fill-1);
+  color: var(--text-3);
+  animation: step-in var(--t3) var(--ease-out) both;
+}
+.live-step[data-settled] { animation: none; }
+.live-step .icon { font-size: 9px; }
+.live-step-count {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  min-width: 11px;
+  height: 11px;
+  padding: 0 2px;
+  border-radius: 6px;
+  background: var(--fill-3);
+  color: var(--text-1);
+  font: 600 8px/11px var(--font-small);
+  text-align: center;
+}
+.live-step-more { width: auto; padding: 0 5px; font-size: 10px; font-variant-numeric: tabular-nums; }
+
+/* The live mark: one small motion per phase, each tied to what is happening. */
+.live-status-glyph { display: grid; place-items: center; width: 16px; height: 16px; flex: none; color: var(--accent-text); }
+.live-glyph { display: grid; place-items: center; animation: glyph-in var(--t3) var(--ease-out) both; }
+.live-status-glyph .icon { display: block; font-size: 12px; }
+.live-status[data-done] .live-status-glyph { color: var(--text-2); }
+.live-dots { display: flex; gap: 2.5px; }
+.live-dots span {
+  width: 3.5px;
+  height: 3.5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: dot-pulse calc(1100ms / var(--speed)) ease-in-out infinite;
+}
+.live-dots span:nth-child(2) { animation-delay: calc(140ms / var(--speed)); }
+.live-dots span:nth-child(3) { animation-delay: calc(280ms / var(--speed)); }
+.live-status[data-kind="search"]:not([data-done]) .live-status-glyph .icon { animation: live-orbit calc(1600ms / var(--speed)) linear infinite; }
+.live-status[data-kind="browse"]:not([data-done]) .live-status-glyph .icon { animation: live-turn calc(1400ms / var(--speed)) ease-in-out infinite alternate; }
+.live-status[data-kind="code"]:not([data-done]) .live-status-glyph .icon { animation: live-blink calc(1000ms / var(--speed)) ease-in-out infinite alternate; }
+.live-status[data-kind="tool"]:not([data-done]) .live-status-glyph .icon { animation: ring-rotate calc(2400ms / var(--speed)) linear infinite; }
+.live-status[data-kind="writing"] .live-status-glyph .icon { animation: live-write calc(900ms / var(--speed)) ease-in-out infinite alternate; }
+
+/* The words roll: the old phase lifts out as the new one rises in, and the width eases. */
+.live-status-label {
+  position: relative;
+  display: block;
+  height: 16px;
+  overflow: hidden;
+  color: var(--text-1);
+  transition: width var(--t3) var(--ease-out);
+}
+.live-status-text { display: inline-block; }
+.live-status-text[data-entering] { animation: label-in var(--t3) var(--ease-out) both; }
+.live-status-text[data-leaving] { position: absolute; top: 0; left: 0; animation: label-out var(--t3) var(--ease-out) both; }
+.live-status-time { color: var(--text-3); font-weight: 400; font-variant-numeric: tabular-nums; }
+.live-status-time:empty { display: none; }
+.live-status-time::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin: 0 7px 0 0;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+  opacity: .7;
+}
+
+@keyframes status-in { from { opacity: 0; transform: translateY(4px) scale(0.94); } }
+@keyframes step-in { from { opacity: 0; transform: translateX(12px) scale(0.6); } }
+@keyframes glyph-in { from { opacity: 0; transform: scale(0.5); } }
+@keyframes label-in { from { opacity: 0; transform: translateY(10px); } }
+@keyframes label-out { to { opacity: 0; transform: translateY(-10px); } }
+@keyframes live-orbit {
+  from { transform: rotate(0deg) translateX(1.6px) rotate(0deg); }
+  to { transform: rotate(360deg) translateX(1.6px) rotate(-360deg); }
+}
+@keyframes live-turn { from { transform: rotate(-8deg); } to { transform: rotate(8deg); } }
+@keyframes live-blink { from { opacity: 1; } to { opacity: .45; } }
+@keyframes live-write { from { transform: translate(-1.5px, .5px) rotate(-4deg); } to { transform: translate(1.5px, -.5px) rotate(4deg); } }
+
+html[data-motion="off"] :is(.live-status, .image-generation, .live-step, .live-glyph, .live-dots span, .live-status-glyph .icon, .live-status-text) { animation: none !important; }
+html[data-motion="off"] .live-dots span { opacity: .75; }
+html[data-motion="off"] .live-status-label { transition: none; }
 
 /* Motion off: no entrances, no stagger, no easing of size */
 html[data-motion="off"] .turn-row,
@@ -954,7 +1024,6 @@ html[data-motion="off"] .history-panel { transition: none; }
 .history-row .bubble-user .turn-content { display: block; overflow: visible; }
 
 .slash-menu { border-radius: 16px; }
-.thinking span { background: var(--text-2); }
 .turn-row[data-status="error"] .bubble-response::after, .notice-error::after { border-color: rgb(var(--critical-rgb) / .65); }
 .error-text { color: var(--critical-text); }
 .stack[data-history] > .history-controls { position: relative; top: auto; }
@@ -1312,17 +1381,15 @@ html[data-motion="off"] .orb-badge { animation: none; }
 @keyframes menu-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } }
 @keyframes chip-in { from { opacity: 0; transform: translateY(4px); } }
 @keyframes jump-in { from { opacity: 0; transform: translate(-50%, 6px) scale(0.96); } }
-@keyframes thinking-in { from { opacity: 0; transform: translateY(3px) scale(0.9); } }
 .slash-menu { animation: menu-in var(--t2) var(--ease-out) both; }
 .feature-list:not([data-leaving]) { transform-origin: 50% 100%; animation: menu-in var(--t2) var(--ease-out) both; }
 .jump-chip { animation: jump-in var(--t2) var(--ease-out) both; }
 .find-bar, .rename-bar, .mode-chip { animation: chip-in var(--t2) var(--ease-out) both; }
-.thinking { transform-origin: 0 100%; animation: thinking-in var(--t2) var(--ease-out) both; }
 /* The tab row fades back once a confirm or rename bar that stood in for it goes away. */
 .tabs { animation: fade-in var(--t2) linear both; }
 [data-ghost] { pointer-events: none; }
 /* Popovers open over the conversation, which the native blur never reaches: like the
    Latest chip and the reply tools, they turn near-solid so reply text cannot show through. */
 .picker, .slash-menu, .attachment-menu, .update-chip { --fill-alpha: max(var(--glass-a), 0.94); }
-html[data-motion="off"] :is(.slash-menu, .attachment-menu, .feature-list, .update-chip, .jump-chip, .find-bar, .rename-bar, .mode-chip, .thinking, .tabs) { animation: none !important; }
+html[data-motion="off"] :is(.slash-menu, .attachment-menu, .feature-list, .update-chip, .jump-chip, .find-bar, .rename-bar, .mode-chip, .tabs) { animation: none !important; }
 html[data-motion="off"] [data-ghost] { display: none; }

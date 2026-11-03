@@ -91,18 +91,19 @@ try {
   const letter = await record({key:'j',code:'KeyJ',altKey:true});
   check('letter keys still record uppercase', letter==='Alt+J', JSON.stringify(letter));
 
-  // With the prompt kept above the reply, its thinking dots must stop once the reply starts.
+  // While waiting, a Thinking capsule stands in for the reply; it leaves once the reply is done.
+  const liveText = `document.querySelector('[data-role="assistant"] .live-status:not([hidden])')?.textContent||''`;
   await open('/?mock=1', {settings:{...settings, showPrompt:true}, chats:empty}); await sleep(150);
   await evalJS(`__mock.hold=true`); await type('keep my prompt'); await key('Enter');
   await waitFor(`__mock.last('chat_send')`);
-  check('thinking dots show while waiting', await waitFor(`document.querySelector('.turn-row[data-role="user"] .thinking')`));
+  check('Thinking shows while waiting', await waitFor(`(${liveText}).includes('Thinking')`));
   await evalJS(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:'Unfinished paragr'})`); await sleep(120);
-  check('dots stay while no reply text is visible yet', await evalJS(`!!document.querySelector('.turn-row[data-role="user"] .thinking')`));
+  check('Thinking stays while no reply text is visible yet', await evalJS(`(${liveText}).includes('Thinking')`));
   await evalJS(`__mock.emit('bridge',{type:'done',id:__mock.last('chat_send').args.id,text:'A finished reply.'})`); await sleep(300);
-  check('kept prompt loses its dots once the reply starts', await evalJS(`!!document.querySelector('.turn-row[data-role="user"]') && !document.querySelector('.turn-row[data-role="user"] .thinking')`));
+  check('kept prompt stays and the live status leaves once the reply is done', await evalJS(`!!document.querySelector('.turn-row[data-role="user"]') && !document.querySelector('.live-status:not([hidden])')`));
   await open('/?mock=1', {settings, chats:empty}); await sleep(150);
   await evalJS(`__mock.hold=true`); await type('default mode'); await key('Enter'); await waitFor(`__mock.last('chat_send')`);
-  check('default mode still shows dots while waiting', await waitFor(`document.querySelector('.turn-row[data-role="user"] .thinking')`));
+  check('default mode also shows Thinking while waiting', await waitFor(`(${liveText}).includes('Thinking')`));
 
   // Enter during file preparation must explain itself and keep everything.
   await open('/?mock=1', {settings, chats:empty}); await sleep(150);

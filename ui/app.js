@@ -2294,13 +2294,8 @@
     }
     bubble.append(contentEl, mediaEl);
 
-    const thinking = make("div", "thinking");
-    thinking.setAttribute("role", "status");
-    thinking.setAttribute("aria-label", `${providerName()} is thinking`);
-    thinking.append(make("span"), make("span"), make("span"));
-
     row._userTurn = turn;
-    row.append(bubble, userTools(turn), thinking);
+    row.append(bubble, userTools(turn));
     turnNodes.set(turn.id, { row, contentEl, mediaEl, mediaItems: new Map() });
     return row;
   }
@@ -2319,23 +2314,27 @@
     const inner = make("div", "bubble-inner turn-body");
     const contentEl = make("div", "turn-content");
     const mediaEl = make("div", "turn-media");
-    const statusBox = make("div", "reply-status glass glass-tiny");
+    // Live status sits under the reply as its own small capsule, never inside the answer.
+    const statusBox = make("div", "reply-status");
     statusBox.hidden = true;
-    const activity = make("div", "tool-activity");
-    activity.hidden = true;
-    activity.setAttribute("role", "status");
-    activity.setAttribute("aria-live", "polite");
-    activity.append(makeProgressRing(), make("span", "tool-activity-label"), make("span", "tool-activity-track"));
+    const live = make("div", "live-status");
+    live.hidden = true;
+    live.setAttribute("role", "status");
+    live.setAttribute("aria-live", "polite");
+    const liveSteps = make("span", "live-status-steps");
+    liveSteps.setAttribute("aria-hidden", "true");
+    const liveGlyph = make("span", "live-status-glyph");
+    liveGlyph.setAttribute("aria-hidden", "true");
+    const liveLabel = make("span", "live-status-label");
+    const liveTime = make("span", "live-status-time");
+    liveTime.setAttribute("aria-hidden", "true");
+    live.append(liveSteps, liveGlyph, liveLabel, liveTime);
     const generation = make("div", "image-generation");
     generation.hidden = true; generation.setAttribute("role", "status"); generation.setAttribute("aria-live", "polite");
     generation.append(makeProgressRing(), make("span", "image-generation-label", "Creating image…"), make("span", "image-generation-value"));
-    const writing = make("div", "writing-indicator");
-    writing.append(makeProgressRing(), make("span", "", "Writing…"));
-    writing.hidden = true;
-    writing.setAttribute("role", "status");
     const errorWrap = make("div", "turn-error");
     errorWrap.hidden = true;
-    statusBox.append(activity, generation, writing);
+    statusBox.append(live, generation);
     inner.append(contentEl, mediaEl, errorWrap);
     scroller.append(inner);
     bubble.append(scroller, make("div", "stream-sheen"));
@@ -2401,7 +2400,7 @@
     }, { passive: true });
 
     row.append(bubble, tools, jump, statusBox);
-    const entry = { row, bubble, scroller, inner, contentEl, errorWrap, mediaEl, generation, writing, activity, statusBox, tools, jump, mediaItems: new Map(), targetHeight: 0 };
+    const entry = { row, bubble, scroller, inner, contentEl, errorWrap, mediaEl, generation, live, liveSteps, liveGlyph, liveLabel, liveTime, steps: [], phase: null, startedAt: performance.now(), statusBox, tools, jump, mediaItems: new Map(), targetHeight: 0 };
     turnNodes.set(turn.id, entry);
     sizeObserver.observe(inner);
     // The viewport can shrink after following has caught up, reopening a small gap.
@@ -2477,10 +2476,6 @@
     const openTool = entry.row.querySelector('[data-action="open-external"]');
     if (openTool) { openTool.title = `Open in ${providerName()}`; openTool.setAttribute("aria-label", openTool.title); }
     if (openTool) openTool.hidden = !chats.current.conversationId;
-    const activity = entry.activity;
-    activity.hidden = turn.status !== "streaming" || turn.backendDone || turn.activity?.state !== "running";
-    activity.dataset.kind = turn.activity?.kind || "tool";
-    activity.querySelector(".tool-activity-label").textContent = turn.activity?.label || "Using a tool…";
     const generation = entry.generation;
     generation.hidden = turn.status !== "streaming" || turn.backendDone || turn.imageProgress?.state !== "generating";
     const percentage = turn.imageProgress?.percentage;
@@ -2492,7 +2487,6 @@
 
     const visibleText = entry.reveal ? entry.reveal.visible : turn.text;
     const streaming = turn.status === "streaming";
-    entry.writing.hidden = !streaming || turn.backendDone || !visibleText || !activity.hidden || !generation.hidden;
     if (entry.renderedText !== visibleText) {
       renderReply(entry, visibleText, turn.sources);
       window.QMath?.renderInto(entry.contentEl);
@@ -2512,19 +2506,188 @@
     const hasContent = Boolean(visibleText.trim() || entry.mediaEl.childElementCount);
     entry.bubble.hidden = !hasContent && turn.status !== "error";
     entry.tools.hidden = entry.bubble.hidden;
-    entry.statusBox.hidden = activity.hidden && generation.hidden && entry.writing.hidden;
+    const phase = livePhase(turn, entry, visibleText, !generation.hidden);
+    entry.live.hidden = !phase;
+    entry.statusBox.hidden = entry.live.hidden && generation.hidden;
+    renderLiveStatus(entry, phase);
     entry.row.hidden = entry.bubble.hidden && entry.statusBox.hidden;
     entry.row.toggleAttribute("data-response", !entry.bubble.hidden);
     entry.row.toggleAttribute("data-empty", !hasContent);
     if (entry.bubble.hidden) entry.row.removeAttribute("data-capped");
     entry.jump.style.bottom = `${10 + (entry.statusBox.hidden ? 0 : entry.statusBox.offsetHeight + 8)}px`;
-    for (const other of turns) {
-      const thinking = turnNodes.get(other.id)?.row.querySelector(".thinking");
-      if (thinking) thinking.hidden = !entry.statusBox.hidden;
-    }
     followStream(entry);
     renderHistory();
     queueSizes();
+  }
+
+  // Live status: one capsule that morphs between Thinking, each tool step and Writing.
+  // A step stays readable for a moment after it ends, then joins the trail of finished steps,
+  // so a quick search is still seen instead of flashing past.
+  const LIVE_TEXT = {
+    thinking: ["Thinking", "Thought"],
+    search: ["Searching the web", "Searched the web"],
+    browse: ["Reading sources", "Read sources"],
+    code: ["Running code", "Ran code"],
+    tool: ["Using a tool", "Used a tool"],
+    writing: ["Writing", "Writing"]
+  };
+  const LIVE_GLYPH = { search: "", browse: "", code: "", tool: "", writing: "", done: "" };
+  const LIVE_TOOLS = new Set(["search", "browse", "code", "tool"]);
+  const LIVE_STEP_MIN = 1200; // a tool step never shows for less than this
+  const LIVE_STEP_HOLD = 900; // its finished state stays this long before the next phase
+  const LIVE_THINK_DELAY = 380; // lets the sent bubble land before Thinking appears
+  const LIVE_TRAIL_MAX = 4;
+  const liveWords = (kind) => LIVE_TEXT[kind] || LIVE_TEXT.tool;
+
+  function liveLater(entry, turn, ms) {
+    clearTimeout(entry.phaseTimer);
+    entry.phaseTimer = setTimeout(() => scheduleTurnRender(turn.id, true), Math.max(16, Math.ceil(ms)));
+  }
+
+  function noteLiveStep(entry, kind) {
+    const last = entry.steps[entry.steps.length - 1];
+    if (last?.kind === kind) last.count++;
+    else entry.steps.push({ kind, count: 1 });
+  }
+
+  function livePhase(turn, entry, visibleText, imageShown) {
+    if (turn.status !== "streaming" || turn.backendDone) {
+      clearTimeout(entry.phaseTimer);
+      entry.phase = null;
+      return null;
+    }
+    const now = performance.now();
+    const running = turn.activity?.state === "running" && LIVE_TOOLS.has(turn.activity.kind) ? turn.activity.kind : null;
+    let phase = entry.phase;
+    const tool = Boolean(phase && LIVE_TOOLS.has(phase.kind));
+    if (running) {
+      if (!tool || phase.kind !== running || phase.done) {
+        if (tool) noteLiveStep(entry, phase.kind);
+        phase = { kind: running, since: now };
+      }
+    } else if (tool) {
+      if (!phase.done) phase = { ...phase, done: true, doneAt: now };
+      const until = Math.max(phase.doneAt + LIVE_STEP_HOLD, phase.since + LIVE_STEP_MIN);
+      if (now < until) liveLater(entry, turn, until - now);
+      else { noteLiveStep(entry, phase.kind); phase = null; }
+    }
+    if (!phase || !LIVE_TOOLS.has(phase.kind)) {
+      // The image chip speaks for the wait while it is up.
+      let want = null;
+      if (imageShown) want = null;
+      else if (visibleText) want = "writing";
+      else {
+        const wait = entry.startedAt + LIVE_THINK_DELAY - now;
+        if (wait > 0 && !entry.steps.length) liveLater(entry, turn, wait);
+        else want = "thinking";
+      }
+      phase = !want ? null : phase?.kind === want ? phase : { kind: want, since: now };
+    }
+    entry.phase = phase;
+    return phase;
+  }
+
+  // The wrapper carries the entrance and the inner mark its own loop, so neither overrides the other.
+  function liveGlyph(key) {
+    const wrap = make("span", "live-glyph");
+    if (key === "thinking") {
+      const dots = make("span", "live-dots");
+      dots.append(make("span"), make("span"), make("span"));
+      wrap.append(dots);
+    } else wrap.append(makeIcon(LIVE_GLYPH[key] || LIVE_GLYPH.tool));
+    return wrap;
+  }
+
+  function liveElapsed(ms) {
+    const sec = Math.floor(ms / 1000);
+    if (sec < 1) return "";
+    return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s`;
+  }
+
+  // One clock for every visible capsule, running only while one is up.
+  const liveClocks = new Set();
+  let liveClockTimer = 0;
+  function tickLiveClocks() {
+    for (const entry of liveClocks) {
+      if (!entry.row.isConnected || entry.live.hidden) { liveClocks.delete(entry); continue; }
+      const text = liveElapsed(performance.now() - entry.startedAt);
+      if (entry.liveTime.textContent !== text) entry.liveTime.textContent = text;
+    }
+    if (!liveClocks.size) { clearInterval(liveClockTimer); liveClockTimer = 0; }
+  }
+
+  // The label rolls: the old words lift out while the new ones rise in, and the capsule's
+  // width eases between them, so a change of phase reads as one object changing its mind.
+  function setLiveLabel(entry, text) {
+    const wrap = entry.liveLabel;
+    if (wrap.dataset.text === text) return;
+    const animate = Boolean(wrap.dataset.text) && QSettings.motionOn && entry.live.getClientRects().length > 0;
+    wrap.dataset.text = text;
+    const from = animate ? wrap.offsetWidth : 0;
+    for (const old of wrap.querySelectorAll(".live-status-text:not([data-leaving])")) {
+      if (!animate) { old.remove(); continue; }
+      old.dataset.leaving = "";
+      old.setAttribute("aria-hidden", "true");
+      old.addEventListener("animationend", () => old.remove(), { once: true });
+      setTimeout(() => old.remove(), 600);
+    }
+    const next = make("span", "live-status-text", text);
+    wrap.append(next);
+    clearTimeout(entry.labelTimer);
+    if (!animate) { wrap.style.width = ""; return; }
+    next.dataset.entering = "";
+    next.addEventListener("animationend", () => next.removeAttribute("data-entering"), { once: true });
+    const to = next.offsetWidth;
+    wrap.style.width = `${from}px`;
+    void wrap.offsetWidth;
+    wrap.style.width = `${to}px`;
+    const settle = () => { clearTimeout(entry.labelTimer); if (wrap.dataset.text === text) wrap.style.width = ""; };
+    wrap.addEventListener("transitionend", settle, { once: true });
+    entry.labelTimer = setTimeout(settle, 1500);
+  }
+
+  function renderLiveStatus(entry, phase) {
+    if (!phase) {
+      liveClocks.delete(entry);
+      clearTimeout(entry.labelTimer);
+      delete entry.live.dataset.kind;
+      delete entry.liveGlyph.dataset.key;
+      entry.liveLabel.dataset.text = "";
+      entry.liveLabel.style.width = "";
+      entry.liveLabel.replaceChildren();
+      return;
+    }
+    entry.live.dataset.kind = phase.kind;
+    entry.live.toggleAttribute("data-done", Boolean(phase.done));
+    const key = phase.done ? "done" : phase.kind;
+    if (entry.liveGlyph.dataset.key !== key) {
+      entry.liveGlyph.dataset.key = key;
+      entry.liveGlyph.replaceChildren(liveGlyph(key));
+    }
+    setLiveLabel(entry, liveWords(phase.kind)[phase.done ? 1 : 0]);
+
+    // Finished steps collect as small marks at the front, newest last.
+    const trailKey = entry.steps.map(step => `${step.kind}${step.count}`).join(",");
+    if (entry.liveSteps.dataset.key !== trailKey) {
+      const known = new Set((entry.liveSteps.dataset.key || "").split(",").filter(Boolean).map((_, i) => i));
+      entry.liveSteps.dataset.key = trailKey;
+      const offset = Math.max(0, entry.steps.length - LIVE_TRAIL_MAX);
+      const nodes = entry.steps.slice(offset).map((step, i) => {
+        const node = make("span", "live-step");
+        node.dataset.kind = step.kind;
+        if (known.has(offset + i)) node.dataset.settled = "";
+        node.append(makeIcon(LIVE_GLYPH[step.kind] || LIVE_GLYPH.tool));
+        if (step.count > 1) node.append(make("span", "live-step-count", String(step.count)));
+        return node;
+      });
+      if (offset) nodes.unshift(make("span", "live-step live-step-more", `+${offset}`));
+      entry.liveSteps.replaceChildren(...nodes);
+      entry.liveSteps.hidden = !nodes.length;
+      entry.live.title = entry.steps.map(step => `${liveWords(step.kind)[1]}${step.count > 1 ? ` ×${step.count}` : ""}`).join(" · ");
+    }
+    entry.liveTime.textContent = liveElapsed(performance.now() - entry.startedAt);
+    liveClocks.add(entry);
+    if (!liveClockTimer) liveClockTimer = setInterval(tickLiveClocks, 1000);
   }
 
   // Keep transport snapshots separate from completed blocks. The full text stays
@@ -2687,8 +2850,7 @@
 
     for (const other of turns.slice()) {
       if (other.role !== "user") continue;
-      if (QSettings.settings.showPrompt) turnNodes.get(other.id)?.row.querySelector(".thinking")?.remove();
-      else retireTurn(other);
+      if (!QSettings.settings.showPrompt) retireTurn(other);
     }
     queueSizes();
     fitNow();
@@ -2970,7 +3132,9 @@
     userRow.addEventListener("animationend", (e) => { if (e.animationName === "rise-in") userRow.classList.remove("rising"); });
     el.zone.append(userRow, createResponseRow(assistantTurn));
     el.zone.hidden = false;
-    if (assistantTurn.imageProgress) renderTurnNow(assistantTurn.id);
+    // Render once now: providers can stay silent until the first token, and this starts the
+    // Thinking status so the wait is never blank.
+    renderTurnNow(assistantTurn.id);
 
     const label = prompt || (selectionTexts.length ? "Selected text" : files[0]?.file.name) || "Attachment";
     chat.title = chat.title || autoChatTitle(label);
@@ -5489,7 +5653,7 @@
       case "activity": {
         const turn = turns.find(t => t.id === evt.id && t.role === "assistant");
         if (turn?.status === "streaming" && !turn.backendDone) {
-          const labels = { search: "Searching the web…", browse: "Reading sources…", code: "Running code…", tool: "Using a tool…" };
+          const labels = { search: "Searching the web", browse: "Reading sources", code: "Running code", tool: "Using a tool", thinking: "Thinking" };
           const kind = Object.hasOwn(labels, evt.kind) ? evt.kind : "tool";
           turn.activity = { kind, state: evt.state === "running" ? "running" : "complete", label: labels[kind] };
           scheduleTurnRender(turn.id, true);
@@ -5519,7 +5683,7 @@
           turn.backendDone = true;
           releaseTurnFiles(turn);
           turn.activity = null;
-          if (turnNodes.get(turn.id)?.activity) turnNodes.get(turn.id).activity.hidden = true;
+          if (turnNodes.get(turn.id)?.live) turnNodes.get(turn.id).live.hidden = true;
           if (turn.chatKey === chats.current.key) {
             const chat = chats.current;
             if (typeof evt.conversationId === "string" && evt.conversationId) {

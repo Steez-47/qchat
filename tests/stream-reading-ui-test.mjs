@@ -25,7 +25,8 @@ try {
     throw new Error(`Timed out: ${expression}`);
   };
   const reply = `document.querySelector('[data-role=assistant] .turn-content')`;
-  const writing = `document.querySelector('.writing-indicator')`;
+  const live = `document.querySelector('[data-role=assistant] .live-status')`;
+  const writing = `(!${live}.hidden && ${live}.dataset.kind==='writing')`;
   const begin = async (animations = 'on') => {
     await cdp('Page.navigate', { url: `${base}/__blank` });
     await wait(`document.readyState==='complete'`);
@@ -45,13 +46,13 @@ try {
 
   await begin();
   await emit('delta', 'Still composing the first paragraph');
-  await sleep(80);
-  check('unfinished first text stays buffered with the initial thinking state', await evalJS(`${reply}.textContent==='' && ${writing}.hidden && !!document.querySelector('.thinking')`));
+  await wait(`!${live}.hidden`);
+  check('unfinished first text stays buffered with the initial thinking state', await evalJS(`${reply}.textContent==='' && ${live}.dataset.kind==='thinking' && ${live}.textContent.includes('Thinking')`));
   const first = 'One **finished** paragraph with words that arrive calmly.\n\n';
   await emit('delta', first + 'The next paragraph is still being composed');
   await wait(`${reply}.querySelector('strong')`);
-  check('Writing is visible while the next block is buffered', await evalJS(`!${writing}.hidden && ${writing}.textContent==='Writing…' && !${reply}.textContent.includes('being composed')`));
-  check('Writing stays outside the reply text and has a status role', await evalJS(`!${reply}.contains(${writing}) && ${writing}.getAttribute('role')==='status'`));
+  check('Writing is visible while the next block is buffered', await evalJS(`${writing} && ${live}.querySelector('.live-status-label').dataset.text==='Writing' && !${reply}.textContent.includes('being composed')`));
+  check('Writing stays outside the reply text and has a status role', await evalJS(`!${reply}.contains(${live}) && !${live}.closest('.bubble-response') && ${live}.getAttribute('role')==='status'`));
   const fading = await evalJS(`new Promise(resolve=>{const samples=[];const start=performance.now();const tick=()=>{samples.push([0,1,2].map(i=>[...CSS.highlights.get('qchat-fade-'+i)||[]].map(r=>r.toString())));if(performance.now()-start<400)requestAnimationFrame(tick);else resolve(samples)};tick()})`);
   check('word groups progress through different fade stages', fading.some(sets => sets.filter(set => set.length).length > 1), JSON.stringify(fading.slice(0, 3)));
   check('the word entrance settles within its short time budget', await evalJS(`[0,1,2].every(i=>!CSS.highlights.get('qchat-fade-'+i)?.size)`));
@@ -63,16 +64,22 @@ try {
   check('later blocks do not parse completed prose again', await evalJS(`__parsed.length>0 && __parsed.every(raw=>!raw.includes('One **finished**'))`));
   check('later blocks preserve the selected paragraph and text node', await evalJS(`__paragraph===${reply}.querySelector('p') && __text===__paragraph.firstChild && getSelection().toString()===__selected`));
   await emit('activity', undefined, { kind: 'search', state: 'running' });
-  check('tool activity replaces the Writing indicator', await evalJS(`${writing}.hidden && !document.querySelector('.tool-activity').hidden`));
+  await wait(`${live}.dataset.kind==='search'`);
+  check('tool activity takes over from Writing in the same capsule', await evalJS(`!${writing} && !${live}.hidden && ${live}.textContent.includes('Searching the web')`));
   await emit('activity', undefined, { kind: 'search', state: 'complete' });
-  check('Writing returns after the tool finishes', await evalJS(`!${writing}.hidden`));
+  await wait(`${live}.hasAttribute('data-done')`);
+  check('the finished search is held briefly before Writing returns', await evalJS(`${live}.textContent.includes('Searched the web') && !${writing}`));
+  await wait(writing);
+  check('Writing returns after the tool finishes, with the search in its trail', await evalJS(`${writing} && ${live}.querySelectorAll('.live-step[data-kind=search]').length===1`));
   await emit('image_progress', undefined, { state: 'generating' });
-  check('image progress replaces Writing', await evalJS(`${writing}.hidden && !document.querySelector('.image-generation').hidden`));
+  await wait(`!document.querySelector('.image-generation').hidden`);
+  check('image progress replaces Writing', await evalJS(`${live}.hidden && !document.querySelector('.image-generation').hidden`));
   await emit('image_progress', undefined, { state: 'complete' });
-  check('Writing returns after image generation', await evalJS(`!${writing}.hidden`));
+  await wait(writing);
+  check('Writing returns after image generation', await evalJS(`${writing}`));
   await emit('done', second + 'Final tail.');
   await wait(`document.querySelector('[data-role=assistant]').dataset.status==='done'`);
-  check('completion flushes the tail, Writing and every fade immediately', await evalJS(`${writing}.hidden && ${reply}.textContent.trimEnd().endsWith('Final tail.') && [0,1,2].every(i=>!CSS.highlights.has('qchat-fade-'+i))`));
+  check('completion flushes the tail, Writing and every fade immediately', await evalJS(`${live}.hidden && ${reply}.textContent.trimEnd().endsWith('Final tail.') && [0,1,2].every(i=>!CSS.highlights.has('qchat-fade-'+i))`));
 
   await begin('off');
   await emit('delta', '- First **finished** item\n  - Nested item\n- Second pending');
@@ -85,7 +92,7 @@ try {
   check('motion off keeps all fade highlights absent', await evalJS(`[0,1,2].every(i=>!CSS.highlights.has('qchat-fade-'+i))`));
   await evalJS(`document.getElementById('btn-send').click()`);
   await wait(`document.querySelector('[data-role=assistant]').dataset.status==='done'`);
-  check('Stop flushes the pending item and hides Writing', await evalJS(`${reply}.textContent.includes('Third pending') && ${writing}.hidden`));
+  check('Stop flushes the pending item and hides Writing', await evalJS(`${reply}.textContent.includes('Third pending') && !${writing}`));
 
   await begin();
   const reference = 'A [reference][docs].\n\n';
@@ -102,7 +109,7 @@ try {
   await wait(`${reply}.querySelector('[data-qmath]').getAttribute('aria-label').includes('y')`);
   check('a formula correction invalidates cached markup even with identical token offsets', await evalJS(`!${reply}.querySelector('[data-qmath]').getAttribute('aria-label').includes('x')`));
   await emit('error', undefined, { code: 'stream_failed' });
-  check('an interruption preserves received text and clears Writing and fade', await evalJS(`${writing}.hidden && ${reply}.textContent.includes('Pending') && [0,1,2].every(i=>!CSS.highlights.has('qchat-fade-'+i))`));
+  check('an interruption preserves received text and clears Writing and fade', await evalJS(`!${writing} && ${reply}.textContent.includes('Pending') && [0,1,2].every(i=>!CSS.highlights.has('qchat-fade-'+i))`));
 
   await begin('off');
   const long = Array.from({ length: 30 }, (_, i) => `Paragraph ${i}: a steady reply with enough words to scroll and read.`).join('\n\n') + '\n\n';
