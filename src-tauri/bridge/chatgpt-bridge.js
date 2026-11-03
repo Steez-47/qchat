@@ -218,12 +218,50 @@
     return nodes.filter(node => !nodes.some(other => other !== node && node.contains(other)))
       .sort((a, b) => a.compareDocumentPosition(b) & 4 ? -1 : 1);
   }
-  function cssHidden(node, { root, inheritedVisibility } = {}) {
+  // The page draws its own status inside the reply root: the reasoning and search summary,
+  // shimmer copies, the streaming dot and the action bar. None of it is answer text.
+  const replyChrome = '[data-assistant-reasoning-summary], [data-cot], [data-logical-answer-activity-divider], [data-text-shimmer-overlay], [data-assistant-placeholder-slot], [data-streaming-dot], [data-assistant-message-actions], [data-message-actions], [data-message-intervention]';
+  // Markers hug their words: "<strong>Note: </strong>" must become "**Note:** ", not "**Note: **".
+  function emphasis(marker, text) {
+    const body = text.trim();
+    if (!body) return text;
+    return `${text.slice(0, text.length - text.trimStart().length)}${marker}${body}${marker}${text.slice(text.trimEnd().length)}`;
+  }
+  // Two bold runs side by side ("**a****b**") would parse as one run with literal stars.
+  const joinEmphasis = text => text.replace(/(?<=[^\s*\\])\*\*\*\*(?=[^\s*])/g, '');
+  // Words only, so markup, escapes, link targets and spacing don't count as differences.
+  const replyWords = text => String(text || '').replace(/\]\([^)\s]*\)/g, ']').toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  // A page copy that is longer than the network reply yet made only of the reply's own
+  // passages is repeating it: two streams woven together ("…confident GPT confident GPT-6.5…")
+  // or a duplicated paragraph. It must never replace the clean network text. A page that
+  // carries the same words further is a fresher copy, and unrelated page text (the network
+  // held another message) is left to the usual rules.
+  function repeatsReply(net, page) {
+    const a = replyWords(net), b = replyWords(page);
+    if (a.length < 8 || b.length <= a.length) return false;
+    // Five-word passages. A page that says the reply word for word and then carries on is
+    // a fresher copy, unless what it adds is the reply over again.
+    const passages = list => list.slice(4).map((_, i) => list.slice(i, i + 5).join(' '));
+    const own = passages(a), known = new Set(own);
+    if (a.every((word, i) => b[i] === word)) {
+      const added = passages(b.slice(a.length));
+      return added.length >= 4 && added.filter(passage => known.has(passage)).length >= added.length * 0.9;
+    }
+    // Otherwise it is a repeat when it is mostly the reply's passages and its extra words
+    // mostly say them again, beyond whatever the reply itself already repeats.
+    const again = list => { const met = new Set(); let count = 0; for (const passage of list) met.has(passage) ? count++ : met.add(passage); return count; };
+    const shared = passages(b).filter(passage => known.has(passage));
+    return shared.length >= (b.length - 4) * 0.75 && again(shared) - again(own) >= Math.max(3, (b.length - a.length) / 2);
+  }
+  function cssHidden(node, { root, inheritedVisibility } = {}, computed) {
     if (node === root) return false;
-    const style = node?.nodeType === 1 && typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
+    const style = computed !== undefined ? computed : node?.nodeType === 1 && typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
+    // A streamed word fades in from transparent, and a hidden page can hold it at the first
+    // frame. It is a real word, not a staging copy. (A copy fading out stays filtered.)
+    const entering = node?.matches?.('[data-d-streaming-word]');
     return style?.display === 'none' ||
       (['hidden', 'collapse'].includes(style?.visibility) && style.visibility !== inheritedVisibility) ||
-      style?.opacity === '0' || style?.contentVisibility === 'hidden' ||
+      (style?.opacity === '0' && !entering) || style?.contentVisibility === 'hidden' ||
       /^inset\(50%(?: 50%){0,3}\)$/.test(style?.clipPath || '') ||
       /^rect\(0px[, ]+0px[, ]+0px[, ]+0px\)$/.test(style?.clip || '');
   }
@@ -232,10 +270,10 @@
   // the site hides its staging nodes through CSS rather than attributes.
   // A copy root may itself be kept out of view. Exempt only that root and its
   // inherited visibility, so nested staging copies still get filtered.
-  function hiddenReplyNode(node, options) {
-    if (node.hasAttribute?.('hidden') || node.getAttribute?.('aria-hidden') === 'true' ||
+  function hiddenReplyNode(node, options, computed) {
+    if (node.hasAttribute?.('hidden') || node.getAttribute?.('aria-hidden') === 'true' || node.matches?.(replyChrome) ||
         /(?:^|\s)(?:sr-only|visually-hidden|screen-reader-only)(?:\s|$)/.test(typeof node.className === 'string' ? node.className : '')) return true;
-    return cssHidden(node, options);
+    return cssHidden(node, options, computed);
   }
   // Code and maths have their own representations; textContent would include
   // hidden accessibility/staging copies even when the enclosing block is visible.
@@ -263,8 +301,9 @@
     if (tag === 'p') return `${inner().trim()}\n\n`;
     if (tag === 'br') return '\n';
     if (tag === 'hr') return '---\n\n';
-    if (tag === 'strong' || tag === 'b') return `**${inner()}**`;
-    if (tag === 'em' || tag === 'i') return `*${inner()}*`;
+    if (tag === 'strong' || tag === 'b') return emphasis('**', inner());
+    if (tag === 'em' || tag === 'i') return emphasis('*', inner());
+    if (tag === 'del' || tag === 's') return emphasis('~~', inner());
     if (tag === 'code') return `\`${replyText(node)}\``;
     if (tag === 'pre') {
       const code = node.querySelector('code');
@@ -291,7 +330,7 @@
     return conversationNodes().map(node => {
       const role = node.matches(userSelector) ? 'user' : 'assistant';
       const body = role === 'assistant' ? node.querySelector(selectors.body.join(',')) || node : node;
-      const text = role === 'user' ? (body.innerText || body.textContent || '').trim() : nodeMarkdown(body).trim();
+      const text = role === 'user' ? (body.innerText || body.textContent || '').trim() : joinEmphasis(nodeMarkdown(body)).trim();
       return { role, text, hasMedia: !!node.querySelector('img, video, audio') };
     }).filter(item => item.text || item.hasMedia);
   }
@@ -619,10 +658,24 @@
     // Do not disable CSS filtering for the entire tree when the site's copy
     // surface is hidden: its descendants can still contain extra text copies.
     const options = { root: body, inheritedVisibility: typeof getComputedStyle === 'function' ? getComputedStyle(body).visibility : undefined };
-    const walk = node => {
+    // The rendered reply marks bold, italic and struck text with classes as often as with
+    // <strong>/<em>/<del>, so read the computed style too. Markers open only where the
+    // style starts, never again inside text that already carries it.
+    const plainStyle = { bold: false, italic: false, struck: false };
+    const inlineTag = /^(?:strong|b|em|i|del|s|span|a|mark|u|small|sub|sup|label|abbr|cite|q)$/;
+    const styled = (text, own, ctx) => {
+      let out = text;
+      if (own.struck && !ctx.struck) out = emphasis('~~', out);
+      if (own.italic && !ctx.italic) out = emphasis('*', out);
+      if (own.bold && !ctx.bold) out = emphasis('**', out);
+      return out;
+    };
+    const walk = (node, ctx = plainStyle) => {
       if (node.nodeType === 3) return escape(node.nodeValue || '');
       const tag = node.tagName?.toLowerCase();
-      if (['script', 'style', 'iframe', 'svg', 'button'].includes(tag) || hiddenReplyNode(node, options)) return '';
+      if (['script', 'style', 'iframe', 'svg', 'button'].includes(tag)) return '';
+      const style = node.nodeType === 1 && typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
+      if (hiddenReplyNode(node, options, style)) return '';
       const math = tag !== 'pre' && tag !== 'code' ? replyMath(node) : null;
       if (math !== null) return math;
       if (tag === 'pre') {
@@ -641,40 +694,51 @@
       if (tag === 'table') {
         const rows = [...(node.rows || node.querySelectorAll('tr'))].filter(row => !hiddenReplyNode(row, options));
         const lines = rows.map(row => `| ${[...row.cells].filter(cell => !hiddenReplyNode(cell, options))
-          .map(cell => [...cell.childNodes].map(walk).join('').trim().replace(/\|/g, '\\|').replace(/\n+/g, ' ')).join(' | ')} |`);
+          .map(cell => [...cell.childNodes].map(child => walk(child, cell.tagName === 'TH' ? { ...ctx, bold: true } : ctx)).join('').trim().replace(/\|/g, '\\|').replace(/\n+/g, ' ')).join(' | ')} |`);
         if (lines.length) lines.splice(1, 0, `|${' --- |'.repeat([...rows[0].cells].filter(cell => !hiddenReplyNode(cell, options)).length)}`);
         return `\n\n${lines.join('\n')}\n\n`;
       }
-      const children = [...(node.childNodes || [])].map(walk).join('');
+      const heading = /^h[1-6]$/.test(tag || '');
+      const weight = Number(style?.fontWeight) || (style?.fontWeight === 'bold' ? 700 : 400);
+      const own = {
+        bold: heading || tag === 'strong' || tag === 'b' || weight >= 600,
+        italic: tag === 'em' || tag === 'i' || /^(?:italic|oblique)/.test(style?.fontStyle || ''),
+        struck: tag === 'del' || tag === 's' || /line-through/.test(style?.textDecorationLine || '')
+      };
+      const inner = { bold: ctx.bold || own.bold, italic: ctx.italic || own.italic, struck: ctx.struck || own.struck };
+      const children = [...(node.childNodes || [])].map(child => walk(child, inner)).join('');
+      // Emphasis is inline. A styled paragraph wraps its own words; a heading is bold already.
+      const inline = /^(?:strong|b|em|i|del|s)$/.test(tag || '') || (style ? /^inline/.test(style.display || '') : inlineTag.test(tag || ''));
+      const mark = text => inline && !heading ? styled(text, own, ctx) : text;
       if (node.getAttribute?.('data-d-component') === 'pressable' && node.getAttribute?.('role') === 'link') {
         const item = registered(node);
-        if (item) return `[${children || escape(item.name)}](qchat-media:${item.id})`;
+        if (item) return mark(`[${children || escape(item.name)}](qchat-media:${item.id})`);
       }
-      if (tag === 'strong' || tag === 'b') return `**${children}**`;
-      if (tag === 'em' || tag === 'i') return `*${children}*`;
-      if (tag === 'del' || tag === 's') return `~~${children}~~`;
       if (tag === 'blockquote') return `\n\n${children.trim().split('\n').map(line => `> ${line}`).join('\n')}\n\n`;
-      if (/^h[1-6]$/.test(tag || '')) return `\n\n${'#'.repeat(Number(tag[1]))} ${children.trim()}\n\n`;
+      if (heading) return `\n\n${'#'.repeat(Number(tag[1]))} ${children.trim()}\n\n`;
       if (tag === 'ul' || tag === 'ol') {
         const start = Number(node.getAttribute('start')) || 1;
         const items = [...node.childNodes].filter(child => child.tagName?.toLowerCase() === 'li');
         return '\n\n' + items.filter(item => !hiddenReplyNode(item, options)).map((item, i) => {
           const marker = tag === 'ol' ? `${start + i}. ` : '- ';
-          return marker + walk(item).trim().replace(/\n/g, '\n' + ' '.repeat(marker.length));
+          return marker + walk(item, ctx).trim().replace(/\n/g, '\n' + ' '.repeat(marker.length));
         }).join('\n') + '\n\n';
       }
       if (tag === 'a' || tag === 'img' || tag === 'audio' || tag === 'video' || tag === 'source') {
         const item = registered(node);
-        if (item) return `${tag === 'img' ? '!' : ''}[${children || escape(item.name)}](qchat-media:${item.id})`;
-        if (tag === 'a') { const url = normalLink(node.href || node.getAttribute('href')); return url ? `[${children}](${url})` : children; }
+        if (item) return mark(`${tag === 'img' ? '!' : ''}[${children || escape(item.name)}](qchat-media:${item.id})`);
+        if (tag === 'a') { const url = normalLink(node.href || node.getAttribute('href')); return mark(url ? `[${children}](${url})` : children); }
         return '';
       }
-      if (tag === 'p') return `\n\n${children.trim()}\n\n`;
-      return children;
+      if (tag === 'p') {
+        const text = children.trim();
+        return `\n\n${/\n\s*\n/.test(text) ? text : styled(text, own, ctx)}\n\n`;
+      }
+      return mark(children);
     };
     // An empty visible tree must stay empty; innerText can still contain the
     // accessibility copies we just excluded.
-    return walk(body).trim();
+    return joinEmphasis(walk(body)).trim();
   }
   function sampleDOM(job) {
     if (active !== job || job.finished || job.cancelled) return;
@@ -716,12 +780,13 @@
     // DIL is a layout language, not answer text. A source/copy surface can
     // mount before the real rendered content; never forward that surface.
     if (richLayout(text)) text = '';
-    if (domActivity && /^(?:Searching(?: the)? web|(?:Reading|Browsing) sources|(?:Running|Executing) code)(?:\.{3}|\u2026)?$/i.test(text)) text = '';
+    // A status line on its own (with the divider the page draws above it) is never the answer.
+    if (/^(?:-{3,}\s*)?(?:Searching(?: the)? web|Searched \d+ (?:web)?sites?|(?:Reading|Browsing) sources|(?:Running|Executing) code|Thinking|Thought for (?:a (?:few|couple of) seconds|\d+\s*[a-z]+(?:\s+\d+\s*[a-z]+)?))(?:\.{3}|\u2026)?$/i.test(text)) text = '';
     if (body) domMedia(job, body);
     if (text && text !== job.domText && !window.QResponseTags.hasInteractive(job.netText)) {
       job.domText = text; job.stableAt = Date.now(); progress(job);
       if (job.work) job.workStableAt = job.stableAt;
-      if (job.work || (!job.canonicalFallback && (!job.netText || job.detached)) || job.requiresDOM) { job.text = text; delta(job); }
+      if (job.work || (!job.canonicalFallback && (!job.netText || job.detached && !repeatsReply(job.netText, text))) || job.requiresDOM) { job.text = text; delta(job); }
     }
     if (job.work && modeAttention(node)) {
       // The follow-up needs this thread on record, and a paused task never reaches done.
@@ -732,9 +797,12 @@
     }
     // Current signed-in DIL streams can contain richer updates than the parsed
     // text packets. At completion prefer a longer scoped visible reply over a
-    // stale network prefix; retain network markdown when it already covers it.
+    // stale network prefix; retain network markdown when it already covers it,
+    // or when the longer page only repeats it.
     const dil = job.assistantNode?.hasAttribute('data-dil-source-message-id');
-    if (text && job.finishing && !window.QResponseTags.hasInteractive(job.netText) && (job.requiresDOM || !job.canonicalFallback && (text.length > (dil ? (job.netText || '').length : job.text.length) || job.domPreferred || (dil && job.detached)))) {
+    const base = dil ? (job.netText || '') : job.text;
+    if (text && job.finishing && !window.QResponseTags.hasInteractive(job.netText) && (job.requiresDOM || !job.canonicalFallback &&
+        (text.length > base.length || job.domPreferred || (dil && job.detached)) && !repeatsReply(job.netText || base, text))) {
       job.domPreferred = true;
       job.text = dil ? completedMarkdown(job, body, text) : text;
       delta(job);
@@ -768,9 +836,16 @@
     job.text = markdownMedia(job, text) || (!canonicalFallback && job.domText) || '';
     delta(job);
   }
-  function applyNDJSON(job, packet) {
+  function applyNDJSON(job, packet, stream = null) {
     if (!packet || typeof packet !== 'object') return;
     if (active !== job || job.finished || job.finishing || job.cancelled) return;
+    // The source stream says when its turn is complete. Without this its closing "end"
+    // looked like a dropped connection, and the reply fell back to reading the page.
+    if (packet.type === 'control') {
+      if (packet.detail?.conversationId) job.conversationId = packet.detail.conversationId;
+      if (packet.detail?.kind === 'terminal-received' && packet.detail.terminalKind === 'complete') job.protocolDone = true;
+      return;
+    }
     // The NDJSON transport also accepts the same message envelopes as SSE.
     if (packet.message || packet.author && packet.content) { apply(job, packet); return; }
     if (packet.type === 'content' && packet.recipient && !['all', 'all_tools'].includes(packet.recipient)) {
@@ -789,6 +864,12 @@
       if (packet.mode === 'append' && prior && packet.baseRevision !== prior.revision) {
         debug('Revision gap', packet.baseRevision, prior.revision); return;
       }
+      // Revisions count within one stream. A second stream for the same message (a resume)
+      // numbers its own chunks, so its appends would land on text it never sent and weave the
+      // two copies together. Only a full snapshot can move a message to another stream.
+      if (packet.mode === 'append' && prior && prior.stream !== stream) {
+        debug('Append from another stream', packet.revision); return;
+      }
       // These packets carry layout whose images only the saved record can show.
       if (packet.dil) job.rich = true;
       const fragment = typeof packet.markdown === 'string' ? packet.markdown : '';
@@ -801,7 +882,7 @@
       const text = window.QResponseTags.hasInteractive(markdown) ? markdown : typeof fallback === 'string' ? fallback : markdown;
       collectSources(job, packet.metadata?.content_references);
       if (Array.isArray(packet.parts)) packet.parts.forEach((part, i) => structuredMedia(job, part, i));
-      messages.set(packet.messageId, { revision: packet.revision, markdown, fallback, text });
+      messages.set(packet.messageId, { revision: packet.revision, markdown, fallback, text, stream });
       if (text) completeActivity(job);
       networkText(job, [...messages.values()].map(m => m.text).join('\n\n'), [...messages.values()].every(m => typeof m.fallback === 'string'));
     } else apply(job, packet);
@@ -873,13 +954,17 @@
     disposeReader(job); job.stream = false; job.detached = true; sampleDOM(job);
   }
   async function observe(response, job) {
+    let reader = null;
     try {
       if (!response.ok) {
         const body = await response.text(); let message = body;
         try { const data = JSON.parse(body); message = typeof data.detail === 'string' ? data.detail : data.detail?.message || data.message || body; } catch (_) {}
         fail(job, [401, 403].includes(response.status) ? 'auth' : response.status === 429 ? 'rate_limited' : 'stream_failed', message.slice(0, 1000)); return;
       }
-      job.reader = response.body.getReader();
+      // Each observed response reads only its own reader. A newer stream for the same job
+      // replaces this one; this loop then stops instead of applying a second copy.
+      reader = response.body.getReader();
+      job.reader = reader; job.readerDisposed = false; job.path = undefined; job.operation = undefined;
       const decoder = new TextDecoder(); let buffer = '';
       let format = /event-stream/i.test(response.headers.get('content-type') || '') ? 'sse' : null;
       let data = [];
@@ -887,7 +972,7 @@
         raw = raw.replace(/\r$/, '');
         if (!format && raw.trim()) format = /^(data:|event:|:)/.test(raw) ? 'sse' : 'ndjson';
         if (format === 'ndjson') {
-          if (raw.trim()) { try { applyNDJSON(job, JSON.parse(raw)); } catch (e) { debug('NDJSON', e.message); } }
+          if (raw.trim()) { try { applyNDJSON(job, JSON.parse(raw), reader); } catch (e) { debug('NDJSON', e.message); } }
         } else if (raw.startsWith('data:')) data.push(raw.slice(5).trimStart());
         else if (!raw.trim() && data.length) {
           const value = data.join('\n'); data = [];
@@ -897,7 +982,8 @@
       };
       let ended = false;
       while (active === job && !job.finished && !ended) {
-        const { value, done } = await job.reader.read();
+        const { value, done } = await reader.read();
+        if (job.reader !== reader) { try { Promise.resolve(reader.cancel()).catch(() => {}); } catch (_) {} return; }
         if (active !== job || job.finished || job.finishing) return;
         progress(job); buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
         let boundary;
@@ -909,11 +995,12 @@
       }
       // Never await cancel on a clone: tee cancellation can remain pending while
       // the site consumes its branch. EOF without a terminal packet is recoverable.
+      if (job.reader !== reader) return;
       if (job.protocolDone) {
         job.streamEnded = true;
         await finish(job);
       } else detach(job, 'EOF before terminal packet');
-    } catch (e) { detach(job, e.message); }
+    } catch (e) { if (!reader || job.reader === reader) detach(job, e.message); }
   }
   const originalFetch = window.fetch;
   window.fetch = function(input, init) {

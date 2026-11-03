@@ -1335,6 +1335,54 @@ test('interactive NDJSON layout is preserved even alongside static fallbackMarkd
   assert.equal(done(b)?.text,raw);
 });
 
+// A reply as the network sent it, and the same reply as a page showed it with two copies of
+// the stream woven together (from a real report: each copy carries on from its own place).
+const cleanReply = "I double-checked, and **I'm confident GPT-6.5 has not been officially announced or released as of November 3, 2026.** However, I was too confident about some of the details surrounding the rumours.\n\nHere's what I could verify:\n\n- **The GPT-6.5 countdown was real.** The `opensi.lol` website previously contained a hidden `6.5` reference and a countdown to November 1.\n- **Its connection to OpenAI was never established.** Tibo Sottiaux mentioned purchasing a domain, but there's no verified evidence that `opensi.lol` was his.";
+const wovenReply = "I double-checked, and **I'm confident GPT confident GPT-6.5 has not been officially announced or released as of November 3, 202-6.5 has not been officially announced or released as of November 3, 2026.** However, I was too confident about some of the details surrounding6.** However, I was too confident about some of the details surrounding the rumours.\n\nHere's what I could verify:\n\n- **The GPT-6.5 countdown was real. the rumours.\n\nHere's what I could verify:\n\n- **The GPT-6.5 countdown was real.** The `opensi.lol` website previously contained a hidden `6.5` reference and a countdown to November 1.\n- Its The `opensi.lol` website previously contained a hidden `6.5` reference and a countdown to November 1.\n- **Its connection to OpenAI was never established. Tibo Sottiaux mentioned purchasing a domain, but there's no verified evidence that `opensi.lol` was connection to OpenAI was never established.** Tibo Sottiaux mentioned purchasing a domain, but there's no verified evidence that `opensi.lol` was his.";
+
+test('a woven page copy never replaces the clean network reply, while streaming or at completion', async () => {
+  // EOF without a terminal packet detaches the observer, so the page is consulted from here on.
+  const b = browser({ data: sse(message([cleanReply])) });
+  b.stop(true); await b.send(); await b.tick(200);
+  b.dom(wovenReply); await b.tick(600);
+  assert.ok(!b.events.some(event => event.type === 'delta' && /confident GPT confident/.test(event.text)), 'no woven snapshot is streamed');
+  b.stop(false); await b.tick(2500);
+  assert.equal(done(b)?.text, cleanReply); assert.equal(terminal(b).length, 1);
+});
+test('a page that carries a stale network prefix further still completes the reply', async () => {
+  const b = browser({ data: sse(message([cleanReply.slice(0, 120)])) });
+  b.stop(true); await b.send(); await b.tick(200);
+  b.dom(cleanReply); await b.tick(400); b.stop(false); await b.tick(2500);
+  assert.equal(done(b)?.text, cleanReply);
+});
+test('NDJSON terminal-received completes from the network without falling back to the page', async () => {
+  const packets = [
+    { version: 2, type: 'control', detail: { kind: 'started', streamType: 'initial' } },
+    { version: 2, type: 'control', detail: { kind: 'conversation-id', streamType: 'initial', conversationId: 'source-conversation' } },
+    { version: 2, type: 'content', messageId: 'm', revision: 1, mode: 'replace', markdown: '', dil: { fallbackMarkdown: "I double-checked, and **I'm" } },
+    { version: 2, type: 'content', messageId: 'm', revision: 2, baseRevision: 1, mode: 'append', markdown: '', dil: { fallbackMarkdown: cleanReply } },
+    { version: 2, type: 'content', messageId: 'm', revision: 3, baseRevision: 2, mode: 'append', markdown: '', status: 'complete' },
+    { version: 2, type: 'control', detail: { kind: 'terminal-received', terminalKind: 'complete', transportOnly: true } },
+    { version: 2, type: 'end' }];
+  // No reply on the page at all: completion must not wait on it.
+  const b = browser({ type: 'application/vnd.openai.conversation-source+ndjson', data: packets.map(packet => JSON.stringify(packet)).join('\n') + '\n' });
+  await b.send(); await b.tick(1000);
+  assert.equal(done(b)?.text, cleanReply); assert.equal(terminal(b).length, 1);
+  assert.equal(done(b)?.conversationId, 'source-conversation');
+  // A woven page copy showing up late changes nothing.
+  const late = browser({ type: 'application/vnd.openai.conversation-source+ndjson', data: packets.map(packet => JSON.stringify(packet)).join('\n') + '\n' });
+  await late.send(); late.dom(wovenReply); await late.tick(1500);
+  assert.equal(done(late)?.text, cleanReply);
+});
+test('a page status line and its divider are never streamed as the reply', async () => {
+  for (const status of ['---\n\nSearching the web', 'Searching the web', 'Searched 21 websites', 'Thought for 12s']) {
+    const b = browser({ data: '', hold: true });
+    b.stop(true); await b.send(); await b.tick(100);
+    b.dom(status); await b.tick(400);
+    assert.ok(!b.events.some(event => event.type === 'delta'), status);
+  }
+});
+
 let failed = 0;
 for (const { name, run } of tests) {
   try { await run(); console.log(`PASS ${name}`); }

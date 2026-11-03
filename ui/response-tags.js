@@ -307,6 +307,13 @@
     const indent = nonblank.reduce((min,line) => Math.min(min,/^[ \t]*/.exec(line)[0].length), Infinity);
     return indent > 0 && Number.isFinite(indent) ? lines.map(line => line.slice(Math.min(indent,/^[ \t]*/.exec(line)[0].length))).join('\n') : body;
   }
+  // Markers hug their words ("<b>Note: </b>" is "**Note:** ", which renders, not "**Note: **"),
+  // and empty emphasis leaves nothing behind.
+  function emphasis(marker, text) {
+    const body = text.trim();
+    if (!body) return text;
+    return text.slice(0, text.length - text.trimStart().length) + marker + body + marker + text.slice(text.trimEnd().length);
+  }
   function toMarkdown(input, options = {}) {
     return protect(String(input ?? ''), (source,restore) => {
       source = expandEach(source);
@@ -360,9 +367,9 @@
         if (n === 'grid-item') { const image = node.children.find(c => typeof c !== 'string' && c.name.toLowerCase() === 'asyncimage'); if (image && options.image) { const caption = node.children.filter(c => c !== image).map(render).join('').replace(/[*\n]/g, ' ').trim(); return options.image(image.attrs.query, caption) + '\n'; } return '\n' + body + '\n'; }
         if (n === 'img') return options.media ? options.media(a.src, a.alt || '') : (a.alt ? attributeLabel(a.alt) : escape(node.raw));
         if (/^h[1-6]$/.test(n)) return '\n\n' + '#'.repeat(+n[1]) + ' ' + display.trim() + '\n\n';
-        if (n === 'title' || n === 'b' || n === 'strong') return '**' + display + '**' + (n === 'title' ? ' ' : '');
-        if (n === 'i' || n === 'em' || n === 'caption') return '*' + display + '*';
-        if (/^(s|del|strike)$/.test(n)) return '~~' + display + '~~';
+        if (n === 'title' || n === 'b' || n === 'strong') return emphasis('**', display) + (n === 'title' ? ' ' : '');
+        if (n === 'i' || n === 'em' || n === 'caption') return emphasis('*', display);
+        if (/^(s|del|strike)$/.test(n)) return emphasis('~~', display);
         if (n === 'br') return '\n';
         if (n === 'hr' || n === 'divider') return '\n\n---\n\n';
         if (n === 'ol' || n === 'ul') {

@@ -172,6 +172,12 @@
     };
 
     window.marked.setOptions({ gfm: true, breaks: true, renderer });
+    // Strikethrough takes two tildes. One tilde means "about" in replies, and "(~5 min) or
+    // (~10 min)" must not strike out everything between them.
+    window.marked.use({ tokenizer: { del(src) {
+      const cap = /^~~(?=[^\s~])([\s\S]*?[^\s~])~~(?=[^~]|$)/.exec(src);
+      if (cap) return { type: "del", raw: cap[0], text: cap[1], tokens: this.lexer.inlineTokens(cap[1]) };
+    } } });
   }
 
   // QMath swaps formulas for private-use tokens before Markdown sees them, so
@@ -5448,7 +5454,9 @@
       }
       case "delta": {
         const turn = turns.find((t) => t.id === evt.id);
-        if (turn?.status === "streaming" && !turn.backendDone) {
+        // An empty snapshot after real text means the page lost track, not that the reply
+        // was erased. Keep what has arrived; "done" settles the final text.
+        if (turn?.status === "streaming" && !turn.backendDone && (evt.text || !turn.text)) {
           turn.text = String(evt.text ?? "");
           queuePace(turn);
         }

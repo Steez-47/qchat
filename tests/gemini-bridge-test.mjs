@@ -847,6 +847,16 @@ test('transparent and clipped Gemini copies never enter streamed or completed re
   assert.equal(b.events.find(event => event.type === 'done' && event.id === 'hidden-copies')?.text, expected);
 });
 
+test('Gemini emphasis hugs its words and literal markup characters stay literal', async () => {
+  const b = createBrowser();
+  const root = parseHTML('<div><p><b>Note: </b>tight, <strong>joined</strong><strong>bold</strong>,<i> spaced </i>,<b> </b>empty, <s>gone </s>now.</p><p>2*3*4 and 5 * 6, _init_ and snake_case, the TAG tag, a ~~b~~ c, C:\\(x86) and [label](not a link).</p></div>');
+  // The page shows a mentioned tag as text; the synthetic parser has no entities, so set it directly.
+  const find = node => node.nodeType === 3 ? (node.nodeValue.includes('TAG') ? node : null) : [...(node.childNodes || [])].map(find).find(Boolean);
+  const text = find(root);
+  text.nodeValue = text.textContent = text.nodeValue.replace('TAG', '<b>');
+  assert.equal(b.api._htmlToMarkdown(root), '**Note:** tight, **joinedbold**, *spaced* , empty, ~~gone~~ now.\n\n2\\*3\\*4 and 5 * 6, \\_init\\_ and snake_case, the \\<b> tag, a \\~\\~b\\~\\~ c, C:\\\\(x86) and [label\\](not a link).');
+});
+
 test('send scopes to new model-response turn, streams throttled deltas, emits activity, and finishes when settled', async () => {
   const b = createBrowser({ ready: true });
   // Pre-existing turn that must be ignored
