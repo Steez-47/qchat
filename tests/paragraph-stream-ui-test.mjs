@@ -240,11 +240,14 @@ try {
   await begin('type');
   await emit('delta','Still composing <section>unfinished');
   await evalJS(`__mock.emit('bridge',{type:'activity',id:__mock.last('chat_send').args.id,kind:'search',state:'running'})`); await sleep(80);
-  check('tool activity appears immediately while all text stays buffered',await evalJS(`!document.querySelector('.tool-activity').hidden && document.querySelector('.tool-activity-label').textContent==='Searching the web…' && (${plain})===''`));
+  const live=`document.querySelector('[data-role=assistant] .live-status')`;
+  check('tool activity appears immediately while all text stays buffered',await evalJS(`!${live}.hidden && ${live}.dataset.kind==='search' && ${live}.querySelector('.live-status-label').dataset.text==='Searching the web' && (${plain})===''`));
   await evalJS(`__mock.emit('bridge',{type:'sources',id:__mock.last('chat_send').args.id,items:[{id:'source1',url:'https://example.com/',title:'Source'}]});__mock.emit('qchat://settings-changed',{...QSettings.settings,animations:'off',streamStyle:'instant'})`); await sleep(80);
-  check('sources and a settings change cannot expose unfinished text',await evalJS(`(${plain})==='' && !document.querySelector('.tool-activity').hidden`));
+  check('sources and a settings change cannot expose unfinished text',await evalJS(`(${plain})==='' && !${live}.hidden && ${live}.dataset.kind==='search'`));
   await evalJS(`__mock.emit('bridge',{type:'activity',id:__mock.last('chat_send').args.id,kind:'search',state:'complete'})`); await sleep(80);
-  check('completed tool activity hides without exposing the text tail',await evalJS(`document.querySelector('.tool-activity').hidden && (${plain})===''`));
+  check('a finished tool step stays readable without exposing the text tail',await evalJS(`${live}.hasAttribute('data-done') && ${live}.querySelector('.live-status-label').dataset.text==='Searched the web' && (${plain})===''`));
+  await sleep(1400);
+  check('then it joins the trail and Thinking resumes, text tail still buffered',await evalJS(`${live}.dataset.kind==='thinking' && !${live}.hasAttribute('data-done') && ${live}.querySelectorAll('.live-step[data-kind=search]').length===1 && (${plain})===''`));
   await emit('done','Final **answer**.'); await finishReply();
   check('completion flushes the latest correction with proper formatting',await evalJS(`document.querySelector('.turn-content strong')?.textContent==='answer' && (${plain})==='Final answer.'`));
   await cdp('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});

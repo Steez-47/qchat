@@ -130,7 +130,7 @@ try {
   await evalJS(`__mock.emit('qchat://settings-changed', QSettings.save({...QSettings.settings, animations:'on'}))`);
   await type('Show me a reply');
   await key('Enter');
-  check('thinking chip settles in', await waitFor(`document.querySelector('.thinking') && getComputedStyle(document.querySelector('.thinking')).animationName==='thinking-in'`, 4000));
+  check('live status capsule settles in', await waitFor(`document.querySelector('.live-status:not([hidden])') && getComputedStyle(document.querySelector('.live-status:not([hidden])')).animationName==='status-in'`, 4000));
   await waitFor(`document.querySelector('[data-role=assistant]')?.dataset.status==='done'`, 20000);
   await sleep(200);
   await evalJS(`Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async t=>{window.clipWrites=(window.clipWrites||[]).concat(t)}}})`);
