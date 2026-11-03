@@ -4,6 +4,12 @@ Notable changes to QChat. Downloads, checksums and full verification notes for e
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-11-04
+
+### Changed
+- Rebuilt the current application as v1.6.3 for the stable release channel.
+- Refreshed the installer filename and version in the download and installation instructions.
+
 ## [1.6.1] - 2026-11-03
 
 ### Added
