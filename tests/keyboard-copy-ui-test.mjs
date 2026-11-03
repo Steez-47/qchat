@@ -79,7 +79,7 @@ try {
   await open('/?mock=signedin',{settings:{animations:'off',autoDismiss:0,streamStyle:'instant'}}); await stub(); await shortcut('C'); check('no reply',await evalJS("document.getElementById('command-feedback').textContent==='No reply to copy yet'"));
   await evalJS('__mock.hold=true'); await send('stream'); await waitFor("__mock.count('chat_send')===1");
   await evalJS("__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:'Partial reply'})"); await waitFor("document.querySelector('[data-role=assistant] .turn-content')?.textContent.includes('Partial')"); await shortcut('C'); check('streaming partial',await evalJS("clipWrites.at(-1)==='Partial reply'")); await shortcut('X'); check('no code',await evalJS("document.getElementById('command-feedback').textContent==='No code in this reply'"));
-  check('unfinished streamed paragraph stays buffered',await evalJS("!document.querySelector('[data-role=assistant] .turn-content p')"));
+  check('unfinished streamed paragraph streams live',await evalJS("document.querySelector('[data-role=assistant] .turn-content p')?.textContent==='Partial reply'"));
   await evalJS("__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:'Partial reply\\n\\n'})");
   await waitFor("document.querySelector('[data-role=assistant] .turn-content p')?.textContent==='Partial reply'");
   await evalJS("(()=>{const n=document.querySelector('[data-role=assistant] .turn-content p').firstChild,r=document.createRange();r.setStart(n,0);r.setEnd(n,7);getSelection().removeAllRanges();getSelection().addRange(r)})()"); await shortcut('C'); check('reply selection',await evalJS("clipWrites.at(-1)==='Partial'&&getSelection().toString()==='Partial'"));
@@ -90,7 +90,7 @@ try {
   await open('/?mock=signedin',{settings:{animations:'off',autoDismiss:0,streamStyle:'instant'}}); await stub(); await evalJS('__mock.hold=true'); await send('code stream'); await waitFor("__mock.count('chat_send')===1");
   await evalJS("__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:'```js\\nstreamed()'})");
   await shortcut('X'); check('streaming code block',await evalJS("clipWrites.at(-1).includes('streamed()')"));
-  check('unfinished streamed code stays buffered',await evalJS("!document.querySelector('[data-role=assistant] pre code')"));
+  check('unfinished streamed code streams line by line',await evalJS("document.querySelector('[data-role=assistant] pre code')?.textContent.includes('streamed()')"));
   await open('/?mock=signedin',{chats:seed,settings:{animations:'off',autoDismiss:0}}); await stub(); await key('p',{ctrlKey:true}); await waitFor("!!document.querySelector('.feature-search')"); await evalJS("[...document.querySelectorAll('.feature-row')].find(r=>r.querySelector('.feature-title')?.textContent==='other').querySelector('[aria-label=\"Remove chat\"]').click()"); await evalJS("document.getElementById('prompt-input').focus()"); await shortcut('C'); check('undo retained',await evalJS("!!document.querySelector('#command-feedback button')"));
   await key('Escape'); await type('/keys'); await key('Enter'); await sleep(100); check('/keys lists shortcuts',await evalJS("document.body.textContent.includes('Ctrl+Shift+C')&&document.body.textContent.includes('Ctrl+Shift+X')"));
   await key('Escape'); await key('k',{ctrlKey:true,shiftKey:true}); check('Ctrl+Shift+K opens menu',await evalJS("!document.getElementById('slash-menu').hidden"));

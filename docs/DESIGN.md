@@ -53,10 +53,10 @@ The window keeps a fixed reserved size and its empty part is click-through. Neve
 
 Text must read as a steady flow, never as a machine catching up.
 
-- By default a block appears only once it is finished (a paragraph at its blank line; list items, table rows and code lines at their newline), then flows in by whole words. Live tokens can be rough until then. Live word and character streams remain as settings.
-- Nothing starts on one line and jumps to the next. Network bursts change the rate gradually.
-- New words surface from low contrast through the CSS Highlight API: paint only, so no DOM, layout or selection changes.
-- Unfinished Markdown is closed or held back, so markers, half tables and raw TeX never flash. Finished blocks are parsed once and left alone.
+- Replies flow in by whole words as they arrive, including the paragraph still being written. The bridge sends bursts; a frame-paced reveal follows the backlog so the pace glides between them instead of stopping and starting. Motion off (or the instant style) shows each snapshot as it lands.
+- Nothing starts on one line and jumps to the next: a half-arrived last word waits a moment for the rest of it. Network bursts change the rate gradually.
+- New words settle in from a softer contrast through the CSS Highlight API: paint only, so no DOM, layout or selection changes. A large block landing at once just appears, because fading a whole block reads as a glow sweeping over the reply.
+- Unfinished Markdown is closed or held back, so markers, half tables and raw TeX never flash. Code streams line by line once its fence line is in. Response tags, layouts and interactive scopes appear only once they close. Finished blocks are parsed once and left alone.
 - Following the end is the reader's choice. One wheel notch up stops it at once and new text never pulls them back; reaching the end resumes it.
 
 ## Settings window

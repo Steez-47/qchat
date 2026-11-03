@@ -1,5 +1,5 @@
-// Finds finished blocks for buffered response display. Legacy stabilization and reveal
-// helpers remain available, but live replies only use completeBoundary.
+// What a live reply shows while it streams: every finished block as it is, plus the block still
+// being written, patched up so its unfinished markup never shows raw (see liveView).
 (function () {
   "use strict";
 
@@ -214,6 +214,19 @@
   // Blanks inline code so markup inside it is ignored, keeping every offset valid.
   const blankCode = (text) => text.replace(/(`+)[^\n]*?\1/g, code => " ".repeat(code.length));
 
+  // Whether an emphasis run is left open. A marker closes after text and opens before it, so
+  // "*a* b" is closed and "2 * 3" opens nothing. Escaped markers are literal.
+  function unclosed(text, marker) {
+    let open = false;
+    for (const match of text.matchAll(marker)) {
+      const before = text[match.index - 1] || " ", after = text[match.index + match[0].length] || " ";
+      if (before === "\\") continue;
+      if (open && /\S/.test(before)) open = false;
+      else if (!open && /\S/.test(after)) open = true;
+    }
+    return open;
+  }
+
   function closeInline(line) {
     let out = line;
     const prose = () => {
@@ -233,18 +246,26 @@
     if (!inCode) {
       // A lone marker at the very end has nothing to emphasise yet.
       if (/(^|\s)\*{1,3}$/.test(out.replace(/`[^`]*`/g, ""))) out = out.replace(/\*{1,3}$/, "");
+      // Closers go before trailing spaces: "**word **" is not emphasis.
+      const space = /\s*$/.exec(out)[0];
+      out = out.slice(0, out.length - space.length);
       const stripped = out.replace(/`[^`]*`/g, "");
-      if ((stripped.match(/\*\*/g) || []).length % 2) out += "**";
-      const afterBold = out.replace(/`[^`]*`/g, "").replace(/\*\*/g, "");
-      if ((afterBold.match(/(^|[^\\\s*])\*(?=\S)|(^|\s)\*(?=\S)/g) || []).length % 2) out += "*";
-      if ((stripped.match(/~~/g) || []).length % 2) out += "~~";
+      if (unclosed(stripped, /\*\*/g)) out += "**";
+      if (unclosed(out.replace(/`[^`]*`/g, "").replace(/\*\*/g, ""), /\*/g)) out += "*";
+      if (unclosed(stripped, /~~/g)) out += "~~";
+      out += space;
     }
     return out;
   }
 
   // What should be rendered for this tail right now. The canonical text is untouched.
   function stabilize(text) {
-    let source = window.QResponseTags.stabilize(text);
+    return stabilizeMarkdown(window.QResponseTags.stabilize(text));
+  }
+
+  // Closes open emphasis on the last line and holds back a half-typed fence opener, table row,
+  // link URL or display formula. Response tags are left for the renderer.
+  function stabilizeMarkdown(source) {
     const fence = scanFences(source);
     if (fence) {
       // Keep the opener line out until its language is known; the block appears whole.
@@ -288,8 +309,9 @@
       lines.length = end - 2;
       return lines.join("\n");
     }
-    // Bare block markers: nothing to show until their first word.
-    if (/^\s*(?:#{1,6}|[-*+]|\d+[.)]|>)\s*$/.test(last)) last = "";
+    // Bare block markers: nothing to show until their first word. A link reference
+    // definition waits for its whole line, so no link points at half a URL.
+    if (/^\s*(?:#{1,6}|[-*+]|\d+[.)]|>)\s*$/.test(last) || /^ {0,3}\[[^\]\n]+\]:/.test(last)) last = "";
     else if (last) {
       const marker = /^(\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)*)(.*)$/.exec(last);
       last = marker[1] + closeInline(marker[2]);
@@ -307,6 +329,15 @@
       const end = from + part.index + part.segment.length;
       // Spaces and closing punctuation belong to the word before them.
       if (stops.length && /^[\s.,;:!?)\]'"’”…]+$/.test(part.segment)) { stops[stops.length - 1] = end; continue; }
+      // Markdown markers go with their word: an opener with the word after it, a closer
+      // with the word before it, so "**" never shows half typed.
+      if (/^[*_~`]+$/.test(part.segment)) {
+        let start = from + part.index;
+        while (start > 0 && /[*_~`]/.test(text[start - 1])) start--;
+        if (start === 0 || /\s/.test(text[start - 1])) continue;
+        if (stops.length) stops[stops.length - 1] = end; else stops.push(end);
+        continue;
+      }
       if (part.segment.length <= cap) { stops.push(end); continue; }
       let at = from + part.index, run = 0;
       for (const g of graphemes.segment(part.segment)) {
@@ -318,5 +349,102 @@
     return stops;
   }
 
-  window.QStream = { stabilize, stableBoundary, completeBoundary, revealStops };
+  // Where the unfinished block stops being safe to show: at the outermost tag, {#each} or
+  // {@body} scope that has not closed yet, or at an inline formula still being written.
+  // Closed tags (citations, inline marks) are fine, and code content is literal.
+  function liveEnd(text) {
+    const tags = [];
+    let fence = null, inline = null;
+    const cut = at => tags.length ? tags[0].at : at;
+    for (let i = 0; i < text.length;) {
+      if (!tags.length && !inline && (i === 0 || text[i - 1] === "\n")) {
+        const nl = text.indexOf("\n", i), stop = nl < 0 ? text.length : nl;
+        const match = /^(?:\s*(?:>|[-+*]\s|\d+[.)]\s))*\s*(`{3,}|~{3,})(.*)$/.exec(text.slice(i, stop));
+        if (match && !fence) fence = { marker: match[1][0], size: match[1].length };
+        else if (match && match[1][0] === fence.marker && match[1].length >= fence.size && !match[2].trim()) fence = null;
+        if (match || fence) { i = stop + 1; continue; }
+      }
+      const c = text[i];
+      const top = tags.at(-1)?.name || "";
+      if (LITERAL_TAG.test(top)) {
+        const close = new RegExp("</" + top + "\\s*>", "i").exec(text.slice(i));
+        if (!close) return cut(i);
+        tags.pop();
+        i += close.index + close[0].length;
+        continue;
+      }
+      const run = /^`+/.exec(text.slice(i, i + 16));
+      if (run) { inline = !inline ? run[0] : inline === run[0] ? null : inline; i += run[0].length; continue; }
+      if (inline) { i++; continue; }
+      if (c === "\\") { i += 2; continue; }
+      // A citation token is whole once its closing mark arrives.
+      if (c === "") { const close = text.indexOf("", i); if (close < 0) return cut(i); i = close + 1; continue; }
+      if (c === "$" && text[i + 1] !== "$" && text[i - 1] !== "$") {
+        // Currency ($5, $ 5) is prose. Anything else is a formula until its closer arrives.
+        if (i + 1 >= text.length) return cut(i);
+        if (!/[\s\d]/.test(text[i + 1])) {
+          const to = window.QResponseTags.mathEnd(text, i);
+          if (to <= i) return cut(i);
+          i = to;
+          continue;
+        }
+      }
+      if (c === "{") {
+        const body = window.QResponseTags.bodyAt(text, i);
+        if (body) { if (body.partial) return cut(i); i = body.end; continue; }
+        const each = window.QResponseTags.eachAt(text, i);
+        if (each) {
+          if (each.partial) return cut(i);
+          const at = tags.map(t => t.name).lastIndexOf("@each");
+          if (!each.close) tags.push({ name: "@each", at: i });
+          else if (at >= 0) tags.length = at;
+          i = each.end;
+          continue;
+        }
+      }
+      if (c === "<" && /^<\/?[a-zA-Z]/.test(text.slice(i, i + 3))) {
+        // The same tag rules as completeBoundary: prose generics (List<Item>) are not tags.
+        const tag = window.QResponseTags.tagAt(text, i);
+        const semantic = tag && (SEMANTIC_TAG.test(tag.name.toLowerCase()) || (/^[A-Z]/.test(tag.name) && (tag.self || Object.keys(tag.attrs || {}).length)));
+        if (!tag || (/[\p{L}\p{N}]/u.test(text[i - 1] || "") && !tag.close && !semantic)) { i++; continue; }
+        if (tag.partial) return cut(i);
+        const name = tag.name.toLowerCase();
+        const at = tags.map(t => t.name).lastIndexOf(name);
+        if (tag.close) { if (at >= 0) tags.length = at; }
+        else if (!tag.self && !VOID_TAG.test(name)) tags.push({ name, at: i });
+        i = tag.end;
+        continue;
+      }
+      i++;
+    }
+    return cut(text.length);
+  }
+
+  // The text to show for a live snapshot: complete blocks untouched, then the block still being
+  // written up to where it is safe, with its open markup closed. Layout and interactive scopes,
+  // display maths, fence openers and table rows only ever appear whole.
+  function liveView(text, cache) {
+    const boundary = completeBoundary(text, cache);
+    const head = text.slice(0, boundary);
+    let tail = text.slice(boundary);
+    if (!/\S/.test(tail)) return head;
+    // A lone "<" or "</" at the very end may be the start of a tag.
+    tail = tail.slice(0, liveEnd(tail)).replace(/<\/?$/, "");
+    if (!/\S/.test(tail) || window.QResponseTags.hasInteractive(tail)) return head;
+    return head + stabilizeMarkdown(tail);
+  }
+
+  // The first grapheme boundary at or after `at`. A snapshot can extend a character that was
+  // already shown (e + ́, 👩 + ‍💻), so a reveal position must never sit inside one.
+  function graphemeEnd(text, at) {
+    if (at <= 0 || at >= text.length) return Math.max(0, Math.min(at, text.length));
+    const start = Math.max(0, text.lastIndexOf("\n", at - 1), at - 64);
+    for (const part of graphemes.segment(text.slice(start, at + 64))) {
+      const end = start + part.index + part.segment.length;
+      if (start + part.index === at || end >= at) return start + part.index === at ? at : end;
+    }
+    return text.length;
+  }
+
+  window.QStream = { stabilize, stableBoundary, completeBoundary, liveView, revealStops, graphemeEnd };
 })();

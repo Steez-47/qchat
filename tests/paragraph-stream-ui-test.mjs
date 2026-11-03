@@ -158,7 +158,7 @@ try {
   await until(`(${plain}).includes('Again. Again.')`, 'corrected and intentionally repeated paragraphs');
   check('a corrected ChatGPT snapshot replaces its earlier text and preserves deliberate repetition',await evalJS(`(${plain}).includes('The feedback is mixed.') && !(${plain}).includes('The feedback varies.') && (${plain}).split('Again. Again.').length===2 && __firstStreamParagraph===document.querySelector('.turn-content p')`));
   await evalJS(`__streamDoc.querySelector('[data-dil-message-id] p:last-child').insertAdjacentHTML('beforebegin','<p>Formula <span class="katex"><span class="katex-mathml"><math><semantics><mi>x2</mi><annotation encoding="application/x-tex">x^2</annotation></semantics></math></span><span aria-hidden="true">x2</span></span></p><pre><code class="language-js">const x = 1;<span class="sr-only">const x = 1;</span><span class="staging">old code</span></code></pre><table><tr><th>Name</th><th>Value</th></tr><tr><td>A</td><td>42</td></tr></table><blockquote><p>Quoted answer</p></blockquote>')`);
-  await until(`document.querySelector('.turn-content table td') && document.querySelector('.turn-content .katex')`, 'rich bridge output renders during streaming');
+  await until(`document.querySelector('.turn-content table td') && document.querySelector('.turn-content .katex') && document.querySelector('.turn-content blockquote')?.textContent.includes('Quoted answer')`, 'rich bridge output renders during streaming');
   check('streaming code and maths use one representation and keep rich structure',await evalJS(`(()=>{const c=document.querySelector('[data-role=assistant] .turn-content');return c.querySelector('pre code')?.textContent.trim()==='const x = 1;' && c.querySelectorAll('.katex').length===1 && c.querySelector('tbody tr td')?.textContent==='A' && c.querySelector('blockquote')?.textContent.trim()==='Quoted answer' && !c.textContent.includes('old code')})()`));
   await evalJS(`__streamDoc.querySelector('[data-dil-message-id] p:last-child').insertAdjacentHTML('beforebegin','<p><span id="fading-word" style="opacity:0">Fades into view.</span><span style="clip:rect(0px,0px,0px,0px);position:absolute">Fades into view.</span></p>')`);
   await sleep(300);
@@ -172,7 +172,7 @@ try {
   // The current page styles emphasis with classes, streams words in from transparent and draws
   // its search status inside the reply. Emphasis survives, words count once, status never shows.
   await evalJS(`__streamDoc.querySelector('[data-dil-message-id] p:last-child').insertAdjacentHTML('beforebegin','<div data-assistant-reasoning-summary><hr data-logical-answer-activity-divider><div data-cot><span data-text-shimmer-text>Searching the web</span><span aria-hidden="true" data-text-shimmer-overlay>Searching the web</span></div></div><p><span style="font-weight:700">Styled bold</span> and <span style="font-style:italic">styled italic</span>, <strong>Note: </strong>tight, <strong>joined</strong><strong>bold</strong> run, <span data-d-streaming-word style="opacity:0">arriving</span> word, 2*3*4 stays.</p>')`);
-  await until(`(${plain}).includes('arriving word')`, 'styled emphasis paragraph renders');
+  await until(`(${plain}).includes('2*3*4 stays')`, 'styled emphasis paragraph renders');
   const styledEmphasis = await evalJS(`(()=>{const c=document.querySelector('[data-role=assistant] .turn-content');const strong=[...c.querySelectorAll('strong')].map(n=>n.textContent);return {strong,em:[...c.querySelectorAll('em')].map(n=>n.textContent),text:c.textContent,rules:c.querySelectorAll('hr').length}})()`);
   check('class-styled bold and italic, tight markers and joined runs render as emphasis',styledEmphasis.strong.includes('Styled bold') && styledEmphasis.em.includes('styled italic') && styledEmphasis.strong.includes('Note:') && styledEmphasis.strong.includes('joinedbold') && !/\*/.test(styledEmphasis.text.replace('2*3*4','')),JSON.stringify(styledEmphasis));
   check('a streamed word mid fade-in counts once and the search status stays out',styledEmphasis.text.split('arriving word').length===2 && !styledEmphasis.text.includes('Searching the web') && styledEmphasis.rules===0 && styledEmphasis.text.includes('2*3*4 stays'),JSON.stringify(styledEmphasis));
@@ -184,16 +184,20 @@ try {
   for (const motion of ['on','off']) {
     await open('/',{settings:{v:4,animations:motion,autoDismiss:0,streamStyle:'paragraph'}});
     await evalJS(`__mock.hold=true`); await send('Paragraph fixture'); await until(`__mock.last('chat_send')`);
-    await emit('delta','First **rich** paragraph'); await sleep(100);
-    check(`${motion}: unfinished paragraph buffered`,await evalJS(`(${plain})===''`));
-    await emit('delta','First **rich** paragraph.\n\nSecond unfinished'); await sleep(100);
-    check(`${motion}: complete rich paragraph`,await evalJS(`document.querySelector('.turn-content strong')?.textContent==='rich' && (${plain})==='First rich paragraph.'`));
+    // The paragraph still being written streams in, already formatted: its open markup is closed.
+    await emit('delta','First **rich** paragraph');
+    await until(`(${plain})==='First rich paragraph'`, `${motion}: unfinished paragraph streams`);
+    check(`${motion}: an unfinished paragraph streams with its formatting`,await evalJS(`document.querySelector('.turn-content strong')?.textContent==='rich' && !(${plain}).includes('*')`));
+    await emit('delta','First **rich** paragraph.\n\nSecond unfinished');
+    await until(`(${plain})==='First rich paragraph.\\nSecond unfinished'`, `${motion}: next paragraph streams`);
+    check(`${motion}: complete rich paragraph`,await evalJS(`document.querySelector('.turn-content strong')?.textContent==='rich' && document.querySelector('.turn-content p')?.textContent==='First rich paragraph.'`));
     if (motion==='off') check('motion off adds no fade highlights',await evalJS(`!CSS.highlights.has('qchat-fade-0') && !CSS.highlights.has('qchat-fade-1') && !CSS.highlights.has('qchat-fade-2')`));
     await evalJS(`window.saved=document.querySelector('.turn-content p');window.savedText=saved.firstChild;const r=document.createRange();r.selectNodeContents(saved);getSelection().removeAllRanges();getSelection().addRange(r)`);
     const snapshot='First **rich** paragraph.\n\nSecond complete.\n\n';
     const frames=await capture(`__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(snapshot)}});`,150);
-    check(`${motion}: no word frames`,frames.every(f=>!f.text.includes('Second')||f.text.endsWith('Second complete.')));
+    check(`${motion}: a corrected word is replaced in place, never shown twice`,frames.every(f=>!f.text.includes('unfinished') && f.text.split('Second').length===2) && frames.at(-1).text.endsWith('Second complete.'),JSON.stringify(frames.map(f=>f.text)));
     if (motion==='on') {
+      await until(`(${plain}).endsWith('Second complete.')`, 'corrected paragraph shown');
       const before = await evalJS(plain);
       await emit('delta',''); await sleep(100);
       const after = await evalJS(plain);
@@ -205,10 +209,15 @@ try {
   }
 
   await begin('paragraph');
-  for (const source of ['```js\na\n\nb\n','$$\nx\n\ny\n','| a | b |\n|---|---|\n| x | y |\n']) {
-    await emit('delta',source); await sleep(50);
-    check('unfinished compound block buffered',await evalJS(`(${plain})===''`));
-  }
+  // An open code block streams as code; display maths waits for its closer; whole table rows stream.
+  await emit('delta','```js\na\n\nb\n');
+  await until(`document.querySelector('.turn-content pre code')?.textContent.includes('b')`, 'open code block streams');
+  check('an open code block streams as code, never as a raw fence',await evalJS(`!(${plain}).includes('\`\`\`') && document.querySelector('.turn-content pre code').textContent.includes('a')`));
+  await emit('delta','$$\nx\n\ny\n'); await sleep(80);
+  check('unfinished display maths stays withheld',await evalJS(`(${plain})===''`));
+  await emit('delta','| a | b |\n|---|---|\n| x | y |\n');
+  await until(`document.querySelector('.turn-content td')`, 'table rows stream');
+  check('complete table rows stream as a table',await evalJS(`!(${plain}).includes('|') && document.querySelector('.turn-content td')?.textContent==='x'`));
   await emit('delta','<section><mark>Paired paragraph.\n\nPending'); await sleep(80);
   check('an open tag scope is withheld across its blank line',await evalJS(`(${plain})==='' && !document.querySelector('.turn-content mark')`));
   await emit('delta','<section><mark>Paired paragraph.\n\nPending</mark></sec'); await sleep(80);
@@ -219,7 +228,8 @@ try {
   const paired='<section><mark>Paired paragraph.\n\nPending</mark></section>\n\n';
   await emit('delta',paired+openLoop); await sleep(80);
   check('an open loop stays withheld until its closer',await evalJS(`!Array.from(document.querySelectorAll('.turn-content mark')).some(x=>x.textContent.includes('First'))`));
-  await emit('delta',paired+openLoop+'{/each}'); await sleep(80);
+  await emit('delta',paired+openLoop+'{/each}');
+  await until(`Array.from(document.querySelectorAll('.turn-content mark')).some(x=>x.textContent.includes('Second'))`, 'loop releases');
   check('a loop closer at the end releases the expanded loop',await evalJS(`Array.from(document.querySelectorAll('.turn-content mark')).map(x=>x.textContent.trim()).join('|').endsWith('First|Second')`));
   await emit('delta','Stopped final prose');
   await evalJS(`document.getElementById('btn-send').click()`); await sleep(100);
@@ -227,11 +237,12 @@ try {
   await begin('paragraph'); await emit('delta','Interrupted final prose');
   await evalJS(`__mock.emit('bridge',{type:'error',id:__mock.last('chat_send').args.id,code:'stream_failed'})`); await sleep(80);
   check('an error flushes the buffered partial reply',await evalJS(`(${plain})==='Interrupted final prose' && document.querySelector('[data-role=assistant]').dataset.status==='error'`));
-  // Every saved style takes the same buffered path: only finished blocks, then the whole final text.
+  // Every saved style streams the paragraph being written, withholds open scopes, then shows the whole final text.
   for (const style of ['paragraph','word','type','fade','instant']) {
     await begin(style);
-    await emit('delta','One finished.\n\nTwo unfinished'); await sleep(120);
-    check(style+': only the finished paragraph is shown',await evalJS(`(${plain})==='One finished.'`));
+    await emit('delta','One finished.\n\nTwo unfinished');
+    await until(`(${plain})==='One finished.\\nTwo unfinished'`, style+': live paragraph');
+    check(style+': the paragraph being written streams too',await evalJS(`document.querySelectorAll('.turn-content p').length===2`));
     await emit('delta','One finished.\n\n<section>Open\n\nscope'); await sleep(80);
     check(style+': an open tag scope stays withheld',await evalJS(`(${plain})==='One finished.'`));
     await emit('done','One finished.\n\n<section>Open\n\nscope</section>\n\nFinal tail'); await finishReply();
@@ -241,26 +252,27 @@ try {
   await emit('delta','Still composing <section>unfinished');
   await evalJS(`__mock.emit('bridge',{type:'activity',id:__mock.last('chat_send').args.id,kind:'search',state:'running'})`); await sleep(80);
   const live=`document.querySelector('[data-role=assistant] .live-status')`;
-  check('tool activity appears immediately while all text stays buffered',await evalJS(`!${live}.hidden && ${live}.dataset.kind==='search' && ${live}.querySelector('.live-status-label').dataset.text==='Searching the web' && (${plain})===''`));
+  check('tool activity appears immediately while the open tag scope stays withheld',await evalJS(`!${live}.hidden && ${live}.dataset.kind==='search' && ${live}.querySelector('.live-status-label').dataset.text==='Searching the web' && (${plain})==='Still composing'`));
   await evalJS(`__mock.emit('bridge',{type:'sources',id:__mock.last('chat_send').args.id,items:[{id:'source1',url:'https://example.com/',title:'Source'}]});__mock.emit('qchat://settings-changed',{...QSettings.settings,animations:'off',streamStyle:'instant'})`); await sleep(80);
-  check('sources and a settings change cannot expose unfinished text',await evalJS(`(${plain})==='' && !${live}.hidden && ${live}.dataset.kind==='search'`));
+  check('sources and a settings change cannot expose an unfinished scope',await evalJS(`(${plain})==='Still composing' && !${live}.hidden && ${live}.dataset.kind==='search'`));
   await evalJS(`__mock.emit('bridge',{type:'activity',id:__mock.last('chat_send').args.id,kind:'search',state:'complete'})`); await sleep(80);
-  check('a finished tool step stays readable without exposing the text tail',await evalJS(`${live}.hasAttribute('data-done') && ${live}.querySelector('.live-status-label').dataset.text==='Searched the web' && (${plain})===''`));
+  check('a finished tool step stays readable without exposing the open scope',await evalJS(`${live}.hasAttribute('data-done') && ${live}.querySelector('.live-status-label').dataset.text==='Searched the web' && (${plain})==='Still composing'`));
   await sleep(1400);
-  check('then it joins the trail and Thinking resumes, text tail still buffered',await evalJS(`${live}.dataset.kind==='thinking' && !${live}.hasAttribute('data-done') && ${live}.querySelectorAll('.live-step[data-kind=search]').length===1 && (${plain})===''`));
+  check('then it joins the trail and Writing resumes, the open scope still withheld',await evalJS(`${live}.dataset.kind==='writing' && !${live}.hasAttribute('data-done') && ${live}.querySelectorAll('.live-step[data-kind=search]').length===1 && (${plain})==='Still composing'`));
   await emit('done','Final **answer**.'); await finishReply();
   check('completion flushes the latest correction with proper formatting',await evalJS(`document.querySelector('.turn-content strong')?.textContent==='answer' && (${plain})==='Final answer.'`));
   await cdp('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
   await open('/',{settings:{v:4,animations:'auto',autoDismiss:0,streamStyle:'word'}});
   await evalJS(`__mock.hold=true`); await send('Reduced motion blocks'); await until(`__mock.last('chat_send')`);
   await emit('delta','Finished.\n\nUnfinished'); await sleep(80);
-  check('system reduced motion still waits for complete blocks',await evalJS(`!QSettings.motionOn && (${plain})==='Finished.'`));
+  check('system reduced motion shows each snapshot as it lands',await evalJS(`!QSettings.motionOn && (${plain})==='Finished.\\nUnfinished'`));
   await emit('done','Finished.\n\nFinal tail'); await finishReply();
   await cdp('Emulation.setEmulatedMedia',{features:[]});
   await begin('paragraph');
   const formatted=['## Streamed formatting','','<box><text>A **complete** paragraph with an <Entity value="inline label"/> and a [link](https://example.com/).</text></box>','','```js','const example = "<Entity value=\"literal\"/>";','```','','| Item | State |','| --- | --- |','| Paragraph | **Ready** |','','$$x^2 = 4$$','',''].join('\n');
-  await emit('delta',formatted+'Unfinished next paragraph'); await sleep(100);
-  check('completed tags, code, table and math render during the stream',await evalJS(`(()=>{const c=document.querySelector('[data-role=assistant] .turn-content');return c.querySelector('h2')?.textContent==='Streamed formatting' && c.querySelector('strong')?.textContent==='complete' && c.textContent.includes('inline label') && c.querySelector('pre code')?.textContent.includes('<Entity') && c.querySelector('td strong')?.textContent==='Ready' && !!c.querySelector('.katex') && !c.textContent.includes('Unfinished next');})()`));
+  await emit('delta',formatted+'Unfinished next paragraph');
+  await until(`(${plain}).endsWith('Unfinished next paragraph')`, 'formatted reply streams to its live tail');
+  check('completed tags, code, table and math render during the stream',await evalJS(`(()=>{const c=document.querySelector('[data-role=assistant] .turn-content');return c.querySelector('h2')?.textContent==='Streamed formatting' && c.querySelector('strong')?.textContent==='complete' && c.textContent.includes('inline label') && c.querySelector('pre code')?.textContent.includes('<Entity') && c.querySelector('td strong')?.textContent==='Ready' && !!c.querySelector('.katex') && c.lastElementChild.textContent==='Unfinished next paragraph';})()`));
   if (shotsDir) { await mkdir(shotsDir,{recursive:true}); const shot=await cdp('Page.captureScreenshot',{format:'png'}); await writeFile(path.join(shotsDir,'paragraph-streaming.png'),Buffer.from(shot.data,'base64')); }
   await emit('done',formatted+'Final paragraph.'); await finishReply();
   await begin('paragraph');

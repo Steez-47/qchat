@@ -52,7 +52,7 @@ try {
   await evalJS(`__mock.hold=true`);
   await type('perf'); await key('Enter');
   await waitFor(`__mock.last('chat_send')`);
-  await evalJS(`window.__bounds=0;window.__scanChars=0;const real=QStream.completeBoundary;QStream.completeBoundary=(t,cache)=>{__bounds++;__scanChars+=t.length-(cache?.prefix&&t.startsWith(cache.prefix)?cache.prefix.length:0);return real(t,cache)}`);
+  await evalJS(`window.__bounds=0;window.__scanChars=0;const real=QStream.liveView;QStream.liveView=(t,cache)=>{__bounds++;__scanChars+=t.length-(cache?.prefix&&t.startsWith(cache.prefix)?cache.prefix.length:0);return real(t,cache)}`);
 
   // A burst of deltas inside one task is read once, on the next frame, with only the latest text.
   const words = 'The quick brown fox jumps over the lazy dog again and again'.split(' ');
@@ -60,8 +60,9 @@ try {
   check('a burst of deltas is not read synchronously', sync === 0, String(sync));
   check('the unfinished burst stays hidden before its frame', await evalJS(`(document.querySelector('[data-role=assistant] .turn-content')?.textContent||'')===''`));
   await sleep(200);
-  check('the burst is read once, not sixty times', await evalJS(`__bounds`) <= 2, String(await evalJS(`__bounds`)));
-  check('unfinished text is still withheld after the frame', await evalJS(`(document.querySelector('[data-role=assistant] .turn-content')?.textContent||'')===''`));
+  // Only the latest snapshot is revealed, word by word, one pass per frame at most.
+  const burst = await evalJS(`({bounds:__bounds,text:document.querySelector('[data-role=assistant] .turn-content')?.textContent.trim()||''})`);
+  check('the burst is revealed from its latest text, at most once per frame', burst.bounds <= 16 && burst.text.length > 0 && 'The quick brown fox jumps over the lazy dog again and again '.repeat(5).startsWith(burst.text), JSON.stringify(burst));
 
   // Finished code blocks keep their highlighted nodes as the reply grows by more blocks.
   const one = `Intro paragraph.\n\n${fence('js', 30, 'a')}\n\n`;
@@ -70,16 +71,17 @@ try {
   await evalJS(`window.__firstCode=document.querySelector('[data-role=assistant] pre code');window.__firstTok=__firstCode.querySelector('.tok-keyword')`);
   const two = one + `Middle paragraph with \`code\` and **bold**.\n\n${fence('py', 25, 'b')}\n\n`;
   await emit('delta', two + 'More');
-  await waitFor(`document.querySelectorAll('[data-role=assistant] pre code').length===2`, 3000);
+  await waitFor(`document.querySelectorAll('[data-role=assistant] pre code').length===2 && document.querySelector('[data-role=assistant] .turn-content').textContent.trimEnd().endsWith('More')`, 3000);
   check('an earlier code block keeps its nodes when a later block arrives', await evalJS(`document.querySelector('[data-role=assistant] pre code')===__firstCode && __firstCode.contains(__firstTok) && !!__firstTok`));
   check('highlighted nodes live in the page document', await evalJS(`[...document.querySelectorAll('[data-role=assistant] pre code span')].every(s=>s.ownerDocument===document)`));
 
   await evalJS(`__bounds=0;__scanChars=0;for(let i=0;i<30;i++)__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(two)}+'Still writing '+i})`);
-  await waitFor(`__bounds>0`);
-  check('a growing tail does not rescan completed prose and code', await evalJS(`__bounds===1 && __scanChars<100`), JSON.stringify(await evalJS(`({passes:__bounds,characters:__scanChars})`)));
+  await waitFor(`(document.querySelector('[data-role=assistant] .turn-content')?.textContent||'').includes('Still writing 29')`, 3000);
+  // Each reveal pass scans only the growing tail, never the finished prose and code before it.
+  check('a growing tail does not rescan completed prose and code', await evalJS(`__bounds>0 && __scanChars/__bounds<40`), JSON.stringify(await evalJS(`({passes:__bounds,characters:__scanChars})`)));
   await evalJS(`__bounds=0;__mock.emit('bridge',{type:'delta',id:__mock.last('chat_send').args.id,text:${JSON.stringify(two)}+'Still writing 29'})`);
   await sleep(80);
-  check('repeated identical snapshots do not parse or render again', await evalJS(`__bounds===0`));
+  check('repeated identical snapshots do not parse or render again', await evalJS(`__bounds===0`), String(await evalJS(`__bounds`)));
 
   // A cached highlight is identical to a fresh one, and never shared between blocks.
   await emit('done', two + `Same block again:\n\n${fence('js', 30, 'a')}`);

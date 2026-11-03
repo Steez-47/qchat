@@ -47,14 +47,17 @@ try {
   await begin();
   await emit('delta', 'Still composing the first paragraph');
   await wait(`!${live}.hidden`);
-  check('unfinished first text stays buffered with the initial thinking state', await evalJS(`${reply}.textContent==='' && ${live}.dataset.kind==='thinking' && ${live}.textContent.includes('Thinking')`));
+  // The paragraph still being written streams in word by word, and Thinking gives way to Writing.
+  await wait(`${reply}.textContent.includes('Still composing the first paragraph')`);
+  check('the unfinished first paragraph streams in with Writing', await evalJS(`${writing} && ${live}.textContent.includes('Writing')`));
   const first = 'One **finished** paragraph with words that arrive calmly.\n\n';
   await emit('delta', first + 'The next paragraph is still being composed');
   await wait(`${reply}.querySelector('strong')`);
-  check('Writing is visible while the next block is buffered', await evalJS(`${writing} && ${live}.querySelector('.live-status-label').dataset.text==='Writing' && !${reply}.textContent.includes('being composed')`));
+  check('Writing is visible while the next block streams in', await evalJS(`${writing} && ${live}.querySelector('.live-status-label').dataset.text==='Writing'`));
   check('Writing stays outside the reply text and has a status role', await evalJS(`!${reply}.contains(${live}) && !${live}.closest('.bubble-response') && ${live}.getAttribute('role')==='status'`));
   const fading = await evalJS(`new Promise(resolve=>{const samples=[];const start=performance.now();const tick=()=>{samples.push([0,1,2].map(i=>[...CSS.highlights.get('qchat-fade-'+i)||[]].map(r=>r.toString())));if(performance.now()-start<400)requestAnimationFrame(tick);else resolve(samples)};tick()})`);
   check('word groups progress through different fade stages', fading.some(sets => sets.filter(set => set.length).length > 1), JSON.stringify(fading.slice(0, 3)));
+  await wait(`${reply}.textContent.includes('still being composed')`); await sleep(260);
   check('the word entrance settles within its short time budget', await evalJS(`[0,1,2].every(i=>!CSS.highlights.get('qchat-fade-'+i)?.size)`));
   await shot('writing');
   await evalJS(`window.__paragraph=${reply}.querySelector('p');window.__text=__paragraph.firstChild;const range=document.createRange();range.selectNodeContents(__paragraph);getSelection().removeAllRanges();getSelection().addRange(range);window.__selected=getSelection().toString();window.__parsed=[];const parse=marked.parser;marked.parser=function(tokens,...rest){__parsed.push(tokens.map(t=>t.raw).join(''));return parse.call(this,tokens,...rest)}`);
@@ -84,11 +87,11 @@ try {
   await begin('off');
   await emit('delta', '- First **finished** item\n  - Nested item\n- Second pending');
   await wait(`${reply}.querySelector('li strong')`);
-  check('a completed list item appears with its nested content', await evalJS(`${reply}.querySelector('li strong').textContent==='finished' && ${reply}.textContent.includes('Nested item') && !${reply}.textContent.includes('Second')`));
+  check('a list item appears with its nested content while the next one streams', await evalJS(`${reply}.querySelector('li strong').textContent==='finished' && ${reply}.textContent.includes('Nested item') && ${reply}.textContent.includes('Second pending')`));
   await evalJS(`window.__item=${reply}.querySelector('li');window.__strong=__item.querySelector('strong')`);
   await emit('delta', '- First **finished** item\n  - Nested item\n- Second finished\n- Third pending');
   await wait(`${reply}.textContent.includes('Second finished')`);
-  check('the next sibling appears without replacing the earlier item', await evalJS(`__item===${reply}.querySelector('li') && __strong===__item.querySelector('strong') && !${reply}.textContent.includes('Third')`));
+  check('the next sibling appears without replacing the earlier item', await evalJS(`__item===${reply}.querySelector('li') && __strong===__item.querySelector('strong') && ${reply}.textContent.includes('Third pending')`));
   check('motion off keeps all fade highlights absent', await evalJS(`[0,1,2].every(i=>!CSS.highlights.has('qchat-fade-'+i))`));
   await evalJS(`document.getElementById('btn-send').click()`);
   await wait(`document.querySelector('[data-role=assistant]').dataset.status==='done'`);

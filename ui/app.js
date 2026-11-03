@@ -1206,7 +1206,7 @@
     const anchorTop = anchor?.getBoundingClientRect().top;
     shown.text = latest.text;
     shown.sources = latest.sources?.length ? latest.sources : shown.sources;
-    if (entry.reveal) entry.reveal.visible = shown.text;
+    if (entry.reveal) { entry.reveal.visible = shown.text; entry.reveal.shown = shown.text.length; }
     if (latest.media?.length && !entry.mediaEl.querySelector(".stored-media")) {
       entry.mediaEl.replaceChildren(...latest.media.map(file => storedMediaCard(file, chat.conversationId)));
       entry.row.toggleAttribute("data-media-first", latest.media.some(file => file.before));
@@ -2690,13 +2690,17 @@
     if (!liveClockTimer) liveClockTimer = setInterval(tickLiveClocks, 1000);
   }
 
-  // Keep transport snapshots separate from completed blocks. The full text stays
-  // on the turn for history/copy while the unfinished tail remains buffered.
+  // Keep transport snapshots separate from what is shown. The full text stays on the turn for
+  // history/copy while the reveal catches up with it.
   const streamStyle = () => QSettings.settings.streamStyle || "paragraph";
+  const smoothStream = () => QSettings.motionOn && streamStyle() !== "instant";
 
-  // New words surface from low contrast. This is paint only (the CSS Highlight API), so it
-  // adds no DOM, keeps selections intact and cannot change the layout of the text around it.
-  const FADE_STEPS = [70, 150, 240];
+  // New words settle in from a softer contrast, a few at a time as they are revealed. This is
+  // paint only (the CSS Highlight API), so it adds no DOM, keeps selections intact and cannot
+  // change the layout of the text around it. A large block landing at once (a finished table or
+  // formula) just appears: fading a whole block reads as a glow sweeping over the reply.
+  const FADE_STEPS = [60, 130, 200];
+  const FADE_MAX = 160;
   const fadeHighlights = typeof Highlight === "function" && window.CSS?.highlights;
 
   function clearFade(entry) {
@@ -2707,32 +2711,25 @@
   }
 
   function noteRevealed(entry) {
-    const text = entry.contentEl.textContent;
+    // Rendered blocks end in a line break, which is not part of what was appended.
+    const text = entry.contentEl.textContent.trimEnd();
     const before = entry.fadeText || "";
     entry.fadeText = text;
-    if (!QSettings.motionOn || !fadeHighlights || !["fade", "paragraph"].includes(streamStyle())) { clearFade(entry); return; }
-    // Corrections settle immediately; only an appended suffix gets an entrance.
-    if (!text.startsWith(before)) { clearFade(entry); return; }
-    const stops = window.QStream.revealStops(text, before.length, Number.MAX_SAFE_INTEGER);
-    if (!stops.length) return;
-    const fade = entry.fade ||= { recent: [], cancelFrame: null };
+    if (!smoothStream() || !fadeHighlights) { clearFade(entry); return; }
+    // Corrections settle immediately; only a small appended suffix gets an entrance.
+    if (!text.startsWith(before) || text.length === before.length || text.length - before.length > FADE_MAX) return;
     const walker = document.createTreeWalker(entry.contentEl, NodeFilter.SHOW_TEXT);
     let node = walker.nextNode(), at = 0;
     const point = to => {
       while (node && at + node.length < to) { at += node.length; node = walker.nextNode(); }
       return [node, to - at];
     };
-    const groups = Math.min(24, stops.length), now = performance.now();
-    let start = before.length;
-    for (let i = 0; i < groups; i++) {
-      const end = stops[Math.ceil((i + 1) * stops.length / groups) - 1];
-      const from = point(start), to = point(end);
-      if (!from[0] || !to[0]) break;
-      const range = new Range();
-      range.setStart(...from); range.setEnd(...to);
-      fade.recent.push({ range, at: now + (groups > 1 ? i * 90 / (groups - 1) : 0) });
-      start = end;
-    }
+    const from = point(before.length), to = point(text.length);
+    if (!from[0] || !to[0]) return;
+    const range = new Range();
+    range.setStart(...from); range.setEnd(...to);
+    const fade = entry.fade ||= { recent: [], cancelFrame: null };
+    fade.recent.push({ range, at: performance.now() });
     if (!fade.cancelFrame) paintFade(entry, fade);
   }
 
@@ -2776,22 +2773,50 @@
   // Stop and error: whatever text has arrived becomes the final content, including the tail.
   function flushReveal(turn) {
     const entry = turnNodes.get(turn.id);
-    if (entry?.reveal) entry.reveal.visible = turn.text;
+    stopReveal(entry);
+    if (entry?.reveal) { entry.reveal.visible = turn.text; entry.reveal.shown = turn.text.length; }
     if (entry) finishReveal(turn, entry);
   }
 
-  // One buffered reveal path for every stream style. Text appears a finished block at a time:
-  // the latest snapshot is cut at the largest complete prefix, and the final snapshot is shown
-  // whole. There are no timers, so nothing can reopen a turn that finished or was stopped.
-  // The bridge sends the whole text on every delta, often many times a frame. Only the latest
-  // snapshot matters, so deltas are coalesced into one pass per frame; anything that needs the
-  // text shown at once (done, stop, settings) calls paceTurn directly, which settles a queued pass.
+  // Live replies flow word by word, as on the provider's own page. Whatever has been revealed is
+  // shown through QStream.liveView: finished blocks render whole and the block being written
+  // never shows raw markup. The bridge sends cumulative snapshots in bursts of 10 to 20 a second,
+  // so a frame loop reveals them at a rate that follows the backlog and glides between bursts:
+  // the text keeps a steady pace instead of lurching. With motion off or the instant style,
+  // each snapshot shows at once. Stop and error settle everything through flushReveal.
+  const REVEAL_MIN = 60; // characters a second, so a short tail never crawls
+  const REVEAL_LAG = 0.28; // seconds of backlog the reveal carries while the reply is live
+  const REVEAL_DRAIN = 0.32; // once the reply is done, what is left takes about this long
+  const REVEAL_GLIDE = 180; // ms for the pace to settle after a burst
+  const WORD_WAIT = 160; // ms a half-arrived last word waits for the rest of it
+  const newReveal = () => ({ visible: "", shown: 0, rate: 0, credit: 0, last: 0, at: 0, cost: 0, drawnAt: 0, cancel: null, cache: {} });
   const pacing = new Map();
+
+  function stopReveal(entry) {
+    entry?.reveal?.cancel?.();
+    if (entry?.reveal) entry.reveal.cancel = null;
+  }
+
+  function showReveal(turn, entry, view) {
+    const state = entry.reveal;
+    // Text already shown is never taken back while the stream still extends it.
+    if (!turn.backendDone && view.length < state.visible.length && turn.text.startsWith(state.visible)) view = state.visible;
+    if (view === state.visible) return;
+    state.visible = view;
+    const started = performance.now();
+    if (view) revealResponse(turn);
+    renderTurnNow(turn.id);
+    state.drawnAt = performance.now();
+    state.cost = state.cost * 0.7 + (state.drawnAt - started) * 0.3;
+  }
+
+  // Deltas are coalesced into one pass per frame. Anything that needs the text settled at once
+  // (done, settings) calls paceTurn directly, which also settles a queued pass.
   function queuePace(turn) {
     // Until a reveal exists, a render shows the raw text: start one now, so nothing that renders
     // before the queued pass (a size change, a tool chip) can flash the unfinished tail.
     const entry = turnNodes.get(turn.id);
-    if (entry && turn.status === "streaming") entry.reveal ||= { visible: "", target: null };
+    if (entry && turn.status === "streaming") (entry.reveal ||= newReveal()).at = performance.now();
     if (pacing.has(turn.id)) return;
     pacing.set(turn.id, nextFrame(() => { pacing.delete(turn.id); paceTurn(turn); }));
   }
@@ -2801,18 +2826,65 @@
     pacing.delete(turn.id);
     const entry = turnNodes.get(turn.id);
     if (!entry || turn.status !== "streaming") return;
-    const state = entry.reveal ||= { visible: "", target: null };
-    if (!turn.backendDone && state.target === turn.text) return;
+    const state = entry.reveal ||= newReveal();
+    if (!smoothStream()) {
+      stopReveal(entry);
+      state.shown = turn.text.length;
+      showReveal(turn, entry, turn.backendDone ? turn.text : window.QStream.liveView(turn.text, state.cache));
+      finishReveal(turn, entry);
+      return;
+    }
+    // A corrected snapshot can be shorter than what was already revealed, or extend a character
+    // that was already shown; either way the reveal resumes on a whole grapheme.
+    state.shown = window.QStream.graphemeEnd(turn.text, Math.min(state.shown, turn.text.length));
+    // A repeated snapshot that is already on screen needs no pass at all.
+    if (state.cancel || (!turn.backendDone && state.target === turn.text && state.shown >= turn.text.length)) return;
     state.target = turn.text;
-    let shown = turn.backendDone ? turn.text : turn.text.slice(0, window.QStream.completeBoundary(turn.text, state.boundaryCache ||= {}));
-    // Text already shown is never taken back while the stream still extends it.
-    if (!turn.backendDone && shown.length < state.visible.length && turn.text.startsWith(state.visible)) shown = state.visible;
-    if (shown !== state.visible) {
-      state.visible = shown;
-      if (shown) revealResponse(turn);
-      renderTurnNow(turn.id);
-    } else if (turn.backendDone) renderTurnNow(turn.id);
-    finishReveal(turn, entry);
+    state.last = performance.now();
+    revealFrame(turn, entry);
+  }
+
+  function revealFrame(turn, entry) {
+    const state = entry.reveal;
+    state.cancel = null;
+    if (turnNodes.get(turn.id) !== entry || turn.status !== "streaming") return;
+    if (!smoothStream()) { paceTurn(turn); return; }
+    const now = performance.now(), dt = Math.min(64, Math.max(0, now - state.last));
+    state.last = now;
+    const text = turn.text, done = turn.backendDone, backlog = text.length - state.shown;
+    if (backlog > 0) {
+      if (done) {
+        // The rest drains at a fixed pace from the moment the reply is complete, so it ends on time.
+        state.rate = state.drain ||= Math.max(state.rate, REVEAL_MIN, backlog / REVEAL_DRAIN);
+      } else {
+        const wanted = Math.max(REVEAL_MIN, backlog / REVEAL_LAG);
+        state.rate = !state.rate ? wanted : state.rate + (wanted - state.rate) * Math.min(1, dt / REVEAL_GLIDE);
+      }
+      state.credit = Math.min(state.credit + state.rate * dt / 1000, 24 + state.rate / 10);
+      // A word still arriving waits a moment for the rest of it, so it does not grow in place.
+      const partial = !done && now - state.at < WORD_WAIT && /[\p{L}\p{M}\p{N}_]+$/u.exec(text);
+      const end = text.length - (partial ? partial[0].length : 0);
+      // The first words show at once; after that the pace takes over.
+      const reach = state.shown + (state.visible ? state.credit : Math.max(state.credit, 24));
+      if (end > state.shown) {
+        let stop = state.shown;
+        const stops = window.QStream.revealStops(text.slice(0, Math.min(end, Math.ceil(reach) + 32)), state.shown);
+        for (const at of stops) {
+          if (at > reach) break;
+          stop = at;
+        }
+        // Only markers left (an opener with no word yet): they go out together once in reach.
+        if (!stops.length && reach >= end) stop = end;
+        state.credit = Math.max(0, state.credit - (stop - state.shown));
+        state.shown = stop;
+      } else state.credit = 0;
+    } else state.rate = state.credit = 0;
+    const finished = done && state.shown >= text.length;
+    // A long reply costs more to draw; then it is drawn every other frame or so, never stalling.
+    const draw = finished || now - state.drawnAt >= Math.min(100, state.cost * 2);
+    if (draw) showReveal(turn, entry, finished ? text : window.QStream.liveView(text.slice(0, state.shown), state.cache));
+    if (finished) finishReveal(turn, entry);
+    else if (state.shown < text.length || !draw) state.cancel = nextFrame(() => revealFrame(turn, entry));
   }
 
   function scheduleTurnRender(turnId, immediate = false) {
@@ -2865,6 +2937,7 @@
     }
     const entry = turnNodes.get(turn.id);
     clearFade(entry);
+    stopReveal(entry);
     const sched = renderSchedule.get(turn.id);
     sched?.cancelFrame?.();
     if (sched) sched.queued = false;
