@@ -28,7 +28,7 @@ try {
     return false;
   };
   const until = async (expr, ms) => { if (!await waitFor(expr, ms)) throw Error('Timed out: ' + expr); };
-  const BASE = { animations: 'off', autoDismiss: 0, keepHistory: true, showTabs: true };
+  const BASE = { animations: 'off', autoDismiss: 0, keepHistory: true, showTabs: true, contextSwitching: true };
   const open = async (url = '/?mock=signedin', { settings = BASE, chats, keep = false } = {}) => {
     await cdp('Page.navigate', { url: `${base}/__blank` });
     await waitFor(`document.readyState==='complete'`);
@@ -107,10 +107,15 @@ try {
   check('a stalled reset returns the question and releases Send', await evalJS(`document.getElementById('prompt-input').value==='Keep my unsent question' && document.getElementById('btn-send').dataset.mode==='send' && __mock.count('chat_send')===${beforeStall}`));
   check('a stalled reset retains the pending history hand-off', Boolean((await current()).carry));
 
-  // Default on, and offered in Settings.
+  // Default off, and offered on the Experimental settings page.
   await open('/settings.html', { settings: null });
-  check('Context switching is on by default', await evalJS(`QSettings.settings.contextSwitching===true`));
-  check('Settings offers the Context switching toggle', await evalJS(`!!document.querySelector('[data-key="contextSwitching"]') && document.body.textContent.includes('Context switching')`));
+  check('Context switching is off by default', await evalJS(`QSettings.settings.contextSwitching===false`));
+  check('Settings offers the Context switching toggle under Experimental', await evalJS(`!!document.querySelector('#section-experimental [data-key="contextSwitching"]') && !document.querySelector('#section-general [data-key="contextSwitching"]') && !!document.querySelector('.section-link[data-section="experimental"]')`));
+  // v1.6.0 saved it on for everyone, so upgrading turns it off once. Turning it on again sticks.
+  await open('/settings.html', { settings: { v: 7, contextSwitching: true, sendKey: 'ctrl' } });
+  check('upgrading from v1.6.0 settings turns Context switching off and keeps other choices', await evalJS(`QSettings.settings.contextSwitching===false && QSettings.settings.sendKey==='ctrl' && JSON.parse(localStorage.getItem('qchat.settings')).v===QSettings.VERSION`));
+  await open('/settings.html', { settings: { v: 8, contextSwitching: true } });
+  check('Context switching stays on once turned on in this build', await evalJS(`QSettings.settings.contextSwitching===true`));
 
   // Gemini: the history goes inside the first message, even signed in.
   await open();
